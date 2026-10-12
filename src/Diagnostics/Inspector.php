@@ -84,6 +84,21 @@ final class Inspector
             $checks[] = ['check' => 'upload.scanner', 'status' => $scanner instanceof \SoSecurity\Upload\Scanner ? 'manual' : ($upload['require_scan'] || isset($upload['scanner']) ? 'fail' : 'not_configured'),
                 'reason' => $scanner instanceof \SoSecurity\Upload\Scanner ? 'upload.scanner_unverified' : 'configuration.scanner'];
         }
+        $outbound = $config->outbound();
+        if ($outbound === null) { $checks[] = ['check'=>'outbound', 'status'=>'not_configured', 'reason'=>'configuration.outbound']; }
+        else {
+            $curl = extension_loaded('curl') && curl_version()['version_number'] >= 0x073900;
+            $defaultNeeded = !isset($outbound['resolver']) || !isset($outbound['transport']);
+            $checks[] = ['check'=>'outbound.curl', 'status'=>$defaultNeeded && !$curl ? 'fail' : ($defaultNeeded ? 'pass' : 'optional'),
+                'reason'=>$curl ? 'dependency.available' : 'dependency.curl'];
+            foreach (['resolver'=>\SoSecurity\Http\Outbound\Resolver::class, 'transport'=>\SoSecurity\Http\Outbound\Transport::class] as $kind=>$contract) {
+                if (!isset($outbound[$kind])) { continue; }
+                $service = $services[$outbound[$kind]] ?? null;
+                $checks[] = ['check'=>'outbound.' . $kind, 'status'=>$service instanceof $contract ? 'manual' : 'fail',
+                    'reason'=>$service instanceof $contract ? 'http.adapter_unverified' : 'configuration.' . $kind];
+            }
+            $checks[] = ['check'=>'outbound.network', 'status'=>'manual', 'reason'=>'http.network_unverified'];
+        }
         return $checks;
     }
     private function redis(\Redis $redis, string $namespace): array

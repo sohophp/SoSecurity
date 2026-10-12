@@ -54,7 +54,15 @@ const assert = require('node:assert/strict');
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     await page.screenshot({path: '/tmp/sosecurity-upload-mobile.png', fullPage: true});
     await ajax('clear');
+    await page.goto(base + '?module=http');
+    assert.match(await ajax('redirect'), /http:\/\/72\.rocky\.wsl/);
+    assert.match(await ajax('cors'), /HTTP 200/);
+    await page.goto(base + '?module=network');
+    assert.match(await ajax('private'), /http.address/);
+    assert.match(await ajax('peer'), /http.peer/);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    await page.screenshot({path: '/tmp/sosecurity-network-mobile.png', fullPage: true});
     assert.deepEqual(errors, []);
-    console.log('PASS Chromium: validation AJAX/422/localization, inert HTML input, mobile width, configured MySQL count/namespace/visitor isolation and private upload/fault paths');
+    console.log('PASS Chromium: validation AJAX/422/localization, inert HTML input, mobile width, configured MySQL count/namespace/visitor isolation and private upload plus HTTP/outbound refusal paths');
   } finally { await context.close(); await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

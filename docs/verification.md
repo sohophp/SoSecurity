@@ -129,3 +129,21 @@ Policy/Change不可变、稳定异常reason、有界文件锁、分批清理、�
 未执行：真实扫描服务及恶意样本独立验收、PDF内容重建、Windows ACL/网络文件系统、更多GD构建、缺失PHP7.3/8.0/8.3、生产宿主/HTTPS/独立审计。SDK没有宣称PDF语义解析或所有文件无恶意，不自动公开下载/内嵌执行，宿主仍负责授权/CSRF/请求与总容量预算/保留和安全下载。
 
 完整目标仍进行中：下一阶段按next-steps.md推进安全跳转、CORS/Permissions-Policy、受限外部HTTP、API Key/HMAC/原子Nonce及受控演示。URL/IP验证格式和全版本/真实宿主/独立复核仍保留，不以阶段通过缩小完成标准。
+
+## HTTP策略与受限请求追加验收（2026-10-13）
+
+已执行并通过：
+
+- 本机PHP7.2/7.4/8.1/8.2/8.4/8.5：HTTP策略66项（共享URI、数字IP/反斜杠/userinfo/头注入、固定Origin跳转、CORS预检/缓存Vary/凭据限制、Permissions-Policy、url/ip输入格式）；受限策略/适配80项（全部地址拒绝、逐跳DNS变更、peer、POST不重放、累计限额、factory/诊断、DoH解析、伪造计数不能掩盖过大头、调用示例）。
+- 六个PHP版本各23项实际cURL/TLS/DoH测试：全新Linux网络命名空间内设置独立公开IPv4/IPv6地址字节、固定测试服务/每进程CA，验证Host/SNI/证书与实际连接pin、跨来源头清除、私有/变更DNS目标未连接、循环/POST拒绝、真正压缩后body/原始头超限、旧折行头拒绝、不自动携带服务Cookie、慢DNS及慢HTTP共用总预算、URI私有字面量不能借公开pin连接。无宿主路由或系统信任库修改；临时环境结束已回收。
+- CORS实际HTTP12项在六个本地运行时执行；真实Chromium跨端口前端触发预检并读取固定JSON，另一来源/方法拒绝，credentials模式不被错误授予。静态端点没有Session Cookie或业务数据。
+- 隔离网络演示20项在六个本地运行时执行；真实Apache/FPM7.2入口24项包括实际固定www.php.net/robots.txt请求（200/字节数/hash），初步CLI7.2/8.5公网请求也实际成功。Google JSON DoH端点bootstrap pin、TLS和查询返回已实际核对。
+- 整体demo.py隔离114项；实际入口含私有MySQL116项。Chromium确认新增跳转/CORS/网络拒绝AJAX与移动宽度，无脚本异常；截图已检查。拒绝按钮使用固定适配器样例，不冒充公网或内网连接成功。
+- PHP7.2/8.5缺cURL最小ini各3项，HTTP策略仍可用，默认外部请求明确DependencyException；原基础功能/Session/加固/配置/验证/上传/Redis/MySQL/并发/HTTP回归保持通过。bin/check.sh两版本已执行；最新HTTP策略小项追加复测单独通过。
+- 两运行时100个PHP文件语法检查、PHPStan level5/目标70200、Composer严格校验、消费者安装及95文件归档通过；开发工具依赖审计没有漏洞公告。新demo/network.php及Http/Outbound源码HTTP路径返回403。
+
+初次已执行但失败并修复：PHP7.2不提供新XFERINFO回调常量，改用兼容的PROGRESS回调并通过实际DNS/传输超时；NETRC禁用值按PHP绑定使用false（忽略），通过实际代理/凭据环境隔离测试；DNS数据类型及响应计数增加边界检查。未把最初失败或模拟对象当真实传输证据。
+
+未执行/未完成：API Key/HMAC/Nonce与跨实现向量/并发重放仍待实现；缺失PHP7.3/8.0/8.3、更多cURL/CA/企业网络/Windows、生产宿主试点和独立复核；远端CI及公开发布。新增CI的命名空间步骤只是定义，未在GitHub运行。默认第三方DNS隐私和自定义适配硬预算/传输契约已在outbound.md说明；URL格式/公开地址字节不能保证真实基础设施路由或业务路径授权。
+
+完整目标保持进行中，继续API与1.0逐项验收，不用阶段完成替代完整计划。

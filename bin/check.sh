@@ -9,6 +9,8 @@ task_runtime=${1:-php}
 "$task_runtime" tests/storage-failure.php
 "$task_runtime" tests/configuration.php
 "$task_runtime" tests/validation.php
+"$task_runtime" tests/http-policy.php
+"$task_runtime" tests/outbound.php
 "$task_runtime" tests/upload.php
 if "$task_runtime" -r 'exit(extension_loaded("pdo_sqlite") ? 0 : 1);'; then
     "$task_runtime" tests/reset-flow.php
@@ -45,6 +47,8 @@ else
 fi
 "$task_runtime" tests/concurrency.php
 if command -v python3 >/dev/null; then
+    python3 tests/network_demo.py "$task_runtime"
+    python3 tests/cors_http.py "$task_runtime"
     python3 tests/upload_demo.py "$task_runtime"
     python3 tests/upload_http.py "$task_runtime"
     python3 tests/test_http.py "$task_runtime"

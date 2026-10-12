@@ -6,7 +6,7 @@ namespace SoSecurity\Http;
 final class SecurityHeaders
 {
     /** CSP/HSTS are opt-in: start CSP in report-only and audit HTTPS before HSTS. */
-    public static function build(?string $csp = null, bool $reportOnly = true, ?int $hstsAge = null): array
+    public static function build(?string $csp = null, bool $reportOnly = true, ?int $hstsAge = null, ?array $permissions = null): array
     {
         $headers = ['X-Content-Type-Options' => 'nosniff', 'Referrer-Policy' => 'strict-origin-when-cross-origin',
             'X-Frame-Options' => 'SAMEORIGIN'];
@@ -22,6 +22,7 @@ final class SecurityHeaders
             }
             $headers['Strict-Transport-Security'] = 'max-age=' . $hstsAge;
         }
+        if ($permissions !== null) { $headers['Permissions-Policy'] = PermissionsPolicy::build($permissions); }
         return $headers;
     }
 }

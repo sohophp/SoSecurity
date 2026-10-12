@@ -32,6 +32,7 @@ if (!$csrf->verify('form', 'session-binding', $token, true)
 if (!(new SoSecurity\\Validation\\Validator(['age' => ['type' => 'integer', 'min' => 18]]))->validate(['age' => 20])->valid()) { exit(3); }
 if (strpos(SoSecurity\\Storage\\MySqlStore::schema(), 'ENGINE=InnoDB') === false) { exit(4); }
 if ((new SoSecurity\\Upload\\Policy())->maximumBytes() !== 5242880) { exit(5); }
+if (!(new SoSecurity\\Http\\Redirects('https://site.example'))->allows('/home')) { exit(6); }
 $rate = new SoSecurity\\RateLimit\\RateLimiter($store);
 if (!$rate->consume('login', 'ip-account')->allowed) { exit(2); }
 echo "PASS Composer: fresh consumer installation, PSR-4 and public API on PHP " . PHP_VERSION . "\\n";

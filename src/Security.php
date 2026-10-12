@@ -64,6 +64,16 @@ final class Security
     {
         $options = $this->config->password(); return new Password\PasswordPolicy($options['minimum'], $options['maximum_bytes']);
     }
+    public function outbound(): Http\Outbound\Client
+    {
+        $options = $this->config->outbound();
+        if ($options === null) { throw new ConfigurationException('Configure exact outbound hosts.', 'configuration.outbound'); }
+        $resolver = isset($options['resolver']) ? ($this->services[$options['resolver']] ?? null) : null;
+        $transport = isset($options['transport']) ? ($this->services[$options['transport']] ?? null) : null;
+        if (isset($options['resolver']) && !$resolver instanceof Http\Outbound\Resolver) { throw new ConfigurationException('Inject a bounded Resolver.', 'configuration.resolver'); }
+        if (isset($options['transport']) && !$transport instanceof Http\Outbound\Transport) { throw new ConfigurationException('Inject a pinned Transport.', 'configuration.transport'); }
+        return new Http\Outbound\Client(new Http\Outbound\Policy(array_diff_key($options, array_flip(['resolver','transport']))), $resolver, $transport);
+    }
     public function uploader(): Upload\Saver
     {
         $options = $this->config->upload();

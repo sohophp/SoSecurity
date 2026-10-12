@@ -27,6 +27,7 @@ use SoSecurity\Storage\SessionStore;
 use SoSecurity\Support\Clock;
 
 require __DIR__ . '/uploads.php';
+require __DIR__ . '/network.php';
 
 /** Only advances this visitor's demonstration time; never changes system time. */
 final class DemoClock implements Clock
@@ -45,7 +46,7 @@ final class DemoApp
     private const MODULES = [
         'home' => '功能总览', 'configuration' => '配置与诊断', 'captcha' => '验证码', 'csrf' => 'CSRF 防护', 'rate' => '限流与封禁',
         'upload' => '上传安全', 'validation' => '输入验证', 'password' => '密码安全', 'reset' => '重置令牌', 'session' => '会话安全',
-        'http' => 'HTTP 与代理', 'output' => '输出编码', 'audit' => '审计日志', 'storage' => '存储与隔离',
+        'network' => '受限外部请求', 'http' => 'HTTP 与代理', 'output' => '输出编码', 'audit' => '审计日志', 'storage' => '存储与隔离',
     ];
     private const TEST_PASSWORD = 'Demo-only-7.2!';
     private $module;
@@ -100,7 +101,8 @@ final class DemoApp
                     'password' => ['hash', 'verify', 'policy', 'legacy'],
                     'reset' => ['issue', 'consume', 'replay', 'change_version'],
                     'session' => ['touch', 'idle', 'absolute', 'rotate', 'invalidate'],
-                    'http' => ['resolve', 'headers'], 'output' => ['encode'], 'audit' => ['record', 'clear'],
+                    'network' => ['fetch', 'private', 'redirect_private', 'rebind', 'peer', 'oversize'],
+                    'http' => ['resolve', 'headers', 'redirect', 'cors', 'permissions'], 'output' => ['encode'], 'audit' => ['record', 'clear'],
                     'storage' => ['increment', 'read', 'isolation'],
                     'upload' => ['upload', 'normal_sample', 'fake_sample', 'size_sample', 'path_sample', 'budget_sample', 'scanner_reject', 'scanner_fail', 'store_fail', 'clear'],
                     'validation' => ['validate', 'valid_sample', 'invalid_sample', 'unknown_sample'],
@@ -120,7 +122,7 @@ final class DemoApp
                         $this->status = $module === 'upload' ? 422 : 400; $this->result = ['reason' => $e->reason(), 'message' => $module === 'upload' ? '上传被拒绝，请检查格式、大小或演示额度。' : '输入未通过验证，请检查字段。'];
                     }
                     catch (\SoSecurity\Exception\SecurityException $e) {
-                        $this->status = 503; $this->result = ['reason' => $e->reason(), 'message' => '处理依赖发生故障，上传没有放行。'];
+                        $this->status = 503; $this->result = ['reason' => $e->reason(), 'message' => $module === 'upload' ? '处理依赖发生故障，上传没有放行。' : '处理依赖发生故障，本次操作已拒绝。'];
                     }
                     catch (\InvalidArgumentException $e) {
                         $this->status = 400; $this->result = ['message' => '输入格式或演示配置不正确，请检查字段。'];
@@ -388,12 +390,33 @@ final class DemoApp
                     $this->checked($this->session()->touch(), '会话检查通过。', '会话已失效，需要重新建立演示会话基线。');
                 }
                 break;
+            case 'network':
+                if ($action !== 'fetch') { $this->result = NetworkSamples::run($action); break; }
+                $budget = (new RateLimiter($this->store,new Policy(8,60,[60],120)))->consume('demo-outbound','fixed-target');
+                if (!$budget->allowed) { $this->status=429; $this->result=['message'=>'受控外部演示额度已用完，请稍后重试。']; header('Retry-After: '.$budget->retryAfter); break; }
+                $client = \SoSecurity\Security::fromArray(['site'=>'demo-outbound','outbound'=>['hosts'=>['www.php.net'],'response_bytes'=>16384,'budget_ms'=>3000]])->outbound();
+                $response = $client->request('GET','https://www.php.net/robots.txt');
+                $this->result=['target'=>'https://www.php.net/robots.txt','status'=>$response->status(),'bytes'=>strlen($response->body()),
+                    'sha256'=>hash('sha256',$response->body()),'message'=>'真实HTTPS请求完成；不提供任意URL代理，不显示响应正文或敏感头。'];
+                break;
             case 'http':
                 if ($action === 'resolve') {
                     $rules = preg_split('/\s*,\s*/', trim($this->input('trusted', 1024)), -1, PREG_SPLIT_NO_EMPTY);
                     $resolved = (new ClientIp(new IpRules($rules)))->resolve([
                         'REMOTE_ADDR' => $this->input('remote', 64), 'HTTP_X_FORWARDED_FOR' => $this->input('forwarded', 2048)]);
                     $this->result = ['resolved_ip' => $resolved, 'message' => '这是隔离的代理输入演示，不会改变实际请求信任配置。'];
+                } elseif ($action === 'redirect') {
+                    $this->result=['location'=>(new \SoSecurity\Http\Redirects('http://72.rocky.wsl',['https://www.php.net']))->target($this->input('target',2048)),
+                        'message'=>'只显示审核后的Location，不让页面输入直接改变当前跳转。'];
+                } elseif ($action === 'cors') {
+                    $origin=getenv('SOSECURITY_DEMO_CORS_ORIGIN') ?: 'http://72.rocky.wsl:3000';
+                    $decision=(new \SoSecurity\Http\Cors([$origin],['GET'],['x-demo-token']))->evaluate('OPTIONS',$this->input('origin',256),
+                        $this->input('method',16),$this->input('request_headers',256));
+                    $this->status=$decision->allowed()?200:403;
+                    $this->result=['allowed'=>$decision->allowed(),'preflight_status'=>$decision->status(),'headers'=>$decision->headers(),'reason'=>$decision->reason(),
+                        'message'=>'这是输入策略演示。cors.php只用服务端固定Origin，提供无会话的公开测试数据。'];
+                } elseif ($action === 'permissions') {
+                    $this->result=['Permissions-Policy'=>\SoSecurity\Http\PermissionsPolicy::build(['camera'=>[],'microphone'=>[],'geolocation'=>['self']])];
                 } else {
                     $this->result = ['headers' => SecurityHeaders::build($this->input('csp', 2048), true),
                         'cookie_example' => Cookie::header('demo_token', 'example', '/', true, true, 'Lax', 300),
@@ -435,6 +458,8 @@ final class DemoApp
     private function state(): array
     {
         switch ($this->module) {
+            case 'network': return ['target'=>'https://www.php.net/robots.txt','resolver'=>'Google JSON DoH，固定TLS端点和bootstrap IP',
+                'transport'=>extension_loaded('curl')?'已安装cURL，实际请求时验证网络/证书/地址与预算':'未安装cURL，真实请求未执行'];
             case 'upload': return ['files' => (new UploadSandbox($this->directory, $_SERVER['DOCUMENT_ROOT'] ?? dirname(__DIR__) . '/demo/public'))->files(),
                 'maximum_bytes' => 1048576, 'maximum_files' => 3, 'retention_seconds' => 600, 'scanner' => '未配置真实扫描服务，故障按钮只使用隔离测试实现'];
             case 'captcha': return ['challenge' => $_SESSION['demo_challenge'] ?? null,
@@ -482,14 +507,14 @@ final class DemoApp
         switch ($this->module) {
             case 'home':
                 echo '<div class="cards">';
-                $descriptions = ['upload' => '内容检测、图片重新编码、私有保存与故障拒绝', 'validation' => '严格类型、Unicode 长度、嵌套错误与字段白名单', 'configuration' => '简单初始化、只读诊断与故障拒绝', 'captcha' => '图片与算术、错误次数、刷新和单次使用', 'csrf' => '正常验证、篡改、跨场景、过期和重放',
+                $descriptions = ['network'=>'固定公网目标、DNS/重定向逐跳检查与故障拒绝', 'upload' => '内容检测、图片重新编码、私有保存与故障拒绝', 'validation' => '严格类型、Unicode 长度、嵌套错误与字段白名单', 'configuration' => '简单初始化、只读诊断与故障拒绝', 'captcha' => '图片与算术、错误次数、刷新和单次使用', 'csrf' => '正常验证、篡改、跨场景、过期和重放',
                     'rate' => '请求预算、阶梯封禁、手动封禁与解除', 'password' => '哈希验证、基本策略和旧密码升级',
                     'reset' => '一次性令牌与密码版本绑定', 'session' => '标识更新、空闲超时与绝对超时',
                     'http' => '可信代理链、响应头和安全 Cookie', 'output' => 'HTML、JSON 数据与 URL 组件编码', 'audit' => '结构化记录、字段白名单和主体假名化', 'storage' => '原子计数、跨请求保存与命名空间隔离'];
                 foreach ($descriptions as $id => $description) {
                     echo '<a class="card" href="?module=' . $id . '"><h2>' . self::MODULES[$id] . '</h2><p>' . $description . '</p><span>打开演示 →</span></a>';
                 }
-                echo '</div><p class="note">SSRF 和 API 签名尚未实现；MySQL 存储需要服务端配置后演示；后续交付会同步增加演示。Turnstile 需配置真实服务密钥后启用。演示不等于生产环境或独立安全审计验收。</p>';
+                echo '</div><p class="note">API 签名尚未实现；受限请求已提供固定目标演示；MySQL 存储需要服务端配置后演示；后续交付会同步增加演示。Turnstile 需配置真实服务密钥后启用。演示不等于生产环境或独立安全审计验收。</p>';
                 break;
             case 'configuration':
                 echo '<h2>配置一次，按需使用</h2><p>工厂校验 PHP 数组配置，不自动启动 Session。诊断不修改存储；错误配置和故障演示只影响隔离的测试对象。</p>';
@@ -554,10 +579,22 @@ final class DemoApp
                 $this->form($this->button('touch', '检查并更新活动时间') . $this->button('idle', '模拟空闲过期') . $this->button('absolute', '模拟绝对过期')
                     . $this->button('rotate', '更新 Session ID') . $this->button('invalidate', '标记失效'));
                 break;
+            case 'network':
+                echo '<h2>固定目标的真实受限请求</h2><p>仅请求 https://www.php.net/robots.txt，通过有界 DoH 检查全部 A/AAAA、固定连接 IP、TLS 验证和逐跳目标检查。默认不读取代理或 Cookie，总预算 3 秒，响应最多 16 KiB，所有访客共用每分钟 8 次外部额度。</p>';
+                $this->form($this->button('fetch','请求固定官方测试目标'));
+                echo '<h2>隔离拒绝测试</h2><p>下面使用固定测试解析器/传输实现，展示真实安全检查的拒绝结果，不连接内网，也不把测试适配当公网验收。</p>';
+                $this->form($this->button('private','内网地址拒绝') . $this->button('redirect_private','重定向到内网') . $this->button('rebind','DNS 地址变为内网')
+                    . $this->button('peer','连接地址不匹配') . $this->button('oversize','响应超出预算'));
+                break;
             case 'http':
                 echo '<h2>可信代理解析</h2><p>默认不信任转发头；下面的输入仅用于隔离模拟，不会配置网站的真实代理。</p>';
                 $this->form('<label>直接连接地址<input name="remote" value="10.0.0.1"></label><label>可信代理 CIDR（逗号分隔）<input name="trusted" value="10.0.0.0/8"></label>'
                     . '<label>X-Forwarded-For<input name="forwarded" value="1.1.1.1, 203.0.113.2, 10.0.0.2"></label>' . $this->button('resolve', '解析客户端 IP'));
+                echo '<h2>安全跳转目标</h2>';
+                $this->form('<label>测试目标<input name="target" value="/SoSecurity/?module=home"></label>' . $this->button('redirect','检查跳转目标'));
+                echo '<h2>CORS 预检与浏览器权限</h2><p>固定允许来源：http://72.rocky.wsl:3000。真实静态演示端点为 cors.php，不读会话或业务数据。</p>';
+                $this->form('<label>Origin<input name="origin" value="http://72.rocky.wsl:3000"></label><label>方法<input name="method" value="GET"></label>'
+                    . '<label>请求头<input name="request_headers" value="x-demo-token"></label>' . $this->button('cors','检查预检') . $this->button('permissions','生成权限策略示例'));
                 echo '<h2>响应头示例</h2>';
                 $this->form('<label>CSP 策略<input name="csp" value="default-src &#039;self&#039;"></label>' . $this->button('headers', '生成 Report-Only 与 Cookie 示例'));
                 break;
@@ -598,6 +635,7 @@ final class DemoApp
             'password' => '$hasher = new SoSecurity\\Password\\PasswordHasher();' . "\n" . '$hash = $hasher->hash($password);' . "\n" . '$valid = $hasher->verify($password, $storedHash);',
             'reset' => '$tokens = new SoSecurity\\Password\\ResetTokens($store);' . "\n" . '$token = $tokens->issue($accountAndPasswordVersion);' . "\n" . '$valid = $tokens->consume($accountAndPasswordVersion, $submittedToken);',
             'session' => '$security = new SoSecurity\\Session\\SessionSecurity();' . "\n" . '$valid = $security->touch();' . "\n" . '// 宿主先启动 Session，检查失败后清除认证状态。',
+            'network' => '$client = new SoSecurity\\Http\\Outbound\\Client(new SoSecurity\\Http\\Outbound\\Policy(["hosts" => ["api.example.com"]]));' . "\n" . '$response = $client->request("GET", $approvedUrl);',
             'http' => '$trusted = new SoSecurity\\Http\\IpRules(["10.0.0.10/32"]);' . "\n" . '$ip = (new SoSecurity\\Http\\ClientIp($trusted))->resolve($_SERVER);',
             'output' => '$text = SoSecurity\\Output\\Escaper::html($input);' . "\n" . '$data = SoSecurity\\Output\\Escaper::json($input);',
             'audit' => '$logger = new SoSecurity\\Audit\\AuditLogger($sink, $independentKey);' . "\n" . '$logger->record("login.failed", "login", $accountId, ["status" => 401]);',

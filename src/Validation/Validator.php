@@ -102,7 +102,7 @@ final class Validator
         if (!in_array($copy['normalization'], ['none', 'NFC'], true)) { throw new ConfigurationException('Unsupported normalization.'); }
         if ($copy['normalization'] === 'NFC' && !extension_loaded('intl')) { throw new DependencyException('NFC normalization requires ext-intl.', 'dependency.intl'); }
         if (array_key_exists('format', $spec)) {
-            if (!in_array($spec['format'], ['email', 'uuid', 'date', 'ascii_identifier'], true)) { throw new ConfigurationException('Unsupported string format.'); }
+            if (!in_array($spec['format'], ['email', 'url', 'ip', 'uuid', 'date', 'ascii_identifier'], true)) { throw new ConfigurationException('Unsupported string format.'); }
             $copy['format'] = $spec['format'];
         }
         if (array_key_exists('pattern', $spec)) {
@@ -211,6 +211,10 @@ final class Validator
     private function format(string $value, string $format): bool
     {
         switch ($format) {
+            case 'ip': return filter_var($value, FILTER_VALIDATE_IP) !== false;
+            case 'url':
+                try { \SoSecurity\Http\Uri::parse($value, true); return true; }
+                catch (\SoSecurity\Exception\ValidationException $e) { return false; }
             case 'email': return strlen($value) <= 254 && filter_var($value, FILTER_VALIDATE_EMAIL) !== false;
             case 'uuid': return (bool) preg_match('/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/iD', $value);
             case 'ascii_identifier': return (bool) preg_match('/^[A-Za-z][A-Za-z0-9_]{0,63}$/D', $value);

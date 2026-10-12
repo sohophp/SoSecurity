@@ -36,7 +36,7 @@ $data = $result->data(); // 仅完整验证成功才允许读取
 | min/max | 未配置 | 数值范围、字符串Unicode码点长度或列表元素数；边界包含 |
 | enum | 未配置 | 1–128个有界标量，使用严格类型比较；在NFC后比较 |
 | maximum_bytes | string默认65536 | 1–65536字节，在规范化前后检查 |
-| format | string可选 | email、uuid、date（真实YYYY-MM-DD日历日期）、ascii_identifier |
+| format | string可选 | email、url、ip、uuid、date（真实YYYY-MM-DD日历日期）、ascii_identifier |
 | pattern | string可选 | 可信配置提供的PCRE，最长1024字节；必须匹配整个输入 |
 | normalization | string默认none | 只有显式NFC才调用ext-intl；缺扩展时报DependencyException，不静默跳过 |
 | fields | object必填 | 嵌套字段定义，每层拒绝未知字段 |
@@ -45,7 +45,7 @@ $data = $result->data(); // 仅完整验证成功才允许读取
 
 配置拼错、错误类型、反向区间、非法正则或结构超限在构造时抛ConfigurationException。schema编译时复制数组，不受外部引用后续修改影响。自定义Rule对象由应用管理，应保持不变。
 
-字符串必须是合法UTF-8；长度为Unicode码点，组合字符与emoji序列可能包含多个码点，**不是用户感知的字形簇**。默认不规范化、不trim、不截断；需要NFC时，存储和比较必须使用同一规范化策略。自由文本可以包含引号、换行与HTML字符，使用时按上下文编码。email采用PHP FILTER_VALIDATE_EMAIL，不承诺验证域名、邮箱存在、国际化邮件地址或投递能力。uuid仅检查标准结构、版本1–8和variant，不证明来源可信。
+字符串必须是合法UTF-8；长度为Unicode码点，组合字符与emoji序列可能包含多个码点，**不是用户感知的字形簇**。默认不规范化、不trim、不截断；需要NFC时，存储和比较必须使用同一规范化策略。自由文本可以包含引号、换行与HTML字符，使用时按上下文编码。email采用PHP FILTER_VALIDATE_EMAIL，不承诺验证域名、邮箱存在、国际化邮件地址或投递能力。url只检查有界HTTP(S)语法，ip只检查地址语法，不执行DNS/SSRF访问许可；见http-policy.md/outbound.md。uuid仅检查标准结构、版本1–8和variant，不证明来源可信。
 
 传统表单的值通常是字符串。宿主先按字段定义明确解析（例如filter_var验证整数且严格区分false与0），再验证；不要对所有字段强制 `(int)` 后声称类型已正确。JSON也应先检查解析成功、请求体限额和预期结构，再调用Validator。
 

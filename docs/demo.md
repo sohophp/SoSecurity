@@ -15,7 +15,8 @@
 | 密码安全 | bcrypt哈希及验证、长度/编码策略、显式已知MD5格式迁移 |
 | 重置令牌 | 单次消费、重复消费、密码版本变更后旧令牌失效 |
 | 会话安全 | Session ID更新（只显示摘要指纹）、空闲/绝对过期和显式失效 |
-| HTTP与代理 | 可信CIDR、从右向左代理链解析、Report-Only/Cookie响应头示例 |
+| HTTP与代理 | 可信CIDR、代理链、Report-Only/Cookie、跳转白名单、CORS预检、Permissions-Policy |
+| 受限外部请求 | 固定公网目标真实HTTPS/DoH/pin；隔离内网、重定向、DNS变更、peer和响应超限拒绝 |
 | 输出编码 | HTML、JSON数据、URL组件编码；输入作为文本显示 |
 | 审计日志 | 结构化记录、字段白名单、主体假名化、清空当前访客日志 |
 | 存储与隔离 | Session/文件/测试内存的原子计数、跨请求保存、命名空间隔离；Redis和MySQL配置后可操作 |
@@ -54,7 +55,7 @@ sudo -u apache php72 /var/www/php/7.2/soSecurity/bin/demo-cleanup.php
 - `SOSECURITY_DEMO_TURNSTILE_SITE_KEY` 与 `SOSECURITY_DEMO_TURNSTILE_SECRET`：同时配置后显示真实widget，后端调用Siteverify。
 - `SOSECURITY_DEMO_TURNSTILE_HOST`：固定的预期hostname，默认72.rocky.wsl；widget action固定demo。应确认服务是否支持配置的本地域名，不能关闭hostname/action校验来让演示显示通过。
 
-密钥只在服务端配置，不通过演示表单保存。没有实际配置与服务响应前，不把外部能力标记为已验收。当前MySQL已接入存储页，输入验证有独立页面；SSRF和API签名将在各自实现后增加对应页面，不预先放置虚假成功按钮。
+密钥只在服务端配置，不通过演示表单保存。没有实际配置与服务响应前，不把外部能力标记为已验收。当前MySQL已接入存储页，输入验证有独立页面；API签名将在实现后增加对应页面，不预先放置虚假成功按钮。
 
 ## 自动化与浏览器验收
 
@@ -114,3 +115,18 @@ python3 tests/upload_http.py php72
 ```
 
 完整demo.py与upload_demo.py针对实际入口执行时应分开请求窗口，保留100次/60秒入口预算，不能为测试关闭限流。隔离服务器各用自己的私有目录，不共享预算。当前新增页面Chromium已验证实际文件选择/AJAX保存、伪装拒绝、扫描故障和手机宽度；没有把固定测试扫描器当真实AV服务。
+
+## HTTP策略与受控外部请求
+
+http页显示审核后的Location/CORS/权限头，不把表单配置应用到站点。cors.php仅提供固定公开JSON测试数据、GET/OPTIONS，不读取Session或业务；固定Origin由服务端配置，默认http://72.rocky.wsl:3000。真正预检/读权限已由独立前端来源和Chromium验收。
+
+network页真实请求仅限www.php.net/robots.txt，使用Google JSON DoH与公开bootstrap pin；所有访客共用8次/分钟，总预算3秒、响应16KiB，只显示状态/字节/digest。失败测试明确标记隔离适配器，不发送内网请求，不提供任意URL/Host代理。第三方DNS隐私/可用性与自定义适配契约见outbound.md。
+
+```sh
+python3 tests/network_demo.py php72
+python3 tests/network_demo.py --url http://72.rocky.wsl/SoSecurity/ --live
+SOSECURITY_PLAYWRIGHT_MODULE=/path/to/playwright python3 tests/cors_http.py php72 --browser
+python3 tests/native_outbound.py php72 php85
+```
+
+后一个命令需要Linux sudo/unshare/ip/OpenSSL，使用临时网络命名空间与每进程测试CA，既不修改宿主路由也不安装系统CA。SDK默认实现已在六个本地PHP版本执行真实pin/TLS/DoH/重定向/预算验收；缺失版本仍未验证。
