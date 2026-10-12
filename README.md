@@ -1,6 +1,6 @@
 # SoSecurity
 
-[English introduction](README.en.md) · [使用指南](docs/usage.md) · [旧站迁移](docs/migration.md) · [路线图](docs/roadmap.md) · [验证记录](docs/verification.md)
+[English introduction](README.en.md) · [功能演示](http://72.rocky.wsl/SoSecurity/) · [使用指南](docs/usage.md) · [旧站迁移](docs/migration.md) · [路线图](docs/roadmap.md) · [验证记录](docs/verification.md)
 
 框架无关、按需使用的 PHP Web 安全组件。Composer 包名 `sohophp/sosecurity`，命名空间 `SoSecurity\`，核心代码目标 PHP **7.2–8.5**。
 
@@ -45,6 +45,12 @@ if (!$csrf->verify('contact', $_SESSION['csrf_binding'], $_POST['_csrf'] ?? null
 ```
 
 登录示例见 [examples/legacy-login.php](examples/legacy-login.php)。该示例需要显式配置账号哈希和私有存储目录，不会创建默认管理员或替换宿主认证。
+
+## 功能演示
+
+本地入口：[http://72.rocky.wsl/SoSecurity/](http://72.rocky.wsl/SoSecurity/)。现有十类能力提供可操作页面、传统表单/AJAX、正常与拒绝结果及核心调用片段。外部Turnstile和Redis未配置时标记未执行。
+
+部署、隔离和演示测试见 [demo.md](docs/demo.md)，细化后续计划见 [next-steps.md](docs/next-steps.md)。只公开demo/public，源码根目录通过.htaccess拒绝HTTP访问；演示不随Composer运行时压缩包安装。
 
 ## 开发验证
 

@@ -26,6 +26,7 @@ fi
 "$task_runtime" tests/concurrency.php
 if command -v python3 >/dev/null; then
     python3 tests/test_http.py "$task_runtime"
+    python3 tests/demo.py "$task_runtime"
 else
     if [[ ${SOSECURITY_REQUIRE_HTTP:-0} == 1 ]]; then
         echo 'FAIL HTTP integration prerequisite Python 3 missing' >&2

@@ -64,3 +64,13 @@ php81 /path/to/composer install --working-dir=tools
 php81 tools/vendor/bin/phpstan analyse -c phpstan.neon --no-progress
 php81 /path/to/composer audit --working-dir=tools --locked
 ```
+
+## 互动演示追加验收（2026-10-13）
+
+基础里程碑后增加demo/public公开入口和源码目录保护。PHP7.2、PHP8.5隔离演示服务器的HTTP验收通过；最终演示测试84项断言，涵盖十类能力、JSON/表单、畸形操作字段、跨访客隔离、过期和重放。
+
+实际 `http://72.rocky.wsl/SoSecurity/` 在Apache/PHP-FPM PHP7.2上HTTP验收通过。真实Chromium验证AJAX生成/正常验证/篡改拒绝、输入不执行脚本、移动宽度无页面横向溢出、无脚本异常；桌面和手机截图已检查。
+
+`.git/HEAD`、composer.json、demo/app.php、src、tests、bin和tools等仓库路径拒绝HTTP访问；演示首页及静态资源正常。私有数据位于Web根之外；只有demo/public映射为大小写明确的入口。原有基础里程碑的“未执行浏览器/PHP-FPM”是此前状态，此次追加不代表真实旧站生产业务已验收。
+
+演示Redis和Turnstile未配置，真实外部服务未执行；页面不宣称通过。上传、MySQL、SSRF等后续功能仍未实现。部署和复现见demo.md。

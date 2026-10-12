@@ -9,3 +9,5 @@
 /vendor export-ignore
 /.phpstan-cache export-ignore
 /var export-ignore
+/demo export-ignore
+/.htaccess export-ignore

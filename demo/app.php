@@ -1,0 +1,483 @@
+<?php
+declare(strict_types=1);
+
+namespace SoSecurityDemo;
+
+use SoSecurity\Audit\AuditLogger;
+use SoSecurity\Captcha\Captcha;
+use SoSecurity\Captcha\Turnstile;
+use SoSecurity\Csrf\CsrfTokens;
+use SoSecurity\Http\ClientIp;
+use SoSecurity\Http\Cookie;
+use SoSecurity\Http\IpRules;
+use SoSecurity\Http\SecurityHeaders;
+use SoSecurity\Output\Escaper;
+use SoSecurity\Password\PasswordHasher;
+use SoSecurity\Password\PasswordPolicy;
+use SoSecurity\Password\ResetTokens;
+use SoSecurity\RateLimit\Policy;
+use SoSecurity\RateLimit\RateLimiter;
+use SoSecurity\Session\SessionSecurity;
+use SoSecurity\Storage\FileStore;
+use SoSecurity\Storage\AtomicStore;
+use SoSecurity\Storage\Change;
+use SoSecurity\Storage\MemoryStore;
+use SoSecurity\Storage\RedisStore;
+use SoSecurity\Storage\SessionStore;
+use SoSecurity\Support\Clock;
+
+/** Only advances this visitor's demonstration time; never changes system time. */
+final class DemoClock implements Clock
+{
+    private $module;
+    public function __construct(string $module) { $this->module = $module; }
+    public function now(): int { return time() + ($_SESSION['demo_offsets'][$this->module] ?? 0); }
+    public function advance(int $seconds): void
+    {
+        $_SESSION['demo_offsets'][$this->module] = ($_SESSION['demo_offsets'][$this->module] ?? 0) + $seconds;
+    }
+}
+
+final class DemoApp
+{
+    private const MODULES = [
+        'home' => '功能总览', 'captcha' => '验证码', 'csrf' => 'CSRF 防护', 'rate' => '限流与封禁',
+        'password' => '密码安全', 'reset' => '重置令牌', 'session' => '会话安全',
+        'http' => 'HTTP 与代理', 'output' => '输出编码', 'audit' => '审计日志', 'storage' => '存储与隔离',
+    ];
+    private const TEST_PASSWORD = 'Demo-only-7.2!';
+    private $module;
+    private $base;
+    private $secure;
+    private $store;
+    private $ui;
+    private $binding;
+    private $status = 200;
+    private $result = null;
+    private $directory;
+
+    public function run(): void
+    {
+        $module = $_GET['module'] ?? 'home';
+        if (!is_string($module) || !isset(self::MODULES[$module])) {
+            http_response_code(404); echo '演示页面不存在。'; return;
+        }
+        $this->module = $module;
+        $this->base = rtrim(str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'] ?? '/index.php')), '/.') . '/';
+        $this->secure = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off';
+        $directory = getenv('SOSECURITY_DEMO_STORAGE') ?: '/var/lib/sosecurity-demo';
+        $this->directory = $directory;
+        $this->store = new FileStore($directory, 'sosecurity-demo');
+        $ip = (new ClientIp())->resolve($_SERVER);
+        $budget = (new RateLimiter($this->store, new Policy(100, 60, [10], 120)))->consume('demo-http', $ip);
+        if (!$budget->allowed) {
+            http_response_code(429); header('Retry-After: ' . $budget->retryAfter);
+            echo '演示请求过于频繁，请稍后重试。'; return;
+        }
+        SessionSecurity::configure($this->secure);
+        session_name('SoSecurityDemo');
+        ini_set('session.cookie_path', $this->base);
+        if (!session_start()) { throw new \RuntimeException('Cannot start demo session.'); }
+        if (!isset($_SESSION['demo_binding'])) {
+            $_SESSION['demo_binding'] = bin2hex(random_bytes(32));
+            $_SESSION['demo_audit_key'] = random_bytes(32);
+            $_SESSION['demo_events'] = [];
+        }
+        $this->binding = $_SESSION['demo_binding'];
+        $this->ui = new CsrfTokens(new SessionStore('demo-controls'), 3600, 32);
+        $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+        if ($method === 'POST') {
+            if (!$this->ui->verify('controls', $this->binding, $_POST['_csrf'] ?? null)) {
+                $this->status = 403; $this->result = ['message' => '操作表单已失效，请刷新后重试。'];
+            } else {
+                $action = $_POST['action'] ?? '';
+                $allowed = [
+                    'captcha' => ['math', 'image', 'verify', 'refresh', 'expire', 'turnstile'],
+                    'csrf' => ['issue', 'verify', 'tamper', 'cross_scope', 'once', 'replay', 'expire', 'revoke'],
+                    'rate' => ['consume', 'ban', 'permanent', 'reset'],
+                    'password' => ['hash', 'verify', 'policy', 'legacy'],
+                    'reset' => ['issue', 'consume', 'replay', 'change_version'],
+                    'session' => ['touch', 'idle', 'absolute', 'rotate', 'invalidate'],
+                    'http' => ['resolve', 'headers'], 'output' => ['encode'], 'audit' => ['record', 'clear'],
+                    'storage' => ['increment', 'read', 'isolation'],
+                ];
+                if (!is_string($action) || strlen($action) > 64 || !in_array($action, $allowed[$module] ?? [], true)) {
+                    $this->status = 400; $this->result = ['message' => '不支持的演示操作。'];
+                } else {
+                    try { $this->dispatch($action); }
+                    catch (\InvalidArgumentException $e) {
+                        $this->status = 400; $this->result = ['message' => '输入格式或演示配置不正确，请检查字段。'];
+                    }
+                    $this->record($module . '.' . $action, $this->status < 400);
+                }
+            }
+        } elseif ($method !== 'GET') {
+            header('Allow: GET, POST'); $this->status = 405; $this->result = ['message' => '仅支持 GET 和 POST。'];
+        }
+        header('Set-Cookie: ' . Cookie::header(session_name(), session_id(), $this->base, $this->secure), false);
+        header('Cache-Control: no-store');
+        $csp = "default-src 'self'; script-src 'self' https://challenges.cloudflare.com; style-src 'self'; img-src 'self' data:; frame-src https://challenges.cloudflare.com; connect-src 'self' https://challenges.cloudflare.com; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+        foreach (SecurityHeaders::build($csp, false) as $name => $value) { header($name . ': ' . $value); }
+        http_response_code($this->status);
+        $state = $this->state();
+        if (strpos($_SERVER['HTTP_ACCEPT'] ?? '', 'application/json') !== false) {
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode(['module' => $module, 'result' => $this->result,
+                'controls_token' => $this->ui->issue('controls', $this->binding), 'state' => $state]);
+            return;
+        }
+        header('Content-Type: text/html; charset=utf-8');
+        $this->render($state);
+    }
+
+    private function input(string $name, int $maximum = 1024): string
+    {
+        $value = $_POST[$name] ?? '';
+        if (!is_string($value) || strlen($value) > $maximum || !preg_match('//u', $value)) {
+            throw new \InvalidArgumentException('Invalid input.');
+        }
+        return $value;
+    }
+
+    private function csrf(): CsrfTokens
+    {
+        $clock = new DemoClock('csrf');
+        return new CsrfTokens(new SessionStore('demo-csrf', $clock), 30, 16, $clock);
+    }
+    private function captcha(): Captcha
+    {
+        $clock = new DemoClock('captcha');
+        return new Captcha(new SessionStore('demo-captcha', $clock), 30, 3, 4, $clock);
+    }
+    private function limiter(): RateLimiter
+    {
+        // Visitor-owned playground bans stay in Session; abandoned permanent bans cannot fill disk.
+        // The entry's separate IP budget uses shared FileStore before a session is created.
+        return new RateLimiter(new SessionStore('demo-rate'), new Policy(3, 10, [5, 15], 60));
+    }
+    private function resetTokens(): ResetTokens { return new ResetTokens(new SessionStore('demo-reset'), 120); }
+    private function resetBinding(): string { return $this->binding . ':' . ($_SESSION['demo_password_version'] ?? 1); }
+    private function session(): SessionSecurity { return new SessionSecurity(10, 30, 'demo-playground', new DemoClock('session')); }
+
+    private function storageBackend(string $backend, bool $other = false): AtomicStore
+    {
+        $namespace = $other ? 'demo-storage-other' : 'demo-storage';
+        if ($backend === 'session') { return new SessionStore($namespace); }
+        if ($backend === 'file') { return new FileStore($this->directory, $namespace); }
+        if ($backend === 'memory') { return new MemoryStore(); }
+        if ($backend === 'redis') {
+            $socket = getenv('SOSECURITY_DEMO_REDIS_SOCKET');
+            if (!$socket || !extension_loaded('redis')) { throw new \InvalidArgumentException('Demo Redis is not configured.'); }
+            $redis = new \Redis();
+            if (!$redis->connect($socket, 0, 2.0)) { throw new \RuntimeException('Demo Redis unavailable.'); }
+            return new RedisStore($redis, $namespace);
+        }
+        throw new \InvalidArgumentException('Unsupported backend.');
+    }
+    private function checked(bool $valid, string $success = '验证通过。', string $failure = '验证被拒绝。'): void
+    {
+        $this->status = $valid ? 200 : 403;
+        $this->result = ['valid' => $valid, 'message' => $valid ? $success : $failure];
+    }
+    private function record(string $event, bool $allowed): void
+    {
+        $logger = new AuditLogger(function (array $entry) {
+            $_SESSION['demo_events'][] = $entry;
+            $_SESSION['demo_events'] = array_slice($_SESSION['demo_events'], -20);
+        }, $_SESSION['demo_audit_key']);
+        $logger->record($event, 'demo', 'demo-visitor', ['allowed' => $allowed, 'status' => $this->status]);
+    }
+
+    private function dispatch(string $action): void
+    {
+        switch ($this->module) {
+            case 'captcha':
+                if (in_array($action, ['math', 'image', 'refresh'], true)) {
+                    if ($action === 'refresh') { $this->captcha()->revoke('playground', $this->binding); }
+                    $challenge = $action === 'image' ? $this->captcha()->image('playground', $this->binding)
+                        : $this->captcha()->arithmetic('playground', $this->binding);
+                    $_SESSION['demo_challenge'] = ['id' => $challenge->id, 'prompt' => $challenge->prompt,
+                        'image' => $challenge->image === null ? null : 'data:image/png;base64,' . base64_encode($challenge->image),
+                        'expires_at' => $challenge->expiresAt];
+                    $this->result = ['message' => '已生成挑战；成功验证后不能重复使用。'];
+                } elseif ($action === 'expire') {
+                    (new DemoClock('captcha'))->advance(31);
+                    $this->result = ['message' => '仅将当前访客验证码的演示时钟推进 31 秒；现在提交会被拒绝。'];
+                } elseif ($action === 'turnstile') {
+                    $secret = getenv('SOSECURITY_DEMO_TURNSTILE_SECRET');
+                    $siteKey = getenv('SOSECURITY_DEMO_TURNSTILE_SITE_KEY');
+                    if (!$secret || !$siteKey) {
+                        $this->status = 503; $this->result = ['message' => 'Turnstile 尚未配置，未执行外部服务验证。'];
+                    } else {
+                        $provider = new Turnstile($secret, getenv('SOSECURITY_DEMO_TURNSTILE_HOST') ?: '72.rocky.wsl', 'demo');
+                        $this->checked($provider->verify($_POST['cf-turnstile-response'] ?? null));
+                    }
+                } else {
+                    $this->checked($this->captcha()->verify('playground', $this->binding,
+                        $this->input('challenge_id', 32), $this->input('answer', 32)), '验证码通过，已失效。', '验证码错误、已过期、已使用或次数耗尽。');
+                }
+                break;
+            case 'csrf':
+                if ($action === 'issue') {
+                    $_SESSION['demo_csrf_token'] = $this->csrf()->issue('playground', $this->binding);
+                    $this->result = ['message' => '已生成有效期 30 秒的演示令牌。'];
+                } elseif ($action === 'expire') {
+                    (new DemoClock('csrf'))->advance(31); $this->result = ['message' => '演示时钟已推进 31 秒，请再次验证。'];
+                } elseif ($action === 'revoke') {
+                    $this->csrf()->revoke('playground', $this->binding); $this->result = ['message' => '当前场景令牌已撤销。'];
+                } else {
+                    $token = $action === 'replay' ? ($_SESSION['demo_csrf_used'] ?? '') : $this->input('token', 64);
+                    if ($action === 'tamper' && strlen($token) === 64) { $token[0] = $token[0] === 'a' ? 'b' : 'a'; }
+                    if ($action === 'once') { $_SESSION['demo_csrf_used'] = $token; }
+                    $this->checked($this->csrf()->verify($action === 'cross_scope' ? 'other' : 'playground',
+                        $this->binding, $token, in_array($action, ['once', 'replay'], true)));
+                }
+                break;
+            case 'rate':
+                if ($action === 'reset') {
+                    $this->limiter()->reset('playground', $this->binding); $this->result = ['message' => '仅重置当前访客的演示额度。'];
+                } elseif ($action === 'ban' || $action === 'permanent') {
+                    $this->limiter()->ban('playground', $this->binding, $action === 'ban' ? 5 : null);
+                    $this->result = ['message' => $action === 'ban' ? '已临时封禁 5 秒。' : '已人工永久封禁，可使用重置按钮解除。'];
+                } else {
+                    $decision = $this->limiter()->consume('playground', $this->binding);
+                    $this->status = $decision->allowed ? 200 : ($decision->permanent ? 403 : 429);
+                    if (!$decision->allowed && !$decision->permanent) { header('Retry-After: ' . $decision->retryAfter); }
+                    $this->result = ['allowed' => $decision->allowed, 'remaining' => $decision->remaining,
+                        'retry_after' => $decision->retryAfter, 'permanent' => $decision->permanent];
+                }
+                break;
+            case 'password':
+                $hasher = new PasswordHasher('bcrypt', ['cost' => 10]);
+                $password = $this->input('password', 72);
+                if ($action === 'hash') {
+                    $_SESSION['demo_hash'] = $hasher->hash($password); $this->result = ['message' => '哈希已生成；明文不会保存或回填。', 'hash' => $_SESSION['demo_hash']];
+                } elseif ($action === 'verify') {
+                    $this->checked($hasher->verify($password, $_SESSION['demo_hash'] ?? ''));
+                } elseif ($action === 'policy') {
+                    $errors = (new PasswordPolicy())->errors($password);
+                    $this->status = $errors ? 400 : 200; $this->result = ['errors' => $errors, 'valid' => !$errors];
+                } else {
+                    $upgrade = $hasher->verifyAndUpgrade($password, md5(self::TEST_PASSWORD), function ($plain, $stored) {
+                        return hash_equals($stored, md5($plain));
+                    });
+                    $this->checked($upgrade->valid);
+                    if ($upgrade->replacementHash !== null) { $this->result['replacement_hash'] = $upgrade->replacementHash; }
+                }
+                break;
+            case 'reset':
+                if ($action === 'issue') {
+                    $_SESSION['demo_reset_token'] = $this->resetTokens()->issue($this->resetBinding());
+                    $this->result = ['message' => '已生成演示重置令牌，有效期 120 秒。'];
+                } elseif ($action === 'change_version') {
+                    $this->resetTokens()->revoke($this->resetBinding());
+                    $_SESSION['demo_password_version'] = ($_SESSION['demo_password_version'] ?? 1) + 1;
+                    $this->result = ['message' => '演示账号版本已更新，旧令牌不能再使用。'];
+                } else {
+                    $token = $action === 'replay' ? ($_SESSION['demo_reset_used'] ?? '') : $this->input('token', 64);
+                    if ($action === 'consume') { $_SESSION['demo_reset_used'] = $token; }
+                    $this->checked($this->resetTokens()->consume($this->resetBinding(), $token));
+                }
+                break;
+            case 'session':
+                if ($action === 'rotate') { $this->session()->rotate(); $this->result = ['message' => 'Session ID 已更新，演示页面只显示摘要指纹。']; }
+                elseif ($action === 'invalidate') { $this->session()->invalidate(); $this->checked($this->session()->touch()); }
+                else {
+                    if ($action === 'idle') { (new DemoClock('session'))->advance(11); }
+                    if ($action === 'absolute') { (new DemoClock('session'))->advance(31); }
+                    $this->checked($this->session()->touch(), '会话检查通过。', '会话已失效，需要重新建立演示会话基线。');
+                }
+                break;
+            case 'http':
+                if ($action === 'resolve') {
+                    $rules = preg_split('/\s*,\s*/', trim($this->input('trusted', 1024)), -1, PREG_SPLIT_NO_EMPTY);
+                    $resolved = (new ClientIp(new IpRules($rules)))->resolve([
+                        'REMOTE_ADDR' => $this->input('remote', 64), 'HTTP_X_FORWARDED_FOR' => $this->input('forwarded', 2048)]);
+                    $this->result = ['resolved_ip' => $resolved, 'message' => '这是隔离的代理输入演示，不会改变实际请求信任配置。'];
+                } else {
+                    $this->result = ['headers' => SecurityHeaders::build($this->input('csp', 2048), true),
+                        'cookie_example' => Cookie::header('demo_token', 'example', '/', true, true, 'Lax', 300),
+                        'message' => '仅展示建议值，不将输入的 CSP 或 Cookie 应用到站点。'];
+                }
+                break;
+            case 'output':
+                $input = $this->input('text', 4096);
+                $this->result = ['html' => Escaper::html($input), 'javascript_json' => Escaper::json($input),
+                    'url_component' => Escaper::urlComponent($input)];
+                break;
+            case 'audit':
+                if ($action === 'clear') { $_SESSION['demo_events'] = []; $this->result = ['message' => '已清除此前日志，并保留本次清空操作记录。']; }
+                else {
+                    $logger = new AuditLogger(function ($entry) { $_SESSION['demo_events'][] = $entry; }, $_SESSION['demo_audit_key']);
+                    $logger->record('login.failed', 'demo', 'sample-account',
+                        ['password' => 'DEMO-SENSITIVE-VALUE', 'token' => 'DEMO-TOKEN', 'allowed' => false, 'status' => 401]);
+                    $this->result = ['message' => '演示敏感字段未写入日志，主体使用独立密钥假名化。'];
+                }
+                break;
+            case 'storage':
+                $backend = $this->input('backend', 16);
+                $key = 'demo-counter:' . hash('sha256', $this->binding);
+                $operation = function ($value) use ($action) {
+                    $count = $value['count'] ?? 0;
+                    if ($action === 'increment') { ++$count; }
+                    return new Change($count > 0 ? ['count' => $count] : null, time() + 60, $count);
+                };
+                $count = $this->storageBackend($backend)->transact($key, $operation);
+                $this->result = ['backend' => $backend, 'count' => $count];
+                if ($action === 'isolation') {
+                    $this->result['other_namespace_count'] = $this->storageBackend($backend, true)->transact($key, $operation);
+                }
+                $_SESSION['demo_storage_result'] = $this->result;
+                break;
+        }
+    }
+
+    private function state(): array
+    {
+        switch ($this->module) {
+            case 'captcha': return ['challenge' => $_SESSION['demo_challenge'] ?? null,
+                'turnstile_configured' => (bool) (getenv('SOSECURITY_DEMO_TURNSTILE_SECRET') && getenv('SOSECURITY_DEMO_TURNSTILE_SITE_KEY'))];
+            case 'csrf': return ['token' => $_SESSION['demo_csrf_token'] ?? null];
+            case 'rate': $decision = $this->limiter()->inspect('playground', $this->binding);
+                return ['allowed' => $decision->allowed, 'remaining' => $decision->remaining, 'retry_after' => $decision->retryAfter, 'permanent' => $decision->permanent];
+            case 'password': return ['hash' => $_SESSION['demo_hash'] ?? null];
+            case 'reset': return ['token' => $_SESSION['demo_reset_token'] ?? null, 'version' => $_SESSION['demo_password_version'] ?? 1];
+            case 'session': $valid = $this->session()->touch();
+                return ['valid' => $valid, 'fingerprint' => substr(hash('sha256', session_id()), 0, 12), 'idle_seconds' => 10, 'absolute_seconds' => 30];
+            case 'audit': return ['events' => array_slice($_SESSION['demo_events'], -20)];
+            case 'storage': return ['last_operation' => $_SESSION['demo_storage_result'] ?? null,
+                'redis_configuration' => getenv('SOSECURITY_DEMO_REDIS_SOCKET') ? '已配置，操作时检查连接' : '未配置，未执行 Redis 演示'];
+            default: return [];
+        }
+    }
+
+    private function form(string $content): void
+    {
+        echo '<form method="post" data-demo-form><input type="hidden" name="_csrf" value="'
+            . Escaper::html($this->ui->issue('controls', $this->binding)) . '">' . $content
+            . '<button class="secondary" type="button" data-ajax>AJAX 提交所选操作</button><output class="ajax-output" aria-live="polite"></output></form>';
+    }
+    private function button(string $action, string $label): string
+    {
+        return '<button type="submit" name="action" value="' . $action . '">' . $label . '</button>';
+    }
+    private function render(array $state): void
+    {
+        echo '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+            . '<title>' . self::MODULES[$this->module] . ' · SoSecurity</title><link rel="stylesheet" href="styles.css"><script src="app.js" defer></script></head><body>'
+            . '<aside><a class="brand" href="?module=home">SoSecurity<span>PHP 安全组件演示</span></a><nav>';
+        foreach (self::MODULES as $id => $label) {
+            echo '<a href="?module=' . $id . '"' . ($id === $this->module ? ' aria-current="page"' : '') . '>' . $label . '</a>';
+        }
+        echo '</nav><p class="aside-note">0.1.0-dev<br>PHP ' . Escaper::html(PHP_VERSION) . '<br>无需框架</p></aside><main><header><span class="eyebrow">可操作的功能演示</span><h1>'
+            . self::MODULES[$this->module] . '</h1><p>使用测试数据体验实际组件。每位访客的令牌、操作状态和日志独立保存。</p></header>';
+        if ($this->result !== null) {
+            echo '<section class="result" role="status"><h2>本次结果 · HTTP ' . $this->status . '</h2><pre>'
+                . Escaper::html(json_encode($this->result, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) . '</pre></section>';
+        }
+        echo '<section class="panel">';
+        switch ($this->module) {
+            case 'home':
+                echo '<div class="cards">';
+                $descriptions = ['captcha' => '图片与算术、错误次数、刷新和单次使用', 'csrf' => '正常验证、篡改、跨场景、过期和重放',
+                    'rate' => '请求预算、阶梯封禁、手动封禁与解除', 'password' => '哈希验证、基本策略和旧密码升级',
+                    'reset' => '一次性令牌与密码版本绑定', 'session' => '标识更新、空闲超时与绝对超时',
+                    'http' => '可信代理链、响应头和安全 Cookie', 'output' => 'HTML、JSON 数据与 URL 组件编码', 'audit' => '结构化记录、字段白名单和主体假名化', 'storage' => '原子计数、跨请求保存与命名空间隔离'];
+                foreach ($descriptions as $id => $description) {
+                    echo '<a class="card" href="?module=' . $id . '"><h2>' . self::MODULES[$id] . '</h2><p>' . $description . '</p><span>打开演示 →</span></a>';
+                }
+                echo '</div><p class="note">上传、MySQL 存储、SSRF 和 API 签名尚未实现；后续交付会同步增加演示。Turnstile 需配置真实服务密钥后启用。演示不等于生产环境或独立安全审计验收。</p>';
+                break;
+            case 'captcha':
+                echo '<h2>生成与验证</h2><p>有效期 30 秒，最多错误 3 次；成功后再次提交会被拒绝。</p>';
+                $this->form($this->button('math', '生成算术验证码') . $this->button('image', '生成图片验证码') . $this->button('refresh', '刷新并撤销旧挑战') . $this->button('expire', '模拟过期'));
+                if ($state['challenge']) {
+                    $challenge = $state['challenge'];
+                    echo '<div class="challenge">' . ($challenge['image'] ? '<img alt="图片验证码" src="' . Escaper::html($challenge['image']) . '">' : '<strong>' . Escaper::html($challenge['prompt']) . '</strong>') . '</div>';
+                    $this->form('<input type="hidden" name="challenge_id" value="' . Escaper::html($challenge['id']) . '"><label>答案<input name="answer" maxlength="32" autocomplete="off"></label>' . $this->button('verify', '验证答案'));
+                }
+                echo '<h2>Cloudflare Turnstile</h2>';
+                if ($state['turnstile_configured']) {
+                    echo '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" defer></script>';
+                    $this->form('<div class="cf-turnstile" data-sitekey="' . Escaper::html(getenv('SOSECURITY_DEMO_TURNSTILE_SITE_KEY')) . '" data-action="demo"></div>' . $this->button('turnstile', '服务端验证'));
+                } else { echo '<p class="note">尚未配置真实服务，外部验证未执行。算术与图片验证码可以直接体验。</p>'; }
+                break;
+            case 'csrf':
+                echo '<h2>令牌生命周期</h2><p>普通验证允许重用；单次消费后的重放会被拒绝。篡改和跨场景按钮使用实际验证器。</p>';
+                $this->form('<label>演示令牌<input name="token" maxlength="64" value="' . Escaper::html($state['token'] ?? '') . '"></label>'
+                    . $this->button('issue', '生成令牌') . $this->button('verify', '正常验证') . $this->button('tamper', '篡改后验证')
+                    . $this->button('cross_scope', '跨场景验证') . $this->button('once', '单次消费') . $this->button('replay', '重放已消费令牌')
+                    . $this->button('expire', '模拟过期') . $this->button('revoke', '撤销令牌'));
+                break;
+            case 'rate':
+                echo '<h2>三次额度与封禁</h2><p>10 秒窗口允许 3 次请求，第 4 次触发 5 秒封禁；下一次越限封禁 15 秒。刷新页面查看恢复状态。</p><p class="note">此页仅限流当前访客的演示会话。实际跨会话 IP/账号限流需使用共享文件或 Redis；入口另有共享文件请求预算。</p>';
+                $this->form($this->button('consume', '发送一次请求') . $this->button('ban', '临时封禁 5 秒')
+                    . $this->button('permanent', '人工永久封禁') . $this->button('reset', '解除并重置'));
+                break;
+            case 'password':
+                echo '<h2>原生哈希与验证</h2><p>仅输入测试密码，提交后不会回填明文。演示使用 bcrypt cost=10，组件默认 cost=12。</p>';
+                $this->form('<label>测试密码<input type="password" name="password" maxlength="72" autocomplete="off"></label>'
+                    . $this->button('hash', '生成哈希') . $this->button('verify', '验证当前哈希') . $this->button('policy', '检查密码策略') . $this->button('legacy', '旧 MD5 哈希升级'));
+                echo '<p class="note">旧哈希升级仅演示已知格式的显式验证器。测试密码：<code>' . self::TEST_PASSWORD . '</code>。不建议新系统使用 MD5。</p>';
+                break;
+            case 'reset':
+                echo '<h2>重置令牌</h2><p>有效期 120 秒，一次性消费；更新演示账号密码版本后，旧令牌会失效。这里不会修改真实账号或发送邮件。</p>';
+                $this->form('<label>演示令牌<input name="token" maxlength="64" value="' . Escaper::html($state['token'] ?? '') . '"></label>'
+                    . $this->button('issue', '生成令牌') . $this->button('consume', '消费令牌') . $this->button('replay', '重复消费') . $this->button('change_version', '更新密码版本'));
+                break;
+            case 'session':
+                echo '<h2>会话状态</h2><p>演示空闲期限 10 秒、绝对期限 30 秒。过期模拟仅推进当前访客的演示时钟；更新标识会建立新的演示基线。</p>';
+                $this->form($this->button('touch', '检查并更新活动时间') . $this->button('idle', '模拟空闲过期') . $this->button('absolute', '模拟绝对过期')
+                    . $this->button('rotate', '更新 Session ID') . $this->button('invalidate', '标记失效'));
+                break;
+            case 'http':
+                echo '<h2>可信代理解析</h2><p>默认不信任转发头；下面的输入仅用于隔离模拟，不会配置网站的真实代理。</p>';
+                $this->form('<label>直接连接地址<input name="remote" value="10.0.0.1"></label><label>可信代理 CIDR（逗号分隔）<input name="trusted" value="10.0.0.0/8"></label>'
+                    . '<label>X-Forwarded-For<input name="forwarded" value="1.1.1.1, 203.0.113.2, 10.0.0.2"></label>' . $this->button('resolve', '解析客户端 IP'));
+                echo '<h2>响应头示例</h2>';
+                $this->form('<label>CSP 策略<input name="csp" value="default-src &#039;self&#039;"></label>' . $this->button('headers', '生成 Report-Only 与 Cookie 示例'));
+                break;
+            case 'output':
+                echo '<h2>上下文编码</h2><p>结果以文本显示，输入不会被作为 HTML 或脚本执行。URL 组件编码不等于 URL 安全策略。</p>';
+                $this->form('<label>测试文本<textarea name="text" rows="4">&lt;script&gt;alert("demo")&lt;/script&gt;</textarea></label>' . $this->button('encode', '查看编码结果'));
+                break;
+            case 'audit':
+                echo '<h2>白名单与假名化</h2><p>日志仅保存在当前访客的演示 Session，最多显示 20 条；不连接生产日志系统。</p>';
+                $this->form($this->button('record', '记录含模拟敏感字段的事件') . $this->button('clear', '清空演示日志'));
+                break;
+            case 'storage':
+                echo '<h2>原子计数与隔离</h2><p>Session 与文件存储能跨请求保存计数，60 秒过期；内存存储只存在于本次请求。隔离检查读取另一个命名空间的同名键。</p>';
+                $options = '<option value="session">Session</option><option value="file">本地文件</option><option value="memory">测试用内存</option>';
+                if (getenv('SOSECURITY_DEMO_REDIS_SOCKET')) { $options .= '<option value="redis">Redis</option>'; }
+                $this->form('<label>存储后端<select name="backend">' . $options . '</select></label>'
+                    . $this->button('increment', '原子递增') . $this->button('read', '读取计数') . $this->button('isolation', '检查隔离'));
+                echo '<p class="note">Redis 需要服务端配置独立连接；未配置时不会模拟为真实 Redis。内存存储不能用于生产请求限流。</p>';
+                break;
+        }
+        echo '</section>';
+        if ($state) {
+            $display = $state;
+            if (isset($display['challenge']['image']) && $display['challenge']['image'] !== null) {
+                $display['challenge']['image'] = '[PNG 图片已在上方显示]';
+            }
+            echo '<section class="panel"><h2>当前状态</h2><pre data-demo-state>' . Escaper::html(json_encode($display, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) . '</pre></section>';
+        }
+        $examples = [
+            'captcha' => '$captcha = new SoSecurity\\Captcha\\Captcha($store);' . "\n" . '$challenge = $captcha->arithmetic("login", $binding);' . "\n" . '$valid = $captcha->verify("login", $binding, $challengeId, $answer);',
+            'csrf' => '$csrf = new SoSecurity\\Csrf\\CsrfTokens($store);' . "\n" . '$token = $csrf->issue("contact", $binding);' . "\n" . '$valid = $csrf->verify("contact", $binding, $submittedToken);',
+            'rate' => '$limiter = new SoSecurity\\RateLimit\\RateLimiter($store);' . "\n" . '$decision = $limiter->consume("login", $ipAccountKey);' . "\n" . '// 拒绝时结束业务；验证密码前预占额度。',
+            'password' => '$hasher = new SoSecurity\\Password\\PasswordHasher();' . "\n" . '$hash = $hasher->hash($password);' . "\n" . '$valid = $hasher->verify($password, $storedHash);',
+            'reset' => '$tokens = new SoSecurity\\Password\\ResetTokens($store);' . "\n" . '$token = $tokens->issue($accountAndPasswordVersion);' . "\n" . '$valid = $tokens->consume($accountAndPasswordVersion, $submittedToken);',
+            'session' => '$security = new SoSecurity\\Session\\SessionSecurity();' . "\n" . '$valid = $security->touch();' . "\n" . '// 宿主先启动 Session，检查失败后清除认证状态。',
+            'http' => '$trusted = new SoSecurity\\Http\\IpRules(["10.0.0.10/32"]);' . "\n" . '$ip = (new SoSecurity\\Http\\ClientIp($trusted))->resolve($_SERVER);',
+            'output' => '$text = SoSecurity\\Output\\Escaper::html($input);' . "\n" . '$data = SoSecurity\\Output\\Escaper::json($input);',
+            'audit' => '$logger = new SoSecurity\\Audit\\AuditLogger($sink, $independentKey);' . "\n" . '$logger->record("login.failed", "login", $accountId, ["status" => 401]);',
+            'storage' => '$store = new SoSecurity\\Storage\\SessionStore("my-site");' . "\n" . '// 验证码与 CSRF 可使用持锁 Session；跨 Session 限流选文件或 Redis。',
+        ];
+        if (isset($examples[$this->module])) {
+            echo '<section class="panel"><details><summary>接入时的核心调用</summary><p>以下是 API 片段，存储、服务器侧绑定及业务变量由宿主初始化。</p><pre>'
+                . Escaper::html($examples[$this->module]) . '</pre></details></section>';
+        }
+        echo '<footer>SoSecurity · 本地功能演示 · 数据不会写入真实业务账号</footer></main></body></html>';
+    }
+}
