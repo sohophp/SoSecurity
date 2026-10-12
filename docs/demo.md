@@ -10,6 +10,7 @@
 | 验证码 | 算术/PNG图片生成，正确/错误答案，错误次数耗尽，成功后重放，刷新撤销和过期 |
 | CSRF | 生成、普通验证、篡改、跨场景、单次消费、重放、撤销和过期 |
 | 限流与封禁 | 3次额度、5秒/15秒阶梯封禁、人工临时/永久封禁、解除和剩余等待时间 |
+| 上传安全 | 原生multipart、JPEG/PNG私有保存、正常/伪装/大小/路径/图片预算、隔离扫描与目录故障；当前访客清理 |
 | 输入验证 | 严格类型、Unicode长度、枚举、格式、嵌套字段与本地化错误；正常/错误/未知字段及可编辑JSON |
 | 密码安全 | bcrypt哈希及验证、长度/编码策略、显式已知MD5格式迁移 |
 | 重置令牌 | 单次消费、重复消费、密码版本变更后旧令牌失效 |
@@ -53,7 +54,7 @@ sudo -u apache php72 /var/www/php/7.2/soSecurity/bin/demo-cleanup.php
 - `SOSECURITY_DEMO_TURNSTILE_SITE_KEY` 与 `SOSECURITY_DEMO_TURNSTILE_SECRET`：同时配置后显示真实widget，后端调用Siteverify。
 - `SOSECURITY_DEMO_TURNSTILE_HOST`：固定的预期hostname，默认72.rocky.wsl；widget action固定demo。应确认服务是否支持配置的本地域名，不能关闭hostname/action校验来让演示显示通过。
 
-密钥只在服务端配置，不通过演示表单保存。没有实际配置与服务响应前，不把外部能力标记为已验收。当前MySQL已接入存储页，输入验证有独立页面；上传、SSRF和API签名将在各自实现后增加对应页面，不预先放置虚假成功按钮。
+密钥只在服务端配置，不通过演示表单保存。没有实际配置与服务响应前，不把外部能力标记为已验收。当前MySQL已接入存储页，输入验证有独立页面；SSRF和API签名将在各自实现后增加对应页面，不预先放置虚假成功按钮。
 
 ## 自动化与浏览器验收
 
@@ -96,3 +97,20 @@ SOSECURITY_PLAYWRIGHT_MODULE=/absolute/path/to/playwright node tests/browser.cjs
 ```
 
 已实际验证新增验证页AJAX/422/本地化、HTML字符串不执行、MySQL真实计数/命名空间/访客隔离及390像素手机宽度。脚本只在MySQL已配置时验收该后端，否则明确输出未执行。
+
+## 上传演示与清理
+
+上传页面使用真实组件和原生multipart。单个JPEG/PNG最多1MiB、100万像素，每访客最多3个；全局最多32个/16MiB，10分钟保留。私有payload在 `/var/lib/sosecurity-demo/uploads`，0700目录/0600文件；没有公开下载或执行路由，页面不返回绝对路径。Apache入口声明2MiB请求体限制；本机旧版proxy_fcgi实测未执行普通LimitRequestBody，已用mod_rewrite在请求头阶段拒绝超限（413）及chunked/无长度POST（411），不更改其他网站限制。浏览器表单和FormData使用已知长度。
+
+“我的文件”与清理范围来自服务器Session记录，不接受文件名/目录请求参数。全局容量检查与过期清理受300ms有界锁保护，不通过换Session绕过整体容量。CLI `bin/demo-cleanup.php` 同时清理过期payload，保留静态锁；不删除私有MySQL配置或数据库。已保存文件只在成功写入后登记。
+
+固定故障按钮使用私有测试源或隔离目录，不清空共享存储，也不连接真实恶意文件扫描服务。MIME/重编码通过不能等同于AV通过；状态明确标记未配置真实扫描服务。
+
+```sh
+python3 tests/upload_demo.py php72
+python3 tests/upload_demo.py php85
+python3 tests/upload_demo.py --url http://72.rocky.wsl/SoSecurity/
+python3 tests/upload_http.py php72
+```
+
+完整demo.py与upload_demo.py针对实际入口执行时应分开请求窗口，保留100次/60秒入口预算，不能为测试关闭限流。隔离服务器各用自己的私有目录，不共享预算。当前新增页面Chromium已验证实际文件选择/AJAX保存、伪装拒绝、扫描故障和手机宽度；没有把固定测试扫描器当真实AV服务。

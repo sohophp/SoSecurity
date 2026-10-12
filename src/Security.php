@@ -64,6 +64,15 @@ final class Security
     {
         $options = $this->config->password(); return new Password\PasswordPolicy($options['minimum'], $options['maximum_bytes']);
     }
+    public function uploader(): Upload\Saver
+    {
+        $options = $this->config->upload();
+        if ($options === null) { throw new ConfigurationException('Configure private upload storage.', 'configuration.upload'); }
+        $scanner = isset($options['scanner']) ? ($this->services[$options['scanner']] ?? null) : null;
+        if (isset($options['scanner']) && !$scanner instanceof Upload\Scanner) { throw new ConfigurationException('Inject a Scanner adapter.', 'configuration.scanner'); }
+        $policy = new Upload\Policy(array_diff_key($options, array_flip(['directory', 'document_root', 'scanner'])));
+        return new Upload\Saver(new Upload\Validator($policy), $options['directory'], $options['document_root'], $scanner);
+    }
     public function session(): Session\SessionSecurity
     {
         $options = $this->config->session();

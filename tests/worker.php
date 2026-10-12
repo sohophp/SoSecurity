@@ -22,6 +22,9 @@ if ($operation === 'rate') {
     echo (new CsrfTokens($store))->verify('form', 'binding', $argv[4], true) ? '1' : '0';
 } elseif ($operation === 'captcha') {
     echo (new Captcha($store))->verify('form', 'binding', $argv[4], $argv[5]) ? '1' : '0';
+} elseif ($operation === 'upload') {
+    (new SoSecurity\Upload\Saver(new SoSecurity\Upload\Validator(), $target, $argv[5]))->saveFile($argv[4], 'same-name.png');
+    echo '1';
 } elseif ($operation === 'reset' && $kind === 'mysql') {
     require dirname(__DIR__) . '/examples/password-reset.php';
     $tokens = explode(',', $argv[4]);

@@ -23,10 +23,17 @@ if (($argv[1] ?? '') !== '--isolated-write-child') {
     echo $output;
     exit(0);
 }
-$directory = privateDirectory();
+$directory = privateDirectory(); $web = privateDirectory();
 try {
     $store = new FileStore($directory, 'write-failure');
     $store->transact('key', function () { return new Change(['original' => true], 0, null); });
+    $uploader = null; $published = null;
+    if (extension_loaded('gd') && extension_loaded('fileinfo')) {
+        $image = imagecreatetruecolor(2, 2); imagepng($image, $directory . '/upload-source');
+        if (is_resource($image)) { imagedestroy($image); } unset($image);
+        $uploader = new SoSecurity\Upload\Saver(new SoSecurity\Upload\Validator(), $directory, $web);
+        $published = $uploader->saveFile($directory . '/upload-source', 'normal.png');
+    }
     // Limits apply ONLY to this standalone test process. Simulate an actual partial OS write, not a fake store.
     pcntl_signal(SIGXFSZ, SIG_IGN);
     Check::same(true, posix_setrlimit(POSIX_RLIMIT_FSIZE, 16, 16));
@@ -35,5 +42,10 @@ try {
     });
     Check::same(['original' => true], $store->transact('key', function ($value) { return new Change(null, 0, $value); }));
     Check::same([], glob($directory . '/.write-*'));
-} finally { cleanDirectory($directory); }
+    if ($uploader !== null) {
+        Check::throws(StorageException::class, function () use ($uploader, $directory) { $uploader->saveFile($directory . '/upload-source', 'normal.png'); });
+        Check::same(1, count(glob($directory . '/*.png')));
+        Check::same($published->metadata()['sha256'], hash_file('sha256', $published->path()));
+    }
+} finally { cleanDirectory($directory); cleanDirectory($web); }
 echo 'PHP ' . PHP_VERSION . ': ' . Check::$assertions . " real partial-write failure assertions passed\n";

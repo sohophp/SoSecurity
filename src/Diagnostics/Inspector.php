@@ -13,7 +13,7 @@ final class Inspector
     public function inspect(Config $config, array $services = [], ?string $documentRoot = null, bool $probe = false): array
     {
         $checks = [['check' => 'configuration', 'status' => 'pass', 'reason' => 'configuration.valid']];
-        foreach (['session', 'gd', 'curl', 'redis', 'pdo_mysql'] as $extension) {
+        foreach (['session', 'gd', 'curl', 'redis', 'pdo_mysql', 'fileinfo'] as $extension) {
             $checks[] = ['check' => 'extension.' . $extension, 'status' => extension_loaded($extension) ? 'pass' : 'optional',
                 'reason' => extension_loaded($extension) ? 'dependency.available' : 'dependency.not_installed'];
         }
@@ -64,6 +64,25 @@ final class Inspector
                 if (!$probe) { $checks[] = ['check' => $name, 'status' => 'manual', 'reason' => 'storage.connection_unverified']; continue; }
                 foreach ($this->redis($redis, $config->site() . ':' . $kind) as $item) { $item['check'] = $name . '.' . $item['check']; $checks[] = $item; }
             }
+        }
+        $upload = $config->upload();
+        if ($upload === null) { $checks[] = ['check' => 'upload', 'status' => 'not_configured', 'reason' => 'configuration.upload']; }
+        else {
+            $needsImage = count(array_intersect($upload['extensions'], ['jpg', 'jpeg', 'png', 'webp'])) > 0;
+            $ready = extension_loaded('fileinfo') && (!$needsImage || extension_loaded('gd'));
+            $checks[] = ['check' => 'upload.inspection', 'status' => $ready ? 'pass' : 'fail',
+                'reason' => $ready ? 'dependency.available' : (extension_loaded('fileinfo') ? 'dependency.gd' : 'dependency.fileinfo')];
+            $path = realpath($upload['directory']); $root = realpath($upload['document_root']);
+            $valid = $path !== false && is_dir($path) && is_writable($path) && (fileperms($path) & 0077) === 0;
+            $checks[] = ['check' => 'upload.directory', 'status' => $valid ? 'pass' : 'fail', 'reason' => $valid ? 'storage.private_directory' : 'upload.directory'];
+            $public = $path !== false && $root !== false && ($path === $root || strpos($path, rtrim($root, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR) === 0);
+            $actual = $documentRoot === null ? false : realpath($documentRoot);
+            $mismatch = $actual !== false && $root !== $actual;
+            $checks[] = ['check' => 'upload.location', 'status' => $root === false || $public || $mismatch ? 'fail' : 'pass',
+                'reason' => $root === false || $mismatch ? 'configuration.document_root' : ($public ? 'storage.web_root' : 'storage.outside_web_root')];
+            $scanner = isset($upload['scanner']) ? ($services[$upload['scanner']] ?? null) : null;
+            $checks[] = ['check' => 'upload.scanner', 'status' => $scanner instanceof \SoSecurity\Upload\Scanner ? 'manual' : ($upload['require_scan'] || isset($upload['scanner']) ? 'fail' : 'not_configured'),
+                'reason' => $scanner instanceof \SoSecurity\Upload\Scanner ? 'upload.scanner_unverified' : 'configuration.scanner'];
         }
         return $checks;
     }

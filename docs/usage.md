@@ -165,3 +165,5 @@ AuditLogger只保留allowed/retry_after/status的bool/非负int字段；其他�
 可选配置工厂、完整配置参考、只读诊断和开发候选API迁移见 [configuration.md](configuration.md)。
 
 PDO MySQL接入与事务所有权见[mysql.md](mysql.md)，严格类型/嵌套字段和本地化错误见[validation.md](validation.md)。新能力同样可以独立使用，不要求工厂或框架。
+
+上传与现有文件管理器接入见[upload.md](upload.md)：默认JPEG/PNG真实内容检查和重新编码、私有随机保存；可选PDF/txt和扫描接口有独立边界。

@@ -17,7 +17,7 @@ jobs:
       - uses: shivammathur/setup-php@d52fc211a0436f8839a587b3b5b8efddab4744ea # v2
         with:
           php-version: ${{ matrix.php }}
-          extensions: gd, redis, curl, session, pdo_sqlite, pdo_mysql, intl, pcntl, posix
+          extensions: fileinfo, gd, redis, curl, session, pdo_sqlite, pdo_mysql, intl, pcntl, posix
           tools: composer
           coverage: none
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
@@ -31,6 +31,7 @@ jobs:
           SOSECURITY_REQUIRE_HTTP: '1'
           SOSECURITY_REQUIRE_RESET: '1'
           SOSECURITY_REQUIRE_MYSQL: '1'
+          SOSECURITY_REQUIRE_UPLOAD: '1'
           SOSECURITY_REQUIRE_POSIX: '1'
       - run: bin/full-disk-check.sh php
       - run: python3 tests/install.py php "$(command -v composer)"

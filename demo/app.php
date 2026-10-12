@@ -26,6 +26,8 @@ use SoSecurity\Storage\RedisStore;
 use SoSecurity\Storage\SessionStore;
 use SoSecurity\Support\Clock;
 
+require __DIR__ . '/uploads.php';
+
 /** Only advances this visitor's demonstration time; never changes system time. */
 final class DemoClock implements Clock
 {
@@ -42,7 +44,7 @@ final class DemoApp
 {
     private const MODULES = [
         'home' => '功能总览', 'configuration' => '配置与诊断', 'captcha' => '验证码', 'csrf' => 'CSRF 防护', 'rate' => '限流与封禁',
-        'validation' => '输入验证', 'password' => '密码安全', 'reset' => '重置令牌', 'session' => '会话安全',
+        'upload' => '上传安全', 'validation' => '输入验证', 'password' => '密码安全', 'reset' => '重置令牌', 'session' => '会话安全',
         'http' => 'HTTP 与代理', 'output' => '输出编码', 'audit' => '审计日志', 'storage' => '存储与隔离',
     ];
     private const TEST_PASSWORD = 'Demo-only-7.2!';
@@ -100,6 +102,7 @@ final class DemoApp
                     'session' => ['touch', 'idle', 'absolute', 'rotate', 'invalidate'],
                     'http' => ['resolve', 'headers'], 'output' => ['encode'], 'audit' => ['record', 'clear'],
                     'storage' => ['increment', 'read', 'isolation'],
+                    'upload' => ['upload', 'normal_sample', 'fake_sample', 'size_sample', 'path_sample', 'budget_sample', 'scanner_reject', 'scanner_fail', 'store_fail', 'clear'],
                     'validation' => ['validate', 'valid_sample', 'invalid_sample', 'unknown_sample'],
                     'configuration' => ['construct', 'diagnose', 'bad_option', 'immutable', 'store_failure', 'lock_timeout'],
                 ];
@@ -112,6 +115,12 @@ final class DemoApp
                     }
                     catch (\SoSecurity\Storage\StorageException $e) {
                         $this->status = 503; $this->result = ['reason' => $e->reason(), 'message' => '存储不可用，敏感操作没有放行。'];
+                    }
+                    catch (\SoSecurity\Exception\ValidationException $e) {
+                        $this->status = $module === 'upload' ? 422 : 400; $this->result = ['reason' => $e->reason(), 'message' => $module === 'upload' ? '上传被拒绝，请检查格式、大小或演示额度。' : '输入未通过验证，请检查字段。'];
+                    }
+                    catch (\SoSecurity\Exception\SecurityException $e) {
+                        $this->status = 503; $this->result = ['reason' => $e->reason(), 'message' => '处理依赖发生故障，上传没有放行。'];
                     }
                     catch (\InvalidArgumentException $e) {
                         $this->status = 400; $this->result = ['message' => '输入格式或演示配置不正确，请检查字段。'];
@@ -252,6 +261,10 @@ final class DemoApp
                         rmdir($path);
                     }
                 }
+                break;
+            case 'upload':
+                $sandbox = new UploadSandbox($this->directory, $_SERVER['DOCUMENT_ROOT'] ?? dirname(__DIR__) . '/demo/public');
+                $this->result = $sandbox->perform($action, isset($_FILES['upload']) && is_array($_FILES['upload']) ? $_FILES['upload'] : []);
                 break;
             case 'validation':
                 $input = ['profile' => ['name' => '张小明', 'age' => 20, 'email' => 'demo@example.test', 'kind' => 'member']];
@@ -422,6 +435,8 @@ final class DemoApp
     private function state(): array
     {
         switch ($this->module) {
+            case 'upload': return ['files' => (new UploadSandbox($this->directory, $_SERVER['DOCUMENT_ROOT'] ?? dirname(__DIR__) . '/demo/public'))->files(),
+                'maximum_bytes' => 1048576, 'maximum_files' => 3, 'retention_seconds' => 600, 'scanner' => '未配置真实扫描服务，故障按钮只使用隔离测试实现'];
             case 'captcha': return ['challenge' => $_SESSION['demo_challenge'] ?? null,
                 'turnstile_configured' => (bool) (getenv('SOSECURITY_DEMO_TURNSTILE_SECRET') && getenv('SOSECURITY_DEMO_TURNSTILE_SITE_KEY'))];
             case 'csrf': return ['token' => $_SESSION['demo_csrf_token'] ?? null];
@@ -439,9 +454,9 @@ final class DemoApp
         }
     }
 
-    private function form(string $content): void
+    private function form(string $content, bool $multipart = false): void
     {
-        echo '<form method="post" data-demo-form><input type="hidden" name="_csrf" value="'
+        echo '<form method="post" data-demo-form' . ($multipart ? ' enctype="multipart/form-data"' : '') . '><input type="hidden" name="_csrf" value="'
             . Escaper::html($this->ui->issue('controls', $this->binding)) . '">' . $content
             . '<button class="secondary" type="button" data-ajax>AJAX 提交所选操作</button><output class="ajax-output" aria-live="polite"></output></form>';
     }
@@ -467,20 +482,29 @@ final class DemoApp
         switch ($this->module) {
             case 'home':
                 echo '<div class="cards">';
-                $descriptions = ['validation' => '严格类型、Unicode 长度、嵌套错误与字段白名单', 'configuration' => '简单初始化、只读诊断与故障拒绝', 'captcha' => '图片与算术、错误次数、刷新和单次使用', 'csrf' => '正常验证、篡改、跨场景、过期和重放',
+                $descriptions = ['upload' => '内容检测、图片重新编码、私有保存与故障拒绝', 'validation' => '严格类型、Unicode 长度、嵌套错误与字段白名单', 'configuration' => '简单初始化、只读诊断与故障拒绝', 'captcha' => '图片与算术、错误次数、刷新和单次使用', 'csrf' => '正常验证、篡改、跨场景、过期和重放',
                     'rate' => '请求预算、阶梯封禁、手动封禁与解除', 'password' => '哈希验证、基本策略和旧密码升级',
                     'reset' => '一次性令牌与密码版本绑定', 'session' => '标识更新、空闲超时与绝对超时',
                     'http' => '可信代理链、响应头和安全 Cookie', 'output' => 'HTML、JSON 数据与 URL 组件编码', 'audit' => '结构化记录、字段白名单和主体假名化', 'storage' => '原子计数、跨请求保存与命名空间隔离'];
                 foreach ($descriptions as $id => $description) {
                     echo '<a class="card" href="?module=' . $id . '"><h2>' . self::MODULES[$id] . '</h2><p>' . $description . '</p><span>打开演示 →</span></a>';
                 }
-                echo '</div><p class="note">上传、SSRF 和 API 签名尚未实现；MySQL 存储需要服务端配置后演示；后续交付会同步增加演示。Turnstile 需配置真实服务密钥后启用。演示不等于生产环境或独立安全审计验收。</p>';
+                echo '</div><p class="note">SSRF 和 API 签名尚未实现；MySQL 存储需要服务端配置后演示；后续交付会同步增加演示。Turnstile 需配置真实服务密钥后启用。演示不等于生产环境或独立安全审计验收。</p>';
                 break;
             case 'configuration':
                 echo '<h2>配置一次，按需使用</h2><p>工厂校验 PHP 数组配置，不自动启动 Session。诊断不修改存储；错误配置和故障演示只影响隔离的测试对象。</p>';
                 $this->form($this->button('construct', '初始化并验证 CSRF') . $this->button('diagnose', '查看只读诊断')
                     . $this->button('bad_option', '模拟配置项拼错') . $this->button('immutable', '尝试修改策略')
                     . $this->button('store_failure', '模拟存储不可用') . $this->button('lock_timeout', '模拟文件锁超时'));
+                break;
+            case 'upload':
+                echo '<h2>私有上传与内容验证</h2><p>仅上传测试用 JPEG/PNG，单文件最多 1 MiB、100 万像素，每位访客最多 3 个文件，保留 10 分钟。文件只保存到私有演示区，不提供下载或执行地址。</p>';
+                $this->form('<label>测试图片<input type="file" name="upload" accept="image/png,image/jpeg"></label>' . $this->button('upload', '校验并私有保存') . $this->button('clear', '清理我的文件'), true);
+                echo '<h2>正常、拒绝与故障测试样例</h2><p>以下按钮使用固定的私有测试数据；不能输入服务器路径或改变安全策略。</p>';
+                $this->form($this->button('normal_sample', '正常 PNG 样例') . $this->button('fake_sample', '伪装成图片的脚本')
+                    . $this->button('size_sample', '超出文件大小') . $this->button('path_sample', '路径穿越名称') . $this->button('budget_sample', '图片尺寸超预算')
+                    . $this->button('scanner_reject', '模拟扫描拒绝') . $this->button('scanner_fail', '模拟扫描故障') . $this->button('store_fail', '模拟目录不合规'));
+                echo '<p class="note">MIME 与重新编码不等于恶意文件扫描。当前没有连接真实扫描服务；图片会移除原始附加数据和元数据，JPEG会按配置质量重新压缩。</p>';
                 break;
             case 'validation':
                 echo '<h2>严格验证与字段错误定位</h2><p>JSON 数字和字符串按实际类型检查；中文长度按 Unicode 码点计算，不截断或删除输入。未声明字段被拒绝。错误代码由页面翻译，核心不绑定语言或框架。</p>';
@@ -566,6 +590,7 @@ final class DemoApp
         $examples = [
             'configuration' => '$security = SoSecurity\\Security::fromArray([' . "\n" . '    "site" => "my-site",' . "\n"
                 . '    "storage" => ["driver" => "file", "directory" => "/private/site/security"],' . "\n" . ']);' . "\n" . '$csrf = $security->csrf();',
+            'upload' => '$validator = new SoSecurity\\Upload\\Validator();' . "\n" . '$saver = new SoSecurity\\Upload\\Saver($validator, $privateDirectory, $actualDocumentRoot);' . "\n" . '$saved = $saver->saveUpload($_FILES["file"]);' . "\n" . '// 业务授权、CSRF、请求预算和保留清理由宿主提供。',
             'validation' => '$validator = new SoSecurity\\Validation\\Validator(["age" => ["type" => "integer", "min" => 18]]);' . "\n" . '$result = $validator->validate($input);' . "\n" . 'if ($result->valid()) { $data = $result->data(); }',
             'captcha' => '$captcha = new SoSecurity\\Captcha\\Captcha($store);' . "\n" . '$challenge = $captcha->arithmetic("login", $binding);' . "\n" . '$valid = $captcha->verify("login", $binding, $challengeId, $answer);',
             'csrf' => '$csrf = new SoSecurity\\Csrf\\CsrfTokens($store);' . "\n" . '$token = $csrf->issue("contact", $binding);' . "\n" . '$valid = $csrf->verify("contact", $binding, $submittedToken);',

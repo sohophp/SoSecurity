@@ -4,3 +4,17 @@ DirectoryIndex index.php
 <FilesMatch "^\.">
     Require all denied
 </FilesMatch>
+
+# Also declare the generic body limit; real proxy paths require explicit pre-FPM checks below.
+LimitRequestBody 2097152
+
+# The local older proxy_fcgi path does not enforce LimitRequestBody itself.
+# Demo form/fetch requests have known lengths; reject streaming/unknown-length POST before FPM.
+RewriteEngine On
+RewriteCond expr "req('Transfer-Encoding') != ''"
+RewriteRule ^ - [R=411,L]
+RewriteCond %{REQUEST_METHOD} =POST
+RewriteCond expr "req('Content-Length') !~ /^[0-9]+$/"
+RewriteRule ^ - [R=411,L]
+RewriteCond expr "req('Content-Length') =~ /^[0-9]+$/ && (req('Content-Length') =~ /^[0-9]{8,}$/ || req('Content-Length') -gt 2097152)"
+RewriteRule ^ - [R=413,L]

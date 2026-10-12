@@ -68,6 +68,20 @@ try {
         }
         echo "PASS $kind: 24 competing processes per scenario; exactly 5 requests, 1 CSRF consume, 1 CAPTCHA consume accepted\n";
     }
+    if (extension_loaded('gd') && extension_loaded('fileinfo')) {
+        $web = privateDirectory(); $source = $directory . '/upload-source';
+        try {
+            $image = imagecreatetruecolor(2, 2); imagepng($image, $source);
+            if (is_resource($image)) { imagedestroy($image); } unset($image);
+            Check::same(24, parallelSuccesses('file', $directory, 'upload', [$source, $web]));
+            $files = glob($directory . '/*.png'); Check::same(24, count($files));
+            foreach ($files as $file) {
+                Check::same(0600, fileperms($file) & 0777);
+                Check::same('image/png', (new finfo(FILEINFO_MIME_TYPE))->file($file));
+            }
+            echo "PASS uploads: 24 concurrent exclusive random files, no overwrite, private permissions\n";
+        } finally { cleanDirectory($web); }
+    } else { echo "NOT RUN concurrent uploads: fileinfo and GD required\n"; }
     if (!$socket) { echo "NOT RUN Redis: set SOSECURITY_TEST_REDIS_SOCKET for an isolated instance\n"; }
     echo 'PHP ' . PHP_VERSION . ': ' . Check::$assertions . " concurrency assertions passed\n";
 } finally { cleanDirectory($directory); }

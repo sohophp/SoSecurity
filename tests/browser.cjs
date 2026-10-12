@@ -10,10 +10,11 @@ const assert = require('node:assert/strict');
   page.on('pageerror', error => errors.push(error.message));
   const base = process.argv[2] || 'http://72.rocky.wsl/SoSecurity/';
   async function ajax(action) {
-    await page.locator('select[aria-label="选择 AJAX 演示操作"]').selectOption(action);
-    await page.locator('[data-ajax]').click();
-    await page.waitForFunction(() => document.querySelector('.ajax-output').textContent.startsWith('HTTP '));
-    return page.locator('.ajax-output').textContent();
+    const form = page.locator('form[data-demo-form]').filter({has: page.locator('button[name="action"][value="' + action + '"]')});
+    await form.locator('select[aria-label="选择 AJAX 演示操作"]').selectOption(action);
+    await form.locator('[data-ajax]').click();
+    await form.locator('.ajax-output').filter({hasText: /^HTTP /}).waitFor();
+    return form.locator('.ajax-output').textContent();
   }
   try {
     await page.goto(base + '?module=validation');
@@ -43,7 +44,17 @@ const assert = require('node:assert/strict');
     } else { console.log('NOT RUN browser MySQL: private demo backend not configured'); }
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     await page.screenshot({path: '/tmp/sosecurity-storage-mobile.png', fullPage: true});
+    await page.goto(base + '?module=upload');
+    await ajax('clear');
+    await page.locator('input[name="upload"]').setInputFiles({name: 'browser.png', mimeType: 'application/x-php', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAACXBIWXMAAA7EAAAOxAGVKw4bAAAAC0lEQVQImWNgQAYAAA4AAbGa6gYAAAAASUVORK5CYII=', 'base64')});
+    assert.match(await ajax('upload'), /HTTP 200/);
+    assert.match(await ajax('normal_sample'), /HTTP 200/);
+    assert.match(await ajax('fake_sample'), /upload.mime/);
+    assert.match(await ajax('scanner_fail'), /HTTP 503/);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    await page.screenshot({path: '/tmp/sosecurity-upload-mobile.png', fullPage: true});
+    await ajax('clear');
     assert.deepEqual(errors, []);
-    console.log('PASS Chromium: validation AJAX/422/localization, inert HTML input, mobile width, configured MySQL count/namespace/visitor isolation');
+    console.log('PASS Chromium: validation AJAX/422/localization, inert HTML input, mobile width, configured MySQL count/namespace/visitor isolation and private upload/fault paths');
   } finally { await context.close(); await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

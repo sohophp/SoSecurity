@@ -32,6 +32,7 @@ $hasher = $security->passwordHasher();
 | captcha | ttl=300，attempts=3，capacity=4 | 秒；错误预算1–10，并存1–16 |
 | rate_limits | default策略 | 命名策略，每个limit/window/bans/history_ttl；默认5/300/[60,300,900]/86400 |
 | password | bcrypt，cost=12，minimum=15，maximum_bytes=72 | 明确可用时选argon2id；不会静默降级；最小长度为Unicode码点，最大为字节 |
+| upload | 未配置 | directory/document_root必填；按需的类型/图片预算与scanner；见[upload.md](upload.md) |
 | session | idle=1800，absolute=28800，secure=true，same_site=Lax | 不自动应用；调用configureSession才生效；path/domain/lifetime未指定时保留宿主已有值 |
 
 所有未知项、错类型、非法范围都会拒绝，包括配置值显式为null的错误节点；字符串数字不自动当整数。配置和Policy不可变，数组中的外部引用也不能修改已校验的策略。

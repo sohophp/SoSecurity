@@ -20,10 +20,11 @@ final class Config
     private $limits;
     private $password;
     private $session;
+    private $upload;
 
     public function __construct(array $config)
     {
-        self::known($config, ['site', 'storage', 'token_storage', 'csrf', 'captcha', 'rate_limits', 'password', 'session']);
+        self::known($config, ['site', 'storage', 'token_storage', 'csrf', 'captcha', 'rate_limits', 'password', 'session', 'upload']);
         $this->site = self::text($config['site'] ?? null, 'site');
         Guard::label($this->site);
         if (strlen($this->site) > 128) { throw new ConfigurationException('Site identifier must be at most 128 bytes.'); }
@@ -68,6 +69,15 @@ final class Config
         Cookie::header('session', '', self::text($session['path'] ?? '/', 'session.path'), $this->session['secure'], true,
             self::text($this->session['same_site'], 'session.same_site'), array_key_exists('lifetime', $session) ? self::integer($session['lifetime'], 'session.lifetime') : null,
             isset($session['domain']) && $session['domain'] !== '' ? self::text($session['domain'], 'session.domain') : null);
+        $this->upload = null;
+        if (array_key_exists('upload', $config)) {
+            $upload = self::map($config['upload'], 'upload');
+            $policyOptions = array_diff_key($upload, array_flip(['directory', 'document_root', 'scanner']));
+            $policy = new \SoSecurity\Upload\Policy($policyOptions);
+            self::text($upload['directory'] ?? null, 'upload.directory'); self::text($upload['document_root'] ?? null, 'upload.document_root');
+            if (array_key_exists('scanner', $upload)) { self::text($upload['scanner'], 'upload.scanner'); }
+            $this->upload = self::copy($upload + $policy->options());
+        }
         // Copy scalar option values into independent arrays; caller-owned array references must not mutate configuration.
         $this->csrf = self::copy($this->csrf); $this->captcha = self::copy($this->captcha);
         $this->password = self::copy($this->password); $this->session = self::copy($this->session);
@@ -79,6 +89,7 @@ final class Config
     public function csrf(): array { return $this->csrf; }
     public function captcha(): array { return $this->captcha; }
     public function password(): array { return $this->password; }
+    public function upload(): ?array { return $this->upload; }
     public function session(): array { return $this->session; }
     public function policy(string $name): Policy
     {
