@@ -8,6 +8,7 @@ task_runtime=${1:-php}
 "$task_runtime" tests/hardening.php
 "$task_runtime" tests/storage-failure.php
 "$task_runtime" tests/configuration.php
+"$task_runtime" tests/validation.php
 if "$task_runtime" -r 'exit(extension_loaded("pdo_sqlite") ? 0 : 1);'; then
     "$task_runtime" tests/reset-flow.php
 else
@@ -22,15 +23,24 @@ if command -v redis-server >/dev/null && command -v redis-cli >/dev/null && "$ta
         rm -rf -- "$task_redis_dir"
     }
     trap cleanup EXIT
-    redis-server --port 0 --unixsocket "$task_redis_socket" --unixsocketperm 700 --save '' --appendonly no --daemonize yes --pidfile "$task_redis_dir/redis.pid" --logfile "$task_redis_dir/redis.log"
+    redis-server --port 0 --unixsocket "$task_redis_socket" --unixsocketperm 700 --dir "$task_redis_dir" --save '' --appendonly no --daemonize yes --pidfile "$task_redis_dir/redis.pid" --logfile "$task_redis_dir/redis.log"
     export SOSECURITY_TEST_REDIS_SOCKET="$task_redis_socket"
     "$task_runtime" tests/redis.php
+    if command -v python3 >/dev/null; then python3 tests/redis_restart.py "$task_runtime"; fi
 else
     if [[ ${SOSECURITY_REQUIRE_REDIS:-0} == 1 ]]; then
         echo 'FAIL Redis integration prerequisites missing' >&2
         exit 1
     fi
     echo 'NOT RUN Redis integration: redis-server, redis-cli and ext-redis required'
+fi
+if [[ -n ${SOSECURITY_TEST_MYSQL_SOCKET:-} ]]; then
+    "$task_runtime" tests/mysql.php
+elif command -v mysqld >/dev/null && command -v mysql >/dev/null && command -v python3 >/dev/null && "$task_runtime" -r 'exit(extension_loaded("pdo_mysql") ? 0 : 1);'; then
+    python3 tests/mysql_check.py "$task_runtime"
+else
+    echo 'NOT RUN MySQL integration: mysqld, mysql, Python 3 and ext-pdo_mysql required'
+    if [[ ${SOSECURITY_REQUIRE_MYSQL:-0} == 1 ]]; then exit 1; fi
 fi
 "$task_runtime" tests/concurrency.php
 if command -v python3 >/dev/null; then

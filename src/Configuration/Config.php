@@ -66,7 +66,7 @@ final class Config
         Guard::duration(self::integer($this->session['absolute'], 'session.absolute'));
         if (!is_bool($this->session['secure'])) { throw new ConfigurationException('Session secure must be bool.'); }
         Cookie::header('session', '', self::text($session['path'] ?? '/', 'session.path'), $this->session['secure'], true,
-            self::text($this->session['same_site'], 'session.same_site'), isset($session['lifetime']) ? self::integer($session['lifetime'], 'session.lifetime') : null,
+            self::text($this->session['same_site'], 'session.same_site'), array_key_exists('lifetime', $session) ? self::integer($session['lifetime'], 'session.lifetime') : null,
             isset($session['domain']) && $session['domain'] !== '' ? self::text($session['domain'], 'session.domain') : null);
         // Copy scalar option values into independent arrays; caller-owned array references must not mutate configuration.
         $this->csrf = self::copy($this->csrf); $this->captcha = self::copy($this->captcha);
@@ -91,17 +91,18 @@ final class Config
     {
         $driver = self::text($options['driver'] ?? null, 'storage.driver');
         $schemas = ['session' => [], 'memory' => [], 'file' => ['directory', 'lock_timeout_ms'],
-            'redis' => ['connection', 'budget_ms', 'attempts'], 'provided' => ['connection']];
+            'redis' => ['connection', 'budget_ms', 'attempts'], 'mysql' => ['connection', 'lock_wait_seconds'], 'provided' => ['connection']];
         if (!isset($schemas[$driver])) { throw new ConfigurationException('Unknown storage driver.', 'configuration.driver'); }
         self::known($options, array_merge(['driver'], $schemas[$driver]));
         if ($driver === 'file') {
             self::text($options['directory'] ?? null, 'storage.directory');
-            self::range($options['lock_timeout_ms'] ?? 1000, 1, 30000, 'storage.lock_timeout_ms');
+            self::range(self::provided($options, 'lock_timeout_ms', 1000), 1, 30000, 'storage.lock_timeout_ms');
         }
-        if ($driver === 'redis' || $driver === 'provided') { self::text($options['connection'] ?? null, 'storage.connection'); }
+        if (in_array($driver, ['redis', 'mysql', 'provided'], true)) { self::text($options['connection'] ?? null, 'storage.connection'); }
+        if ($driver === 'mysql') { self::range(self::provided($options, 'lock_wait_seconds', 1), 1, 30, 'storage.lock_wait_seconds'); }
         if ($driver === 'redis') {
-            self::range($options['budget_ms'] ?? 1000, 1, 30000, 'storage.budget_ms');
-            self::range($options['attempts'] ?? 32, 1, 128, 'storage.attempts');
+            self::range(self::provided($options, 'budget_ms', 1000), 1, 30000, 'storage.budget_ms');
+            self::range(self::provided($options, 'attempts', 32), 1, 128, 'storage.attempts');
         }
         return self::copy($options);
     }

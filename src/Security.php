@@ -85,6 +85,22 @@ final class Security
     {
         return (new Diagnostics\Inspector())->inspect($this->config, $this->services, $documentRoot, $probe);
     }
+    /** Explicit trusted deployment action. No request handler calls initialization automatically. */
+    public function initializeStorage(bool $recover = false): array
+    {
+        $results = [];
+        foreach (['shared' => $this->config->storage(), 'tokens' => $this->config->tokenStorage()] as $kind => $options) {
+            if ($options !== null && $options['driver'] === 'redis') {
+                $store = $this->store($kind);
+                $results[$kind] = $store instanceof RedisStore && $store->initialize($recover) ? 'initialized' : 'unchanged';
+            } elseif ($options !== null && $options['driver'] === 'mysql') {
+                $pdo = $this->services[$options['connection']] ?? null;
+                if (!$pdo instanceof \PDO) { throw new ConfigurationException('Inject a PDO MySQL connection.', 'configuration.connection'); }
+                Storage\MySqlStore::install($pdo); $results[$kind] = 'schema_verified';
+            } else { $results[$kind] = 'not_required'; }
+        }
+        return $results;
+    }
     private function shared(AtomicStore $store): bool
     {
         while ($store instanceof Storage\NamespacedStore) { $store = $store->underlying(); }
@@ -104,6 +120,10 @@ final class Security
                 $redis = $this->services[$options['connection']] ?? null;
                 if (!$redis instanceof \Redis) { throw new ConfigurationException('Inject a connected phpredis client.', 'configuration.connection'); }
                 $store = new RedisStore($redis, $namespace, $this->clock, $options['budget_ms'] ?? 1000, $options['attempts'] ?? 32); break;
+            case 'mysql':
+                $pdo = $this->services[$options['connection']] ?? null;
+                if (!$pdo instanceof \PDO) { throw new ConfigurationException('Inject a PDO MySQL connection.', 'configuration.connection'); }
+                $store = new Storage\MySqlStore($pdo, $namespace, $this->clock, $options['lock_wait_seconds'] ?? 1); break;
             default:
                 $store = $this->services[$options['connection']] ?? null;
                 if (!$store instanceof AtomicStore) { throw new ConfigurationException('Inject an AtomicStore.', 'configuration.connection'); }

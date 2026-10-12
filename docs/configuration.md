@@ -27,7 +27,7 @@ $hasher = $security->passwordHasher();
 | --- | --- | --- |
 | site | 必填 | 1–128字节固定站点标识，无控制字符；Session命名空间禁止|与!；php_binary序列化时需满足最终键长度；同一部署一致，不含秘密 |
 | storage | 未配置 | 共享后端，用于跨会话限流和密码找回 |
-| token_storage | driver=session | 验证码/CSRF后端；可以显式选择文件、Redis或自定义存储 |
+| token_storage | driver=session | 验证码/CSRF后端；可以显式选择文件、Redis、MySQL或自定义存储 |
 | csrf | ttl=7200，capacity=16 | 秒；容量1–64 |
 | captcha | ttl=300，attempts=3，capacity=4 | 秒；错误预算1–10，并存1–16 |
 | rate_limits | default策略 | 命名策略，每个limit/window/bans/history_ttl；默认5/300/[60,300,900]/86400 |
@@ -42,14 +42,19 @@ $security = SoSecurity\Security::fromArray([
     'storage' => ['driver' => 'redis', 'connection' => 'security_redis', 'budget_ms' => 1000, 'attempts' => 32],
     'rate_limits' => ['login' => ['limit' => 5, 'window' => 300, 'bans' => [60, 300, 900], 'history_ttl' => 86400]],
 ], ['security_redis' => $existingDedicatedConnectedRedis]);
+// 此Redis namespace需先在可信部署脚本中initializeStorage；请求里不自动恢复。
 $decision = $security->rateLimiter('login')->consume('login', $ipAccountKey);
 ```
 
-连接对象由宿主显式注入。Redis必须是独立、已连接的phpredis客户端，无prefix/serializer；工厂不获取、打印或保存密码。Redis提交使用原子CAS Lua，需要EVAL权限；网络等待按总预算限制。文件配置支持lock_timeout_ms（默认1000，1–30000）。
+连接对象由宿主显式注入。Redis必须是独立、已连接的phpredis客户端，无prefix/serializer；工厂不获取、打印或保存密码。Redis提交使用原子CAS Lua，需要EVAL权限；网络等待按总预算限制。文件配置支持lock_timeout_ms（默认1000，1–30000）。Redis首次部署/重启后需[显式初始化或审核恢复](redis-recovery.md)，新格式会隔离旧状态，不能在请求里自动清空封禁。
+
+`driver=mysql, connection=security_db, lock_wait_seconds=1` 接收独立PDO MySQL连接；1–30秒行锁等待，部署阶段显式建独立InnoDB表，不触碰宿主事务。网络/查询超时与客户端认证需宿主确认，见[mysql.md](mysql.md)。
 
 `driver=provided, connection=service_name` 可以注入AtomicStore；工厂添加逻辑站点/用途命名空间。自定义后端必须真实满足原子契约，诊断不能证明它的跨进程能力，会标记人工确认。MemoryStore和SessionStore即使通过provided包装，也不能用于工厂的跨会话限流/找回密码。
 
 服务和存储使用同一个注入Clock：`Security::fromArray($config, $services, $clock)`。生产默认系统时钟；Redis键TTL仍要求服务器时钟同步。时间预算独立于测试用令牌Clock。
+
+输入验证独立使用 `new SoSecurity\Validation\Validator($fields)`，不会要求配置整个Security工厂。字段配置、Unicode/NFC及错误本地化见[validation.md](validation.md)。
 
 ## 会话配置是显式动作
 
@@ -74,7 +79,7 @@ $checks = $security->diagnose($knownDocumentRoot);
 
 结果包含pass/fail/manual/not_configured/optional和稳定reason，不包含密码、令牌、连接对象、真实目录路径或异常完整文本。检查可选扩展、目录权限及Web根位置、存储选择和Session状态。未启动Session不是自动帮你启动；第三方驱动互斥锁、自定义后端原子性不能自动证明。
 
-Redis默认不进行网络探测，显示manual。显式 `diagnose($root, true)` 才执行有界PING、CONFIG GET maxmemory-policy和无写入的`EVAL return 1`权限检查；不修改服务器配置、业务键或持久化设置。CONFIG GET因权限不可读时，淘汰策略显示人工确认，不假装通过。使用独立诊断连接，禁止混入宿主事务。
+Redis默认不进行网络探测，显示manual。显式 `diagnose($root, true)` 才执行有界PING、CONFIG GET maxmemory-policy和无写入的`EVAL return 1`权限检查，并通过INFO与ready检查初始化状态；不修改服务器配置、业务键或持久化设置。CONFIG GET因权限不可读时，淘汰策略显示人工确认，不假装通过。使用独立诊断连接，禁止混入宿主事务。
 
 CLI配置文件是运营者信任的PHP文件，位于私有目录，返回：
 

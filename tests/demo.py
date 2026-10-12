@@ -49,7 +49,7 @@ def acceptance(base):
             if visitor is None and body.get('controls_token'):
                 controls = body['controls_token']
             return response.status, body, response.headers
-    for module in ['home', 'configuration', 'captcha', 'csrf', 'rate', 'password', 'reset', 'session', 'http', 'output', 'audit', 'storage']:
+    for module in ['home', 'configuration', 'validation', 'captcha', 'csrf', 'rate', 'password', 'reset', 'session', 'http', 'output', 'audit', 'storage']:
         status, body, headers = call(module)
         check(200, status)
         check(module, body['module'])
@@ -66,6 +66,16 @@ def acceptance(base):
     check(503, status)
     check('storage.lock_timeout', config_body['result']['reason'])
     check(200, call('configuration', 'diagnose')[0])
+    status, validation, _ = call('validation', 'valid_sample')
+    check(200, status); check(True, validation['result']['valid'])
+    check('张小明', validation['result']['data']['profile']['name'])
+    status, validation, _ = call('validation', 'invalid_sample')
+    check(422, status)
+    check(['/profile/name', '/profile/age', '/profile/email'], [e['path'] for e in validation['result']['errors']])
+    check(False, 'data' in validation['result'])
+    status, validation, _ = call('validation', 'unknown_sample')
+    check(422, status); check('validation.unknown', validation['result']['errors'][0]['code'])
+    check(400, call('validation', 'validate', {'json': '{broken'})[0])
     malformed = urllib.request.Request(base + '?module=rate', data=urllib.parse.urlencode(
         {'action[]': 'consume', '_csrf': controls}).encode(), headers={'Accept': 'application/json'})
     try:
@@ -143,7 +153,11 @@ def acceptance(base):
     check(False, 'DEMO-SENSITIVE-VALUE' in json.dumps(body['state']))
     check(False, 'DEMO-TOKEN' in json.dumps(body['state']))
     check(True, len(body['state']['events']) <= 20)
-    for backend in ['session', 'file']:
+    _, storage_status, _ = call('storage')
+    backends = ['session', 'file']
+    if storage_status['state']['mysql_configuration'].startswith('已配置'): backends.append('mysql')
+    else: check(503, call('storage', 'read', {'backend': 'mysql'})[0])
+    for backend in backends:
         _, body, _ = call('storage', 'increment', {'backend': backend})
         check(1, body['result']['count'])
         _, body, _ = call('storage', 'read', {'backend': backend})

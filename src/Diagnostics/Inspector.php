@@ -13,7 +13,7 @@ final class Inspector
     public function inspect(Config $config, array $services = [], ?string $documentRoot = null, bool $probe = false): array
     {
         $checks = [['check' => 'configuration', 'status' => 'pass', 'reason' => 'configuration.valid']];
-        foreach (['session', 'gd', 'curl', 'redis'] as $extension) {
+        foreach (['session', 'gd', 'curl', 'redis', 'pdo_mysql'] as $extension) {
             $checks[] = ['check' => 'extension.' . $extension, 'status' => extension_loaded($extension) ? 'pass' : 'optional',
                 'reason' => extension_loaded($extension) ? 'dependency.available' : 'dependency.not_installed'];
         }
@@ -43,16 +43,31 @@ final class Inspector
                 $valid = $store instanceof \SoSecurity\Storage\AtomicStore;
                 $checks[] = ['check' => $name, 'status' => $unsafe || !$valid ? 'fail' : 'manual',
                     'reason' => $unsafe ? 'storage.not_shared' : (!$valid ? 'configuration.connection' : 'storage.custom_contract_unverified')];
+            } elseif ($options['driver'] === 'mysql') {
+                $pdo = $services[$options['connection']] ?? null;
+                if (!$pdo instanceof \PDO || $pdo->getAttribute(\PDO::ATTR_DRIVER_NAME) !== 'mysql') {
+                    $checks[] = ['check' => $name, 'status' => 'fail', 'reason' => 'configuration.connection']; continue;
+                }
+                if (!$probe) { $checks[] = ['check' => $name, 'status' => 'manual', 'reason' => 'storage.connection_unverified']; continue; }
+                try {
+                    new \SoSecurity\Storage\MySqlStore($pdo, $config->site() . ':' . $kind, null, $options['lock_wait_seconds'] ?? 1);
+                    $checks[] = ['check' => $name, 'status' => 'pass', 'reason' => 'storage.schema_verified'];
+                    $checks[] = ['check' => $name . '.network_timeout', 'status' => 'manual', 'reason' => 'storage.transport_timeout_unverified'];
+                } catch (\SoSecurity\Exception\SecurityException $e) {
+                    $checks[] = ['check' => $name, 'status' => 'fail', 'reason' => $e->reason()];
+                } catch (\SoSecurity\Exception\ConfigurationException $e) {
+                    $checks[] = ['check' => $name, 'status' => 'fail', 'reason' => $e->reason()];
+                }
             } else {
                 $redis = $services[$options['connection']] ?? null;
                 if (!$redis instanceof \Redis) { $checks[] = ['check' => $name, 'status' => 'fail', 'reason' => 'configuration.connection']; continue; }
                 if (!$probe) { $checks[] = ['check' => $name, 'status' => 'manual', 'reason' => 'storage.connection_unverified']; continue; }
-                foreach ($this->redis($redis) as $item) { $item['check'] = $name . '.' . $item['check']; $checks[] = $item; }
+                foreach ($this->redis($redis, $config->site() . ':' . $kind) as $item) { $item['check'] = $name . '.' . $item['check']; $checks[] = $item; }
             }
         }
         return $checks;
     }
-    private function redis(\Redis $redis): array
+    private function redis(\Redis $redis, string $namespace): array
     {
         $timeout = null; $healthy = true;
         try {
@@ -74,6 +89,13 @@ final class Inspector
             $redis->clearLastError();
             $lua = $redis->eval('return 1', [], 0);
             $result[] = ['check' => 'cas_permission', 'status' => $lua === 1 ? 'pass' : 'fail', 'reason' => $lua === 1 ? 'storage.lua_available' : 'storage.lua_unavailable'];
+            $redis->clearLastError();
+            $info = $redis->info('server');
+            $ready = $redis->get('sosecurity:' . hash('sha256', $namespace) . ':ready');
+            $metadata = is_string($ready) && strlen($ready) <= 512 ? json_decode($ready, true, 4) : null;
+            $initialized = is_array($metadata) && isset($metadata['server'], $metadata['epoch']) && is_array($info)
+                && ($info['run_id'] ?? null) === $metadata['server'] && is_string($metadata['epoch']) && preg_match('/^[a-f0-9]{64}$/D', $metadata['epoch']);
+            $result[] = ['check' => 'readiness', 'status' => $initialized ? 'pass' : 'fail', 'reason' => $initialized ? 'storage.initialized' : 'storage.initialization_required'];
             return $result;
         } catch (\RedisException $e) {
             $healthy = false; $redis->close();

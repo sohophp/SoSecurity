@@ -14,13 +14,14 @@ $fileStore = new SoSecurity\Storage\FileStore('/private/shop/security', 'shop-pr
 $redis = new Redis();
 $redis->connect('/private/redis/redis.sock', 0, 2.0);
 $redisStore = new SoSecurity\Storage\RedisStore($redis, 'shop-prod', $clock);
+// 此namespace需先在可信部署脚本中initialize；请求里不自动初始化或恢复。
 ```
 
 所有共同使用的服务及存储必须使用一致的 Clock。生产使用系统时钟并同步服务器；Redis TTL 基于服务器真实时间。自定义 Clock 主要用于测试，不能在真实 Redis 上任意使用虚拟时间。
 
 文件适用于单主机本地磁盘；不能放共享 NFS；需定时在同一实例循环 `$fileStore->pruneBatch(1000)` 到complete()，并监控磁盘/权限；prune()现在只执行一批。锁文件永远不删除；清理整个目录会清除保护状态。目录只能有一个站点的受信任进程读写；namespace 是逻辑隔离，不是不同文件系统用户的访问隔离。存储没有磁盘配额管理，公网创建入口必须先限流，防止随机主体持续创建数据。
 
-Redis 要求 phpredis、独立连接、无 serializer/prefix，不混用宿主的 MULTI/WATCH 状态。默认最多32次CAS尝试、1000ms总等待预算；Lua原子提交需要EVAL权限；回调可重试。配置 noeviction、权限和内存告警；Redis 重启/清空/逐出状态会丢失保护信息，库不能自动识别所有数据丢失。
+Redis 要求 phpredis、独立连接、无 serializer/prefix，不混用宿主的 MULTI/WATCH 状态。默认最多32次CAS尝试、1000ms总等待预算；Lua原子提交需要EVAL权限；回调可重试。配置 noeviction、权限和内存告警；Redis 重启/清空/逐出状态会丢失保护信息，首次部署需显式初始化；进程身份/epoch检测和审核恢复流程见[redis-recovery.md](redis-recovery.md)，仍不能识别所有单键误删或同进程数据导入。
 
 MemoryStore 只用于测试。SessionStore 不能用于 IP/账号跨 Session 限流，禁用锁的自定义 Session 驱动不能用于原子消费。
 
@@ -162,3 +163,5 @@ HTML编码适用于HTML文本和加引号的普通属性，不适用于事件、
 AuditLogger只保留allowed/retry_after/status的bool/非负int字段；其他上下文丢弃。event为规范常量代码，scope为受控常量；subject使用独立密钥HMAC假名化（密钥至少32字节），不能传密码/令牌/Session ID。sink故障抛给宿主，由宿主事先决定审计失败是否阻止业务，不能在动作完成后隐瞒业务结果。库没有内置日志文件、查询、日志保留期或自动事件订阅。
 
 可选配置工厂、完整配置参考、只读诊断和开发候选API迁移见 [configuration.md](configuration.md)。
+
+PDO MySQL接入与事务所有权见[mysql.md](mysql.md)，严格类型/嵌套字段和本地化错误见[validation.md](validation.md)。新能力同样可以独立使用，不要求工厂或框架。

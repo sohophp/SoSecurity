@@ -10,6 +10,12 @@ if (!$socket) { echo "NOT RUN Redis integration: isolated socket required\n"; ex
 $redis = new Redis(); $redis->connect($socket, 0, 2.0);
 $namespace = 'test-' . bin2hex(random_bytes(8));
 $store = new RedisStore($redis, $namespace); $other = new RedisStore($redis, $namespace . '-other');
+Check::throws(StorageException::class, function () use ($store) { $store->transact('key', function () { return new Change(null, 0, true); }); });
+Check::same(true, $store->initialize()); Check::same(false, $store->initialize()); $other->initialize();
+function redisStateKey(Redis $redis, string $namespace, string $key): string {
+    $ready = json_decode($redis->get('sosecurity:' . hash('sha256', $namespace) . ':ready'), true);
+    return 'sosecurity:' . hash('sha256', $namespace) . ':' . $ready['epoch'] . ':' . hash('sha256', $key);
+}
 Check::same(null, $store->transact('key', function ($value) { return new Change(['n' => 1], time() + 2, $value); }));
 Check::same(['n' => 1], $store->transact('key', function ($value) { return new Change($value, time() + 2, $value); }));
 Check::same(null, $other->transact('key', function ($value) { return new Change(null, 0, $value); }));
@@ -18,7 +24,7 @@ Check::throws(RuntimeException::class, function () use ($store) {
 });
 // A later transaction must work after a callback exception.
 Check::same(['n' => 1], $store->transact('key', function ($value) { return new Change($value, time() + 2, $value); }));
-$key = 'sosecurity:' . hash('sha256', $namespace) . ':' . hash('sha256', 'key');
+$key = redisStateKey($redis, $namespace, 'key');
 Check::same(true, $redis->ttl($key) > 0);
 $store->transact('key', function ($value) { return new Change($value, 0, null); });
 Check::same(-1, $redis->ttl($key));
@@ -51,14 +57,14 @@ try {
 } catch (StorageException $e) { Check::same('storage.configuration', $e->reason()); }
 $redis->setOption(Redis::OPT_PREFIX, '');
 Check::same(true, (float) $redis->getOption(Redis::OPT_READ_TIMEOUT) > 0);
-$bounded = new RedisStore($redis, $namespace . '-deadline', null, 10);
+$bounded = new RedisStore($redis, $namespace . '-deadline', null, 10); $bounded->initialize();
 try {
     $bounded->transact('slow', function () { usleep(20000); return new Change(['n' => 1], 0, true); });
     throw new RuntimeException('Slow callback committed past the deadline.');
 } catch (StorageException $e) { Check::same('storage.timeout', $e->reason()); }
 Check::same(null, $bounded->transact('slow', function ($value) { return new Change(null, 0, $value); }));
-$bounded = new RedisStore($redis, $namespace . '-conflict', null, 1000, 2);
-$conflictKey = 'sosecurity:' . hash('sha256', $namespace . '-conflict') . ':' . hash('sha256', 'key');
+$bounded = new RedisStore($redis, $namespace . '-conflict', null, 1000, 2); $bounded->initialize();
+$conflictKey = redisStateKey($redis, $namespace . '-conflict', 'key');
 $counter = 0;
 try {
     $bounded->transact('key', function () use ($conflict, $conflictKey, &$counter) {
@@ -71,7 +77,7 @@ Check::same(2, $counter);
 $conflict->del($conflictKey);
 // Exhaust only the isolated test server's memory; an existing record must survive the rejected write.
 $store->transact('oom', function () { return new Change(['original' => true], 0, null); });
-$oomKey = 'sosecurity:' . hash('sha256', $namespace) . ':' . hash('sha256', 'oom');
+$oomKey = redisStateKey($redis, $namespace, 'oom');
 $maximum = $conflict->config('GET', 'maxmemory')['maxmemory'];
 $conflict->config('SET', 'maxmemory', '1');
 try {
@@ -83,7 +89,7 @@ try {
 $redis = new Redis(); $redis->connect($socket, 0, 2.0);
 $store = new RedisStore($redis, $namespace);
 // Pause ONLY this isolated test server; actual socket waiting must respect the total budget.
-$bounded = new RedisStore($redis, $namespace . '-socket', null, 20);
+$bounded = new RedisStore($redis, $namespace . '-socket', null, 20); $bounded->initialize();
 $conflict->rawCommand('CLIENT', 'PAUSE', '200');
 $started = microtime(true);
 try {

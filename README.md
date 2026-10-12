@@ -4,7 +4,7 @@
 
 框架无关、按需使用的 PHP Web 安全组件。Composer 包名 `sohophp/sosecurity`，命名空间 `SoSecurity\`，核心代码目标 PHP **7.2–8.5**。
 
-当前为 **0.1.0-dev 基础候选版本**：验证码（算术、PNG 图片、Turnstile）、有状态 CSRF、原子请求预算与封禁、密码哈希/迁移/重置令牌、会话安全辅助、可信代理/CIDR、输出编码、Cookie/基础响应头和脱敏审计回调。Session、本地文件及 Redis 存储可独立选择。尚未实现的上传、SSRF、API 签名、数据库适配等见路线图。
+当前为 **未发布开发候选版本（已推进到0.3存储/验证阶段）**：验证码（算术、PNG 图片、Turnstile）、有状态 CSRF、原子请求预算与封禁、密码哈希/迁移/重置令牌、会话安全辅助、可信代理/CIDR、输出编码、Cookie/基础响应头和脱敏审计回调。Session、本地文件、Redis及PDO MySQL存储可独立选择；新增严格输入验证、可选配置工厂和只读诊断。尚未实现的上传、SSRF和API签名等见路线图。
 
 ## 安装
 
@@ -23,7 +23,7 @@ composer require sohophp/sosecurity
 }
 ```
 
-然后执行 `composer install`。核心没有第三方运行时依赖；图片需要 ext-gd，Redis 存储需要 ext-redis；Turnstile 的默认 HTTP 传输需要 ext-curl。
+然后执行 `composer install`。核心没有第三方运行时依赖；图片需要 ext-gd，Redis 存储需要 ext-redis；Turnstile 的默认 HTTP 传输需要 ext-curl；MySQL需要ext-pdo_mysql；显式NFC规范化需要ext-intl。
 
 ## 表单 CSRF
 
@@ -48,7 +48,7 @@ if (!$csrf->verify('contact', $_SESSION['csrf_binding'], $_POST['_csrf'] ?? null
 
 ## 功能演示
 
-本地入口：[http://72.rocky.wsl/SoSecurity/](http://72.rocky.wsl/SoSecurity/)。现有能力及配置/诊断提供可操作页面、传统表单/AJAX、正常与拒绝结果及核心调用片段。外部Turnstile和Redis未配置时标记未执行。
+本地入口：[http://72.rocky.wsl/SoSecurity/](http://72.rocky.wsl/SoSecurity/)。现有能力及配置/诊断提供可操作页面、传统表单/AJAX、正常与拒绝结果及核心调用片段。输入验证可直接操作，MySQL使用私有演示数据库展示真实计数与隔离；外部Turnstile和Redis未配置时标记未执行。
 
 部署、隔离和演示测试见 [demo.md](docs/demo.md)，细化后续计划见 [next-steps.md](docs/next-steps.md)。只公开demo/public，源码根目录通过.htaccess拒绝HTTP访问；演示不随Composer运行时压缩包安装。
 
@@ -65,10 +65,12 @@ php81 tools/vendor/bin/phpstan analyse -c phpstan.neon --no-progress
 php81 /path/to/composer audit --working-dir=tools --locked
 ```
 
-`bin/check.sh` 运行单元/Session/真实 HTTP/文件并发测试；有 redis-server、redis-cli 和 ext-redis 时自动创建独立 UNIX socket Redis 实例测试并关闭，不连接已有站点实例。PHP 7.3、8.0、8.3 本次本地未执行；全版本 CI 已定义但未在 GitHub 运行。
+`bin/check.sh` 运行单元/Session/真实 HTTP/文件并发测试；有 redis-server、redis-cli 和 ext-redis 时自动创建独立 UNIX socket Redis 实例测试并关闭，不连接已有站点实例。另有mysqld/mysql/PDO MySQL时创建无TCP独立MySQL并验证事务与并发，用完关闭；不会连接宿主已有MySQL。PHP 7.3、8.0、8.3 本次本地未执行；全版本 CI 已定义但未在 GitHub 运行。
 
 库不能替代业务授权、参数化 SQL、HTTPS、服务器更新或基础设施防护。旧版 PHP 代码兼容不代表运行时重新获得安全维护。内部测试不是独立安全审计。参见 [威胁模型](docs/threat-model.md) 和 [安全报告政策](SECURITY.md)。
 
 MIT License。
 
 完整进一步计划仍在执行中，当前进度与未完成验收见 [execution-status.md](docs/execution-status.md)。
+
+新增指南：[MySQL存储](docs/mysql.md) · [输入验证](docs/validation.md) · [Redis初始化与恢复](docs/redis-recovery.md)。

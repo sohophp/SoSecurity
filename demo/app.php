@@ -42,7 +42,7 @@ final class DemoApp
 {
     private const MODULES = [
         'home' => '功能总览', 'configuration' => '配置与诊断', 'captcha' => '验证码', 'csrf' => 'CSRF 防护', 'rate' => '限流与封禁',
-        'password' => '密码安全', 'reset' => '重置令牌', 'session' => '会话安全',
+        'validation' => '输入验证', 'password' => '密码安全', 'reset' => '重置令牌', 'session' => '会话安全',
         'http' => 'HTTP 与代理', 'output' => '输出编码', 'audit' => '审计日志', 'storage' => '存储与隔离',
     ];
     private const TEST_PASSWORD = 'Demo-only-7.2!';
@@ -100,6 +100,7 @@ final class DemoApp
                     'session' => ['touch', 'idle', 'absolute', 'rotate', 'invalidate'],
                     'http' => ['resolve', 'headers'], 'output' => ['encode'], 'audit' => ['record', 'clear'],
                     'storage' => ['increment', 'read', 'isolation'],
+                    'validation' => ['validate', 'valid_sample', 'invalid_sample', 'unknown_sample'],
                     'configuration' => ['construct', 'diagnose', 'bad_option', 'immutable', 'store_failure', 'lock_timeout'],
                 ];
                 if (!is_string($action) || strlen($action) > 64 || !in_array($action, $allowed[$module] ?? [], true)) {
@@ -172,6 +173,22 @@ final class DemoApp
         if ($backend === 'session') { return new SessionStore($namespace); }
         if ($backend === 'file') { return new FileStore($this->directory, $namespace); }
         if ($backend === 'memory') { return new MemoryStore(); }
+        if ($backend === 'mysql') {
+            $file = $this->directory . '/mysql.php';
+            if (!extension_loaded('pdo_mysql') || !is_file($file)) { throw new \SoSecurity\Storage\StorageException('Demo MySQL not configured.', 'storage.not_configured'); }
+            if (is_link($file) || (fileperms($file) & 0077) !== 0) { throw new \SoSecurity\Storage\StorageException('Private MySQL configuration required.', 'storage.configuration'); }
+            $options = require $file;
+            if (!is_array($options) || !isset($options['dsn'], $options['user'], $options['password'])
+                || !is_string($options['dsn']) || strpos($options['dsn'], 'mysql:unix_socket=') !== 0) {
+                throw new \SoSecurity\Storage\StorageException('Private local MySQL configuration required.', 'storage.configuration');
+            }
+            try {
+                $pdo = new \PDO($options['dsn'], $options['user'], $options['password'], [\PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION, \PDO::ATTR_TIMEOUT => 2]);
+                $store = new \SoSecurity\Storage\MySqlStore($pdo, $namespace);
+                $store->prune(100);
+                return $store;
+            } catch (\PDOException $e) { throw new \SoSecurity\Storage\StorageException('Private MySQL unavailable.', 'storage.connection', $e); }
+        }
         if ($backend === 'redis') {
             $socket = getenv('SOSECURITY_DEMO_REDIS_SOCKET');
             if (!$socket || !extension_loaded('redis')) { throw new \InvalidArgumentException('Demo Redis is not configured.'); }
@@ -235,6 +252,31 @@ final class DemoApp
                         rmdir($path);
                     }
                 }
+                break;
+            case 'validation':
+                $input = ['profile' => ['name' => '张小明', 'age' => 20, 'email' => 'demo@example.test', 'kind' => 'member']];
+                if ($action === 'validate') {
+                    $text = $this->input('json', 8192);
+                    $input = json_decode($text, true, 16);
+                    if (json_last_error() !== JSON_ERROR_NONE || !is_array($input)) { throw new \InvalidArgumentException('JSON object required.'); }
+                } elseif ($action === 'invalid_sample') {
+                    $input['profile']['age'] = '20'; $input['profile']['name'] = '中'; $input['profile']['email'] = 'bad';
+                } elseif ($action === 'unknown_sample') { $input['profile']['admin'] = true; }
+                $validator = new \SoSecurity\Validation\Validator(['profile' => ['type' => 'object', 'fields' => [
+                    'name' => ['type' => 'string', 'min' => 2, 'max' => 20],
+                    'age' => ['type' => 'integer', 'min' => 18, 'max' => 120],
+                    'email' => ['type' => 'string', 'format' => 'email'],
+                    'kind' => ['type' => 'string', 'enum' => ['member', 'guest']],
+                ]]], 8192);
+                $result = $validator->validate($input);
+                $this->status = $result->valid() ? 200 : 422;
+                $labels = ['validation.type' => '类型不正确，数字字符串不会自动转换。', 'validation.min' => '未达到最小长度或数值。',
+                    'validation.max' => '超过最大长度或数值。', 'validation.format' => '格式不正确。', 'validation.unknown' => '未声明的字段被拒绝。',
+                    'validation.required' => '缺少必填字段。', 'validation.enum' => '值不在允许列表中。'];
+                $errors = [];
+                foreach ($result->errors() as $error) { $error['message'] = $labels[$error['code']] ?? '字段未通过验证。'; $errors[] = $error; }
+                $this->result = ['valid' => $result->valid(), 'errors' => $errors];
+                if ($result->valid()) { $this->result['data'] = $result->data(); }
                 break;
             case 'captcha':
                 if (in_array($action, ['math', 'image', 'refresh'], true)) {
@@ -391,6 +433,7 @@ final class DemoApp
                 return ['valid' => $valid, 'fingerprint' => substr(hash('sha256', session_id()), 0, 12), 'idle_seconds' => 10, 'absolute_seconds' => 30];
             case 'audit': return ['events' => array_slice($_SESSION['demo_events'], -20)];
             case 'storage': return ['last_operation' => $_SESSION['demo_storage_result'] ?? null,
+                'mysql_configuration' => extension_loaded('pdo_mysql') && is_file($this->directory . '/mysql.php') ? '已配置，操作时检查真实数据库' : '未配置，未执行 MySQL 演示',
                 'redis_configuration' => getenv('SOSECURITY_DEMO_REDIS_SOCKET') ? '已配置，操作时检查连接' : '未配置，未执行 Redis 演示'];
             default: return [];
         }
@@ -424,20 +467,26 @@ final class DemoApp
         switch ($this->module) {
             case 'home':
                 echo '<div class="cards">';
-                $descriptions = ['configuration' => '简单初始化、只读诊断与故障拒绝', 'captcha' => '图片与算术、错误次数、刷新和单次使用', 'csrf' => '正常验证、篡改、跨场景、过期和重放',
+                $descriptions = ['validation' => '严格类型、Unicode 长度、嵌套错误与字段白名单', 'configuration' => '简单初始化、只读诊断与故障拒绝', 'captcha' => '图片与算术、错误次数、刷新和单次使用', 'csrf' => '正常验证、篡改、跨场景、过期和重放',
                     'rate' => '请求预算、阶梯封禁、手动封禁与解除', 'password' => '哈希验证、基本策略和旧密码升级',
                     'reset' => '一次性令牌与密码版本绑定', 'session' => '标识更新、空闲超时与绝对超时',
                     'http' => '可信代理链、响应头和安全 Cookie', 'output' => 'HTML、JSON 数据与 URL 组件编码', 'audit' => '结构化记录、字段白名单和主体假名化', 'storage' => '原子计数、跨请求保存与命名空间隔离'];
                 foreach ($descriptions as $id => $description) {
                     echo '<a class="card" href="?module=' . $id . '"><h2>' . self::MODULES[$id] . '</h2><p>' . $description . '</p><span>打开演示 →</span></a>';
                 }
-                echo '</div><p class="note">上传、MySQL 存储、SSRF 和 API 签名尚未实现；后续交付会同步增加演示。Turnstile 需配置真实服务密钥后启用。演示不等于生产环境或独立安全审计验收。</p>';
+                echo '</div><p class="note">上传、SSRF 和 API 签名尚未实现；MySQL 存储需要服务端配置后演示；后续交付会同步增加演示。Turnstile 需配置真实服务密钥后启用。演示不等于生产环境或独立安全审计验收。</p>';
                 break;
             case 'configuration':
                 echo '<h2>配置一次，按需使用</h2><p>工厂校验 PHP 数组配置，不自动启动 Session。诊断不修改存储；错误配置和故障演示只影响隔离的测试对象。</p>';
                 $this->form($this->button('construct', '初始化并验证 CSRF') . $this->button('diagnose', '查看只读诊断')
                     . $this->button('bad_option', '模拟配置项拼错') . $this->button('immutable', '尝试修改策略')
                     . $this->button('store_failure', '模拟存储不可用') . $this->button('lock_timeout', '模拟文件锁超时'));
+                break;
+            case 'validation':
+                echo '<h2>严格验证与字段错误定位</h2><p>JSON 数字和字符串按实际类型检查；中文长度按 Unicode 码点计算，不截断或删除输入。未声明字段被拒绝。错误代码由页面翻译，核心不绑定语言或框架。</p>';
+                $this->form('<label>测试 JSON<textarea name="json" rows="7">' . Escaper::html('{"profile":{"name":"张小明","age":20,"email":"demo@example.test","kind":"member"}}') . '</textarea></label>'
+                    . $this->button('validate', '验证输入') . $this->button('valid_sample', '正常测试样例')
+                    . $this->button('invalid_sample', '类型与格式错误') . $this->button('unknown_sample', '尝试未声明字段'));
                 break;
             case 'captcha':
                 echo '<h2>生成与验证</h2><p>有效期 30 秒，最多错误 3 次；成功后再次提交会被拒绝。</p>';
@@ -499,10 +548,11 @@ final class DemoApp
             case 'storage':
                 echo '<h2>原子计数与隔离</h2><p>Session 与文件存储能跨请求保存计数，60 秒过期；内存存储只存在于本次请求。隔离检查读取另一个命名空间的同名键。</p>';
                 $options = '<option value="session">Session</option><option value="file">本地文件</option><option value="memory">测试用内存</option>';
+                if (extension_loaded('pdo_mysql') && is_file($this->directory . '/mysql.php')) { $options .= '<option value="mysql">MySQL（私有演示库）</option>'; }
                 if (getenv('SOSECURITY_DEMO_REDIS_SOCKET')) { $options .= '<option value="redis">Redis</option>'; }
                 $this->form('<label>存储后端<select name="backend">' . $options . '</select></label>'
                     . $this->button('increment', '原子递增') . $this->button('read', '读取计数') . $this->button('isolation', '检查隔离'));
-                echo '<p class="note">Redis 需要服务端配置独立连接；未配置时不会模拟为真实 Redis。内存存储不能用于生产请求限流。</p>';
+                echo '<p class="note">MySQL 和 Redis 需要服务端配置独立连接；未配置时显示未执行。MySQL 仅使用私有演示表，记录 60 秒过期。内存存储不能用于生产请求限流。</p>';
                 break;
         }
         echo '</section>';
@@ -516,6 +566,7 @@ final class DemoApp
         $examples = [
             'configuration' => '$security = SoSecurity\\Security::fromArray([' . "\n" . '    "site" => "my-site",' . "\n"
                 . '    "storage" => ["driver" => "file", "directory" => "/private/site/security"],' . "\n" . ']);' . "\n" . '$csrf = $security->csrf();',
+            'validation' => '$validator = new SoSecurity\\Validation\\Validator(["age" => ["type" => "integer", "min" => 18]]);' . "\n" . '$result = $validator->validate($input);' . "\n" . 'if ($result->valid()) { $data = $result->data(); }',
             'captcha' => '$captcha = new SoSecurity\\Captcha\\Captcha($store);' . "\n" . '$challenge = $captcha->arithmetic("login", $binding);' . "\n" . '$valid = $captcha->verify("login", $binding, $challengeId, $answer);',
             'csrf' => '$csrf = new SoSecurity\\Csrf\\CsrfTokens($store);' . "\n" . '$token = $csrf->issue("contact", $binding);' . "\n" . '$valid = $csrf->verify("contact", $binding, $submittedToken);',
             'rate' => '$limiter = new SoSecurity\\RateLimit\\RateLimiter($store);' . "\n" . '$decision = $limiter->consume("login", $ipAccountKey);' . "\n" . '// 拒绝时结束业务；验证密码前预占额度。',

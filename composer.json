@@ -6,7 +6,7 @@
     "require": {"php": ">=7.2 <8.6", "ext-json": "*", "ext-hash": "*"},
     "autoload": {"psr-4": {"SoSecurity\\": "src/"}},
     "autoload-dev": {"psr-4": {"SoSecurity\\Tests\\": "tests/"}},
-    "suggest": {"ext-session": "Native session helpers and SessionStore", "ext-gd": "Image CAPTCHA", "ext-redis": "Shared atomic Redis storage", "ext-curl": "Default Turnstile transport"},
+    "suggest": {"ext-session": "Native session helpers and SessionStore", "ext-gd": "Image CAPTCHA", "ext-redis": "Shared atomic Redis storage", "ext-curl": "Default Turnstile transport", "ext-pdo_mysql": "Shared atomic InnoDB storage", "ext-intl": "Optional explicit NFC input normalization"},
     "scripts": {"test": "@php tests/run.php", "lint": "@php bin/lint.php"},
     "archive": {"exclude": ["/vendor", "/tools", "/tests", "/bin", "/demo", "/.htaccess", "/.github", "/var", "/.phpstan-cache", "/.phpunit.cache", "/phpstan.neon", "/composer.lock", "/.env", "/.env.*", "/docs/requirements.md"]}
 }

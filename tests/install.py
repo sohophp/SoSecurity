@@ -29,6 +29,8 @@ $csrf = new SoSecurity\\Csrf\\CsrfTokens($store);
 $token = $csrf->issue('form', 'session-binding');
 if (!$csrf->verify('form', 'session-binding', $token, true)
     || $csrf->verify('form', 'session-binding', $token, true)) { exit(1); }
+if (!(new SoSecurity\\Validation\\Validator(['age' => ['type' => 'integer', 'min' => 18]]))->validate(['age' => 20])->valid()) { exit(3); }
+if (strpos(SoSecurity\\Storage\\MySqlStore::schema(), 'ENGINE=InnoDB') === false) { exit(4); }
 $rate = new SoSecurity\\RateLimit\\RateLimiter($store);
 if (!$rate->consume('login', 'ip-account')->allowed) { exit(2); }
 echo "PASS Composer: fresh consumer installation, PSR-4 and public API on PHP " . PHP_VERSION . "\\n";

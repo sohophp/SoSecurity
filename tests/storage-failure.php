@@ -10,6 +10,19 @@ if (!function_exists('posix_setrlimit') || !function_exists('pcntl_signal')) {
     echo "NOT RUN filesystem write failure: POSIX test process required\n";
     exit(getenv('SOSECURITY_REQUIRE_POSIX') === '1' ? 1 : 0);
 }
+// A child with pipe output avoids applying the size limit to a caller's redirected test log.
+if (($argv[1] ?? '') !== '--isolated-write-child') {
+    $pipes = [];
+    $child = proc_open(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__FILE__) . ' --isolated-write-child',
+        [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+    if (!is_resource($child)) { throw new RuntimeException('Cannot start isolated write-failure test.'); }
+    fclose($pipes[0]);
+    $output = stream_get_contents($pipes[1]); $errors = stream_get_contents($pipes[2]);
+    fclose($pipes[1]); fclose($pipes[2]); $code = proc_close($child);
+    if ($code !== 0 || $errors !== '') { throw new RuntimeException('Isolated write-failure test failed: ' . $errors); }
+    echo $output;
+    exit(0);
+}
 $directory = privateDirectory();
 try {
     $store = new FileStore($directory, 'write-failure');

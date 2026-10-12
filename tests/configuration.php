@@ -33,7 +33,13 @@ try {
     });
     foreach ([['unknown' => true], ['csrf' => ['ttll' => 1]], ['csrf' => ['ttl' => '30']], ['captcha' => ['attempts' => 0]],
         ['storage' => null], ['token_storage' => null], ['session' => ['path' => null]], ['storage' => ['driver' => 'file']],
-        ['storage' => ['driver' => 'redis', 'connection' => 'r', 'attempts' => 0]], ['session' => ['secure' => false, 'same_site' => 'None']]] as $bad) {
+        ['storage' => ['driver' => 'redis', 'connection' => 'r', 'attempts' => 0]], ['session' => ['secure' => false, 'same_site' => 'None']],
+        ['storage' => ['driver' => 'file', 'directory' => $directory, 'lock_timeout_ms' => null]],
+        ['storage' => ['driver' => 'redis', 'connection' => 'r', 'budget_ms' => null]],
+        ['storage' => ['driver' => 'redis', 'connection' => 'r', 'attempts' => null]],
+        ['storage' => ['driver' => 'mysql', 'connection' => 'm', 'lock_wait_seconds' => null]],
+        ['storage' => ['driver' => 'mysql', 'connection' => 'm', 'lock_wait_seconds' => 31]],
+        ['session' => ['lifetime' => null]]] as $bad) {
         Check::throws(ConfigurationException::class, function () use ($bad) { Security::fromArray(['site' => 'a'] + $bad); });
     }
     $ttl = 30; $factory = Security::fromArray(['site' => 'a', 'csrf' => ['ttl' => &$ttl]]);
