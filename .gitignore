@@ -1,0 +1,7 @@
+/vendor/
+/composer.lock
+/.phpunit.cache/
+/.phpstan-cache/
+/var/
+/tools/vendor/
+__pycache__/

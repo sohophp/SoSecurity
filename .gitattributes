@@ -1,0 +1,11 @@
+* text=auto eol=lf
+/tests export-ignore
+/bin export-ignore
+/.github export-ignore
+/.gitignore export-ignore
+/docs/requirements.md export-ignore
+/tools export-ignore
+/phpstan.neon export-ignore
+/vendor export-ignore
+/.phpstan-cache export-ignore
+/var export-ignore
