@@ -14,10 +14,10 @@ final class ImageRenderer
     public function __construct(int $width = 180, int $height = 60, ?string $font = null, int $noise = 12)
     {
         if ($width < 100 || $width > 600 || $height < 40 || $height > 200 || $noise < 0 || $noise > 100) {
-            throw new \InvalidArgumentException('Invalid CAPTCHA dimensions or noise.');
+            throw new \SoSecurity\Exception\ConfigurationException('Invalid CAPTCHA dimensions or noise.');
         }
         if ($font !== null && (!is_file($font) || !is_readable($font))) {
-            throw new \InvalidArgumentException('Unreadable TrueType font.');
+            throw new \SoSecurity\Exception\ConfigurationException('Unreadable TrueType font.');
         }
         $this->width = $width;
         $this->height = $height;
@@ -28,14 +28,14 @@ final class ImageRenderer
     public function render(string $answer): string
     {
         if (!extension_loaded('gd')) {
-            throw new \RuntimeException('Image CAPTCHA requires ext-gd.');
+            throw new \SoSecurity\Exception\DependencyException('Image CAPTCHA requires ext-gd.');
         }
         if (!preg_match('/^[A-Z2-9]{4,8}$/D', $answer) || $this->width < strlen($answer) * 18 + 16) {
-            throw new \InvalidArgumentException('Answer or width is unsuitable for CAPTCHA rendering.');
+            throw new \SoSecurity\Exception\ConfigurationException('Answer or width is unsuitable for CAPTCHA rendering.');
         }
         $image = imagecreatetruecolor($this->width, $this->height);
         if ($image === false) {
-            throw new \RuntimeException('Cannot allocate CAPTCHA image.');
+            throw new \SoSecurity\Exception\DependencyException('Cannot allocate CAPTCHA image.');
         }
         $level = ob_get_level();
         try {
@@ -54,12 +54,12 @@ final class ImageRenderer
                     imagechar($image, 5, $x, (int) ($this->height / 2 - 8), $answer[$i], $foreground);
                 } elseif (imagettftext($image, 22, random_int(-15, 15), $x,
                     (int) ($this->height / 2 + 10), $foreground, $this->font, $answer[$i]) === false) {
-                    throw new \RuntimeException('Cannot render CAPTCHA font.');
+                    throw new \SoSecurity\Exception\DependencyException('Cannot render CAPTCHA font.');
                 }
             }
             ob_start();
             if (!imagepng($image)) {
-                throw new \RuntimeException('Cannot encode CAPTCHA image.');
+                throw new \SoSecurity\Exception\DependencyException('Cannot encode CAPTCHA image.');
             }
             return (string) ob_get_clean();
         } finally {

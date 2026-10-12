@@ -14,7 +14,7 @@ final class PasswordHasher
         if ($profile === 'bcrypt') {
             $cost = $options['cost'] ?? 12;
             if (array_diff(array_keys($options), ['cost']) || !is_int($cost) || $cost < 10 || $cost > 16) {
-                throw new \InvalidArgumentException('bcrypt requires cost 10-16.');
+                throw new \SoSecurity\Exception\ConfigurationException('bcrypt requires cost 10-16.');
             }
             $this->algorithm = PASSWORD_BCRYPT;
             $this->options = ['cost' => $cost];
@@ -24,12 +24,12 @@ final class PasswordHasher
                 || !is_int($options['memory_cost']) || $options['memory_cost'] < 19456 || $options['memory_cost'] > 262144
                 || !is_int($options['time_cost']) || $options['time_cost'] < 2 || $options['time_cost'] > 10
                 || !is_int($options['threads']) || $options['threads'] < 1 || $options['threads'] > 4) {
-                throw new \InvalidArgumentException('Invalid Argon2id resource settings.');
+                throw new \SoSecurity\Exception\ConfigurationException('Invalid Argon2id resource settings.');
             }
             $this->algorithm = constant('PASSWORD_ARGON2ID');
-            $this->options = $options;
+            $this->options = ['memory_cost' => $options['memory_cost'], 'time_cost' => $options['time_cost'], 'threads' => $options['threads']];
         } else {
-            throw new \InvalidArgumentException('Unknown or unavailable password profile.');
+            throw new \SoSecurity\Exception\ConfigurationException('Unknown or unavailable password profile.');
         }
     }
 
@@ -38,7 +38,7 @@ final class PasswordHasher
         $this->validate($password);
         $hash = password_hash($password, $this->algorithm, $this->options);
         if (!is_string($hash)) {
-            throw new \RuntimeException('Password hashing failed.');
+            throw new \SoSecurity\Exception\SecurityException('Password hashing failed.', 'password.hash_failed');
         }
         return $hash;
     }
@@ -90,7 +90,7 @@ final class PasswordHasher
     {
         $max = $this->algorithm === PASSWORD_BCRYPT ? 72 : 4096;
         if ($password === '' || strlen($password) > $max || strpos($password, "\0") !== false) {
-            throw new \InvalidArgumentException('Password contains NUL, is empty or exceeds the profile byte limit.');
+            throw new \SoSecurity\Exception\ValidationException('Password contains NUL, is empty or exceeds the profile byte limit.', 'password.input');
         }
     }
 }

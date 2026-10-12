@@ -4,16 +4,10 @@ declare(strict_types=1);
 // Demonstration adapter. Replace the credential lookup with the host's existing parameterized query.
 require dirname(__DIR__) . '/vendor/autoload.php';
 
-use SoSecurity\Captcha\Captcha;
-use SoSecurity\Csrf\CsrfTokens;
 use SoSecurity\Http\ClientIp;
 use SoSecurity\Output\Escaper;
-use SoSecurity\Password\PasswordHasher;
-use SoSecurity\RateLimit\Policy;
-use SoSecurity\RateLimit\RateLimiter;
 use SoSecurity\Session\SessionSecurity;
-use SoSecurity\Storage\FileStore;
-use SoSecurity\Storage\SessionStore;
+use SoSecurity\Security;
 
 function respond(int $status, array $data): void
 {
@@ -45,10 +39,17 @@ try {
     }
     // Only an explicitly configured local demonstration disables Secure. Real sites require HTTPS.
     $secure = getenv('SOSECURITY_EXAMPLE_HTTPS') !== '0';
-    SessionSecurity::configure($secure);
+    $security = Security::fromArray([
+        'site' => 'legacy-example',
+        'storage' => ['driver' => 'file', 'directory' => $directory],
+        'session' => ['secure' => $secure],
+        'rate_limits' => ['render' => ['limit' => 60, 'window' => 60],
+            'ip' => ['limit' => 100], 'login' => ['limit' => 5]],
+    ]);
+    $security->configureSession();
     if (!session_start()) { throw new RuntimeException('Cannot start host session.'); }
     header('Set-Cookie: ' . SessionSecurity::cookieHeader($secure), false);
-    $session = new SessionSecurity();
+    $session = $security->session();
     if (!$session->touch()) {
         unset($_SESSION['example_user'], $_SESSION['example_binding']);
         $session->rotate();
@@ -57,13 +58,11 @@ try {
         return;
     }
     $ip = (new ClientIp())->resolve($_SERVER); // Explicitly configure trusted proxies if needed.
-    $store = new FileStore($directory, 'legacy-example');
-    $renderBudget = new RateLimiter($store, new Policy(60, 60));
-    $broadBudget = new RateLimiter($store, new Policy(100, 300));
-    $loginBudget = new RateLimiter($store, new Policy(5, 300));
-    $sessionStore = new SessionStore('legacy-example');
-    $csrf = new CsrfTokens($sessionStore);
-    $captcha = new Captcha($sessionStore);
+    $renderBudget = $security->rateLimiter('render');
+    $broadBudget = $security->rateLimiter('ip');
+    $loginBudget = $security->rateLimiter('login');
+    $csrf = $security->csrf();
+    $captcha = $security->captcha();
     if (!isset($_SESSION['example_binding'])) { $_SESSION['example_binding'] = bin2hex(random_bytes(32)); }
     $binding = $_SESSION['example_binding'];
     $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
@@ -106,7 +105,7 @@ try {
         respond(403, ['message' => '验证码无效，请刷新页面。']); return;
     }
     // Always perform password work, including unknown accounts, for a uniform public error.
-    $passwordValid = (new PasswordHasher())->verify($password, $expectedHash);
+    $passwordValid = $security->passwordHasher()->verify($password, $expectedHash);
     if (!$passwordValid || !hash_equals($expectedUser, $user)) {
         respond(401, ['message' => '账号或密码不正确。']); return;
     }

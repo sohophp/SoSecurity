@@ -21,7 +21,7 @@ final class CsrfTokens
     {
         Guard::duration($ttl);
         if ($capacity < 1 || $capacity > 64) {
-            throw new \InvalidArgumentException('Token capacity must be between 1 and 64.');
+            throw new \SoSecurity\Exception\ConfigurationException('Token capacity must be between 1 and 64.');
         }
         $this->store = $store;
         $this->ttl = $ttl;
@@ -86,12 +86,12 @@ final class CsrfTokens
             return;
         }
         if (count($state) > 64) {
-            throw new StorageException('Corrupt CSRF state.');
+            throw new StorageException('Corrupt CSRF state.', 'storage.corrupt');
         }
         foreach ($state as $digest => $expires) {
             if (!is_string($digest) || !preg_match('/^[a-f0-9]{64}$/D', $digest)
                 || !is_int($expires) || $expires <= 0) {
-                throw new StorageException('Corrupt CSRF state.');
+                throw new StorageException('Corrupt CSRF state.', 'storage.corrupt');
             }
         }
     }

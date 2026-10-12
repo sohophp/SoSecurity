@@ -17,7 +17,7 @@ final class ClientIp
     {
         $remote = $server['REMOTE_ADDR'] ?? '';
         if (!is_string($remote) || filter_var($remote, FILTER_VALIDATE_IP) === false) {
-            throw new \InvalidArgumentException('Missing or invalid REMOTE_ADDR.');
+            throw new \SoSecurity\Exception\ValidationException('Missing or invalid REMOTE_ADDR.');
         }
         $remote = inet_ntop(inet_pton($remote));
         if (!$this->trusted->contains($remote)) {
@@ -28,15 +28,15 @@ final class ClientIp
             return $remote;
         }
         if (!is_string($header) || strlen($header) > 2048) {
-            throw new \InvalidArgumentException('Invalid proxy chain.');
+            throw new \SoSecurity\Exception\ValidationException('Invalid proxy chain.');
         }
         $chain = array_map('trim', explode(',', $header));
         if (count($chain) > 32) {
-            throw new \InvalidArgumentException('Proxy chain is too long.');
+            throw new \SoSecurity\Exception\ValidationException('Proxy chain is too long.');
         }
         foreach ($chain as $ip) {
             if (filter_var($ip, FILTER_VALIDATE_IP) === false) {
-                throw new \InvalidArgumentException('Invalid forwarded IP.');
+                throw new \SoSecurity\Exception\ValidationException('Invalid forwarded IP.');
             }
         }
         // Walk from nearest hop; attacker-controlled leftmost entries are never blindly trusted.

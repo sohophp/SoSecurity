@@ -12,13 +12,13 @@ final class SecurityHeaders
             'X-Frame-Options' => 'SAMEORIGIN'];
         if ($csp !== null) {
             if ($csp === '' || strlen($csp) > 8192 || preg_match('/[\x00-\x1f\x7f]/', $csp)) {
-                throw new \InvalidArgumentException('Invalid CSP header value.');
+                throw new \SoSecurity\Exception\ConfigurationException('Invalid CSP header value.');
             }
             $headers[$reportOnly ? 'Content-Security-Policy-Report-Only' : 'Content-Security-Policy'] = $csp;
         }
         if ($hstsAge !== null) {
             if ($hstsAge < 0 || $hstsAge > 63072000) {
-                throw new \InvalidArgumentException('Invalid HSTS max-age.');
+                throw new \SoSecurity\Exception\ConfigurationException('Invalid HSTS max-age.');
             }
             $headers['Strict-Transport-Security'] = 'max-age=' . $hstsAge;
         }

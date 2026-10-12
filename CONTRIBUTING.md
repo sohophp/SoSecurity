@@ -22,3 +22,5 @@ Redis测试只对新建UNIX socket实例操作；不连接宿主实例，不FLUS
 PHPStan使用PHP7.2目标、level5，不维护忽略基线；开发工具在PHP8.1执行避免本机较旧glibc不支持新Turbo加速扩展。提高分析严格度应同时补齐真正有意义的类型约束，而不是盲目添加忽略。
 
 发布前完成docs/verification.md中待验收项，检查composer archive内容并审核公开API和默认策略。提交清楚描述行为和证据；git push、标签、Packagist登记和宿主部署是另外的操作，不由本地测试自动触发。
+
+加固验证包括hardening.php、configuration.php、reset-flow.php、storage-failure.php及bin/full-disk-check.sh。磁盘耗尽测试只能由脚本创建独立小型tmpfs，禁止填满宿主共享磁盘。完整目标状态见docs/execution-status.md。

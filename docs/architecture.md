@@ -12,7 +12,7 @@
 
 FileStore：应用拥有的 0700 私有目录，数据 0600，64 个永久锁文件；锁内读取与临时文件原子 rename；清理也持有同一个锁，永远不删除锁文件。只支持本地文件系统，不承诺 NFS、多主机或断电持久性。
 
-RedisStore：专用 phpredis 连接，禁止序列化器和客户端前缀；WATCH/MULTI/EXEC 乐观并发控制（optimistic concurrency control），有限重试及 TTL。不同站点显式 namespace；不调用 FLUSHDB。生产实例必须禁止安全状态被逐出（noeviction），配置访问控制、容量告警和持久性。被清空的安全状态无法仅凭库端识别。
+RedisStore：专用 phpredis 连接，禁止序列化器和客户端前缀；原子Lua CAS（compare-and-swap）提交，有界网络等待、总重试预算及TTL；避免Redis旧版WATCH不因过期中止的差异。不同站点显式 namespace；不调用 FLUSHDB。生产实例必须禁止安全状态被逐出（noeviction），配置访问控制、容量告警和持久性。被清空的安全状态无法仅凭库端识别。
 
 SessionStore：宿主先启动并持有 Session 锁；只修改自己命名空间，清理过期记录并限制记录数量。只能用于当前会话验证码/CSRF；不能用于跨会话登录限流。自定义 Session 驱动必须提供真实互斥锁；本库不能自动证明第三方驱动具备该性质。
 
@@ -43,3 +43,13 @@ CSRF 是 256 位随机令牌，存储摘要。key 由模块、长度前缀作用
 不会自动 session_start、替换认证字段或注册中间件。configure 在启动前调用；rotate 由登录/权限变化的调用点触发。touch 返回 false 后保持失效，宿主负责退出认证，不能忽略返回值。PHP 7.2 原生 Session 没有 SameSite 配置项，显式生成合法 Set-Cookie 头，避免把 SameSite 注入 cookie_path。
 
 CSP 默认 Report-Only，HSTS 必须显式启用；示例不强加严格 CSP 或 includeSubDomains。输出编码按上下文设计，不提供“万能清洗”。可信代理默认空，只处理部署中明确允许的 X-Forwarded-For 链。
+
+## ADR-007：不可变配置、时间预算和可选工厂
+
+Policy与Change不再公开可写字段，读取使用方法。配置工厂校验PHP数组，未知项拒绝，按需创建服务，共用Clock；构造不启动Session、发送响应头或连接网络。核心组件保留独立使用方式。自定义存储必须满足原子契约，工厂不把Memory/Session误用于跨会话限流。
+
+文件锁使用LOCK_NB和默认1000ms等待上限；分批清理只在同一实例内继续游标，不删除永久锁。Redis每次命令受剩余预算约束，默认总1000ms和32次CAS重试。PHP7.3+使用hrtime；PHP7.2使用microtime并对时钟倒退立即过期。执行中的业务回调不能被强制抢占，但超预算后不能提交。
+
+phpredis4.3在connect时的默认read_timeout=0使用PHP socket默认值，而之后setOption(0)会产生立即超时。适配器使用字符串形式设置有界超时，恢复有效的有限socket默认值。网络异常后关闭连接并使实例失效；调用者显式重连并重建，不能借扩展自动重连掩盖不确定提交。
+
+重置宿主示例以SQL版本CAS限制并行旧令牌；不拥有宿主事务。保存成功后清理失败必须报告已写入且待清理，不假称未修改。完整进度与剩余验收见execution-status.md。

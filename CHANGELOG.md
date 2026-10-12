@@ -1,5 +1,14 @@
 # Changelog
 
+## 开发候选追加 — 进行中，2026-10-13，未发布
+
+- 限流Policy和存储Change改为不可变字段与读取方法；未发布API修正见configuration.md。
+- 文件锁等待有界、清理分批、状态限制为有预算的JSON原语；磁盘耗尽与部分写故障测试。
+- Redis使用原子Lua CAS，增加总等待预算、故障后显式重建、冲突/OOM/socket测试。
+- 可选PHP数组配置工厂、只读诊断与CLI；保留宿主Session Cookie路径/域/有效期。
+- 增加SQL版本比较的密码重置宿主示例；配置、错误策略和故障演示。
+- 完整计划未完成，Redis恢复、MySQL、上传、HTTP/API和发布验收继续推进。
+
 ## 0.1.0-dev — 本地候选，2026-10-13，未发布
 
 - 创建框架无关的 `sohophp/sosecurity` Composer 包，PHP7.2–8.5目标。

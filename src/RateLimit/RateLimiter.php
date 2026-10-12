@@ -46,28 +46,28 @@ final class RateLimiter
                 return new Change($state, $state['permanent'] ? 0 : $state['expires'],
                     new Decision(false, 0, max(0, $state['until'] - $now), $state['permanent']));
             }
-            if ($state['until'] > 0 || $state['start'] + $policy->window <= $now) {
+            if ($state['until'] > 0 || $state['start'] + $policy->window() <= $now) {
                 $state['start'] = $now;
                 $state['count'] = 0;
                 $state['until'] = 0;
             }
-            $allowed = $state['count'] < $policy->limit;
+            $allowed = $state['count'] < $policy->limit();
             if ($consume) {
                 if ($allowed) {
                     ++$state['count'];
                 } else {
-                    $duration = $policy->bans[min($state['strikes'], count($policy->bans) - 1)];
-                    $state['strikes'] = min($state['strikes'] + 1, count($policy->bans));
+                    $duration = $policy->banDurations()[min($state['strikes'], count($policy->banDurations()) - 1)];
+                    $state['strikes'] = min($state['strikes'] + 1, count($policy->banDurations()));
                     $state['until'] = $now + $duration;
                 }
-                $state['expires'] = $now + $policy->historyTtl;
+                $state['expires'] = $now + $policy->historyTtl();
             }
             // An unused inspection must not create a record or extend the history retention.
             $expiry = $state['expires'] ?? 0;
             $retry = $allowed ? 0 : ($state['until'] > $now ? $state['until'] - $now
-                : max(0, $state['start'] + $policy->window - $now));
+                : max(0, $state['start'] + $policy->window() - $now));
             return new Change($expiry > 0 ? $state : null, $expiry,
-                new Decision($allowed, max(0, $policy->limit - $state['count']), $retry));
+                new Decision($allowed, max(0, $policy->limit() - $state['count']), $retry));
         });
     }
 
@@ -99,11 +99,11 @@ final class RateLimiter
         }
         foreach (['start', 'count', 'strikes', 'until', 'expires'] as $field) {
             if (!isset($state[$field]) || !is_int($state[$field]) || $state[$field] < 0) {
-                throw new StorageException('Corrupt rate-limit state.');
+                throw new StorageException('Corrupt rate-limit state.', 'storage.corrupt');
             }
         }
         if (!isset($state['permanent']) || !is_bool($state['permanent'])) {
-            throw new StorageException('Corrupt rate-limit state.');
+            throw new StorageException('Corrupt rate-limit state.', 'storage.corrupt');
         }
     }
 }

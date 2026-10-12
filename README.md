@@ -1,6 +1,6 @@
 # SoSecurity
 
-[English introduction](README.en.md) · [功能演示](http://72.rocky.wsl/SoSecurity/) · [使用指南](docs/usage.md) · [旧站迁移](docs/migration.md) · [路线图](docs/roadmap.md) · [验证记录](docs/verification.md)
+[English introduction](README.en.md) · [功能演示](http://72.rocky.wsl/SoSecurity/) · [简单配置](docs/configuration.md) · [使用指南](docs/usage.md) · [旧站迁移](docs/migration.md) · [路线图](docs/roadmap.md) · [验证记录](docs/verification.md)
 
 框架无关、按需使用的 PHP Web 安全组件。Composer 包名 `sohophp/sosecurity`，命名空间 `SoSecurity\`，核心代码目标 PHP **7.2–8.5**。
 
@@ -48,7 +48,7 @@ if (!$csrf->verify('contact', $_SESSION['csrf_binding'], $_POST['_csrf'] ?? null
 
 ## 功能演示
 
-本地入口：[http://72.rocky.wsl/SoSecurity/](http://72.rocky.wsl/SoSecurity/)。现有十类能力提供可操作页面、传统表单/AJAX、正常与拒绝结果及核心调用片段。外部Turnstile和Redis未配置时标记未执行。
+本地入口：[http://72.rocky.wsl/SoSecurity/](http://72.rocky.wsl/SoSecurity/)。现有能力及配置/诊断提供可操作页面、传统表单/AJAX、正常与拒绝结果及核心调用片段。外部Turnstile和Redis未配置时标记未执行。
 
 部署、隔离和演示测试见 [demo.md](docs/demo.md)，细化后续计划见 [next-steps.md](docs/next-steps.md)。只公开demo/public，源码根目录通过.htaccess拒绝HTTP访问；演示不随Composer运行时压缩包安装。
 
@@ -70,3 +70,5 @@ php81 /path/to/composer audit --working-dir=tools --locked
 库不能替代业务授权、参数化 SQL、HTTPS、服务器更新或基础设施防护。旧版 PHP 代码兼容不代表运行时重新获得安全维护。内部测试不是独立安全审计。参见 [威胁模型](docs/threat-model.md) 和 [安全报告政策](SECURITY.md)。
 
 MIT License。
+
+完整进一步计划仍在执行中，当前进度与未完成验收见 [execution-status.md](docs/execution-status.md)。

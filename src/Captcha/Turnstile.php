@@ -16,7 +16,7 @@ final class Turnstile
         if (strlen($secret) < 16 || strlen($secret) > 256 || preg_match('/[\x00-\x20\x7f]/', $secret)
             || !preg_match('/^[a-z0-9.-]{1,253}$/D', $hostname)
             || !preg_match('/^[A-Za-z0-9_-]{1,32}$/D', $action)) {
-            throw new \InvalidArgumentException('Invalid Turnstile secret, expected hostname or action.');
+            throw new \SoSecurity\Exception\ConfigurationException('Invalid Turnstile secret, expected hostname or action.');
         }
         $this->secret = $secret;
         $this->hostname = $hostname;
@@ -31,19 +31,21 @@ final class Turnstile
             return false;
         }
         if ($clientIp !== null && filter_var($clientIp, FILTER_VALIDATE_IP) === false) {
-            throw new \InvalidArgumentException('Invalid client IP.');
+            throw new \SoSecurity\Exception\ConfigurationException('Invalid client IP.');
         }
         $payload = ['secret' => $this->secret, 'response' => $token];
         if ($clientIp !== null) {
             $payload['remoteip'] = $clientIp;
         }
-        $body = $this->transport === null ? $this->request($payload) : ($this->transport)($payload);
+        try { $body = $this->transport === null ? $this->request($payload) : ($this->transport)($payload); }
+        catch (\SoSecurity\Exception\DependencyException $e) { throw $e; }
+        catch (\Throwable $e) { throw new \SoSecurity\Exception\DependencyException('Turnstile transport failed.', 'dependency.transport', $e); }
         if (!is_string($body) || strlen($body) > 16384) {
-            throw new \RuntimeException('Invalid Turnstile response.');
+            throw new \SoSecurity\Exception\DependencyException('Invalid Turnstile response.');
         }
         $data = json_decode($body, true, 16);
         if (!is_array($data) || !isset($data['success']) || !is_bool($data['success'])) {
-            throw new \RuntimeException('Malformed Turnstile response.');
+            throw new \SoSecurity\Exception\DependencyException('Malformed Turnstile response.');
         }
         return $data['success'] && ($data['hostname'] ?? null) === $this->hostname
             && ($data['action'] ?? null) === $this->action;
@@ -52,11 +54,11 @@ final class Turnstile
     private function request(array $payload): string
     {
         if (!extension_loaded('curl')) {
-            throw new \RuntimeException('Turnstile requires ext-curl or a trusted transport adapter.');
+            throw new \SoSecurity\Exception\DependencyException('Turnstile requires ext-curl or a trusted transport adapter.');
         }
         $handle = curl_init('https://challenges.cloudflare.com/turnstile/v0/siteverify');
         if ($handle === false) {
-            throw new \RuntimeException('Cannot initialize Turnstile transport.');
+            throw new \SoSecurity\Exception\DependencyException('Cannot initialize Turnstile transport.');
         }
         $body = '';
         try {
@@ -74,7 +76,7 @@ final class Turnstile
                     return strlen($chunk);
                 }]);
             if (curl_exec($handle) === false || curl_getinfo($handle, CURLINFO_HTTP_CODE) !== 200) {
-                throw new \RuntimeException('Turnstile verification service unavailable.');
+                throw new \SoSecurity\Exception\DependencyException('Turnstile verification service unavailable.');
             }
             return $body;
         } finally {

@@ -5,6 +5,15 @@ task_runtime=${1:-php}
 "$task_runtime" bin/lint.php
 "$task_runtime" tests/run.php
 "$task_runtime" tests/session.php
+"$task_runtime" tests/hardening.php
+"$task_runtime" tests/storage-failure.php
+"$task_runtime" tests/configuration.php
+if "$task_runtime" -r 'exit(extension_loaded("pdo_sqlite") ? 0 : 1);'; then
+    "$task_runtime" tests/reset-flow.php
+else
+    echo 'NOT RUN reset host integration: test-only ext-pdo_sqlite required'
+    if [[ ${SOSECURITY_REQUIRE_RESET:-0} == 1 ]]; then exit 1; fi
+fi
 if command -v redis-server >/dev/null && command -v redis-cli >/dev/null && "$task_runtime" -r 'exit(extension_loaded("redis") ? 0 : 1);'; then
     task_redis_dir=$(mktemp -d /tmp/sosecurity-redis.XXXXXXXX)
     task_redis_socket="$task_redis_dir/redis.sock"

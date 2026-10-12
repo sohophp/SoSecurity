@@ -14,7 +14,7 @@ final class AuditLogger
     public function __construct(callable $sink, string $pseudonymKey)
     {
         if (strlen($pseudonymKey) < 32) {
-            throw new \InvalidArgumentException('Use an independent audit pseudonym key of at least 32 bytes.');
+            throw new \SoSecurity\Exception\ConfigurationException('Use an independent audit pseudonym key of at least 32 bytes.');
         }
         $this->sink = $sink;
         $this->key = $pseudonymKey;
@@ -23,7 +23,7 @@ final class AuditLogger
     public function record(string $event, string $scope, ?string $subject = null, array $context = []): void
     {
         if (!preg_match('/^[a-z][a-z0-9_.]{0,63}$/D', $event)) {
-            throw new \InvalidArgumentException('Invalid event code.');
+            throw new \SoSecurity\Exception\ConfigurationException('Invalid event code.');
         }
         Guard::label($scope);
         $safe = [];
@@ -31,7 +31,7 @@ final class AuditLogger
             if (isset($context[$field])) {
                 if (($field === 'allowed' && !is_bool($context[$field]))
                     || ($field !== 'allowed' && (!is_int($context[$field]) || $context[$field] < 0))) {
-                    throw new \InvalidArgumentException('Invalid audit field: ' . $field);
+                    throw new \SoSecurity\Exception\ConfigurationException('Invalid audit field: ' . $field);
                 }
                 $safe[$field] = $context[$field];
             }

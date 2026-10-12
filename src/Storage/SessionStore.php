@@ -18,7 +18,7 @@ final class SessionStore implements AtomicStore
         if (!extension_loaded('session')) {
             throw new StorageException('Native SessionStore requires ext-session.');
         }
-        $this->namespace = '_sosecurity_' . Guard::label($namespace);
+        $this->namespace = Guard::sessionKey('_sosecurity_' . Guard::label($namespace));
         $this->clock = $clock ?? new SystemClock();
     }
 
@@ -31,12 +31,12 @@ final class SessionStore implements AtomicStore
         $key = hash('sha256', $key);
         $bucket = $_SESSION[$this->namespace] ?? [];
         if (!is_array($bucket)) {
-            throw new StorageException('Corrupt session security state.');
+            throw new StorageException('Corrupt session security state.', 'storage.corrupt');
         }
         // Bound expired-state growth without touching unrelated host session data.
         foreach ($bucket as $id => $raw) {
             if (!is_string($raw)) {
-                throw new StorageException('Corrupt session security state.');
+                throw new StorageException('Corrupt session security state.', 'storage.corrupt');
             }
             if (Codec::decode($raw, $this->clock->now()) === null) {
                 unset($bucket[$id]);
@@ -47,7 +47,7 @@ final class SessionStore implements AtomicStore
         if (!$change instanceof Change) {
             throw new StorageException('Callback must return Change.');
         }
-        if ($change->value === null) {
+        if ($change->value() === null) {
             unset($bucket[$key]);
         } else {
             if (!isset($bucket[$key]) && count($bucket) >= 128) {
@@ -56,6 +56,6 @@ final class SessionStore implements AtomicStore
             $bucket[$key] = Codec::encode($change);
         }
         $_SESSION[$this->namespace] = $bucket;
-        return $change->result;
+        return $change->result();
     }
 }

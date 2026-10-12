@@ -169,7 +169,7 @@ $tests['store failures never allow sensitive operations'] = function () {
 };
 $tests['malformed module records fail closed'] = function () {
     $store = new class implements SoSecurity\Storage\AtomicStore {
-        public function transact(string $key, callable $callback) { return $callback(['unexpected' => '999999'])->result; }
+        public function transact(string $key, callable $callback) { return $callback(['unexpected' => '999999'])->result(); }
     };
     Check::throws(StorageException::class, function () use ($store) { (new CsrfTokens($store))->verify('form', 'a', str_repeat('a', 64)); });
     Check::throws(StorageException::class, function () use ($store) { (new CsrfTokens($store))->issue('form', 'a'); });

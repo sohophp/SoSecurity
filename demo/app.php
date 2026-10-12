@@ -41,7 +41,7 @@ final class DemoClock implements Clock
 final class DemoApp
 {
     private const MODULES = [
-        'home' => '功能总览', 'captcha' => '验证码', 'csrf' => 'CSRF 防护', 'rate' => '限流与封禁',
+        'home' => '功能总览', 'configuration' => '配置与诊断', 'captcha' => '验证码', 'csrf' => 'CSRF 防护', 'rate' => '限流与封禁',
         'password' => '密码安全', 'reset' => '重置令牌', 'session' => '会话安全',
         'http' => 'HTTP 与代理', 'output' => '输出编码', 'audit' => '审计日志', 'storage' => '存储与隔离',
     ];
@@ -100,11 +100,18 @@ final class DemoApp
                     'session' => ['touch', 'idle', 'absolute', 'rotate', 'invalidate'],
                     'http' => ['resolve', 'headers'], 'output' => ['encode'], 'audit' => ['record', 'clear'],
                     'storage' => ['increment', 'read', 'isolation'],
+                    'configuration' => ['construct', 'diagnose', 'bad_option', 'immutable', 'store_failure', 'lock_timeout'],
                 ];
                 if (!is_string($action) || strlen($action) > 64 || !in_array($action, $allowed[$module] ?? [], true)) {
                     $this->status = 400; $this->result = ['message' => '不支持的演示操作。'];
                 } else {
                     try { $this->dispatch($action); }
+                    catch (\SoSecurity\Exception\ConfigurationException $e) {
+                        $this->status = 400; $this->result = ['reason' => $e->reason(), 'message' => '配置被拒绝，请检查字段与策略。'];
+                    }
+                    catch (\SoSecurity\Storage\StorageException $e) {
+                        $this->status = 503; $this->result = ['reason' => $e->reason(), 'message' => '存储不可用，敏感操作没有放行。'];
+                    }
                     catch (\InvalidArgumentException $e) {
                         $this->status = 400; $this->result = ['message' => '输入格式或演示配置不正确，请检查字段。'];
                     }
@@ -191,6 +198,44 @@ final class DemoApp
     private function dispatch(string $action): void
     {
         switch ($this->module) {
+            case 'configuration':
+                $config = ['site' => 'demo-factory', 'storage' => ['driver' => 'file', 'directory' => $this->directory]];
+                if ($action === 'bad_option') { $config['csrf'] = ['ttll' => 30]; }
+                $before = session_id();
+                $factory = \SoSecurity\Security::fromArray($config);
+                if ($action === 'construct') {
+                    $token = $factory->csrf()->issue('form', $this->binding);
+                    $this->result = ['configuration_valid' => true, 'session_unchanged' => $before === session_id(),
+                        'csrf_valid' => $factory->csrf()->verify('form', $this->binding, $token)];
+                } elseif ($action === 'diagnose') {
+                    $this->result = ['checks' => $factory->diagnose($_SERVER['DOCUMENT_ROOT'] ?? null)];
+                } elseif ($action === 'immutable') {
+                    $factory->config()->policy('default')->limit = 0;
+                } elseif ($action === 'store_failure') {
+                    $broken = new class implements AtomicStore {
+                        public function transact(string $key, callable $callback) {
+                            throw new \SoSecurity\Storage\StorageException('Isolated demonstration outage.', 'storage.unavailable');
+                        }
+                    };
+                    \SoSecurity\Security::fromArray(['site' => 'demo-fault', 'token_storage' => ['driver' => 'provided', 'connection' => 'fault']],
+                        ['fault' => $broken])->csrf()->issue('form', $this->binding);
+                } elseif ($action === 'lock_timeout') {
+                    $path = $this->directory . '/isolated-' . bin2hex(random_bytes(8));
+                    if (!mkdir($path, 0700)) { throw new \RuntimeException('Cannot allocate isolated demonstration.'); }
+                    $handle = null;
+                    try {
+                        $store = new FileStore($path, 'fault', null, 20);
+                        $hash = hash('sha256', "fault\0key");
+                        $handle = fopen($path . '/lock-' . (hexdec(substr($hash, 0, 2)) % 64), 'c');
+                        if ($handle === false || !flock($handle, LOCK_EX)) { throw new \RuntimeException('Cannot hold isolated lock.'); }
+                        $store->transact('key', function () { return new Change(['n' => 1], 0, true); });
+                    } finally {
+                        if (is_resource($handle)) { flock($handle, LOCK_UN); fclose($handle); }
+                        foreach (new \DirectoryIterator($path) as $entry) { if (!$entry->isDot()) { unlink($entry->getPathname()); } }
+                        rmdir($path);
+                    }
+                }
+                break;
             case 'captcha':
                 if (in_array($action, ['math', 'image', 'refresh'], true)) {
                     if ($action === 'refresh') { $this->captcha()->revoke('playground', $this->binding); }
@@ -379,7 +424,7 @@ final class DemoApp
         switch ($this->module) {
             case 'home':
                 echo '<div class="cards">';
-                $descriptions = ['captcha' => '图片与算术、错误次数、刷新和单次使用', 'csrf' => '正常验证、篡改、跨场景、过期和重放',
+                $descriptions = ['configuration' => '简单初始化、只读诊断与故障拒绝', 'captcha' => '图片与算术、错误次数、刷新和单次使用', 'csrf' => '正常验证、篡改、跨场景、过期和重放',
                     'rate' => '请求预算、阶梯封禁、手动封禁与解除', 'password' => '哈希验证、基本策略和旧密码升级',
                     'reset' => '一次性令牌与密码版本绑定', 'session' => '标识更新、空闲超时与绝对超时',
                     'http' => '可信代理链、响应头和安全 Cookie', 'output' => 'HTML、JSON 数据与 URL 组件编码', 'audit' => '结构化记录、字段白名单和主体假名化', 'storage' => '原子计数、跨请求保存与命名空间隔离'];
@@ -387,6 +432,12 @@ final class DemoApp
                     echo '<a class="card" href="?module=' . $id . '"><h2>' . self::MODULES[$id] . '</h2><p>' . $description . '</p><span>打开演示 →</span></a>';
                 }
                 echo '</div><p class="note">上传、MySQL 存储、SSRF 和 API 签名尚未实现；后续交付会同步增加演示。Turnstile 需配置真实服务密钥后启用。演示不等于生产环境或独立安全审计验收。</p>';
+                break;
+            case 'configuration':
+                echo '<h2>配置一次，按需使用</h2><p>工厂校验 PHP 数组配置，不自动启动 Session。诊断不修改存储；错误配置和故障演示只影响隔离的测试对象。</p>';
+                $this->form($this->button('construct', '初始化并验证 CSRF') . $this->button('diagnose', '查看只读诊断')
+                    . $this->button('bad_option', '模拟配置项拼错') . $this->button('immutable', '尝试修改策略')
+                    . $this->button('store_failure', '模拟存储不可用') . $this->button('lock_timeout', '模拟文件锁超时'));
                 break;
             case 'captcha':
                 echo '<h2>生成与验证</h2><p>有效期 30 秒，最多错误 3 次；成功后再次提交会被拒绝。</p>';
@@ -463,6 +514,8 @@ final class DemoApp
             echo '<section class="panel"><h2>当前状态</h2><pre data-demo-state>' . Escaper::html(json_encode($display, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) . '</pre></section>';
         }
         $examples = [
+            'configuration' => '$security = SoSecurity\\Security::fromArray([' . "\n" . '    "site" => "my-site",' . "\n"
+                . '    "storage" => ["driver" => "file", "directory" => "/private/site/security"],' . "\n" . ']);' . "\n" . '$csrf = $security->csrf();',
             'captcha' => '$captcha = new SoSecurity\\Captcha\\Captcha($store);' . "\n" . '$challenge = $captcha->arithmetic("login", $binding);' . "\n" . '$valid = $captcha->verify("login", $binding, $challengeId, $answer);',
             'csrf' => '$csrf = new SoSecurity\\Csrf\\CsrfTokens($store);' . "\n" . '$token = $csrf->issue("contact", $binding);' . "\n" . '$valid = $csrf->verify("contact", $binding, $submittedToken);',
             'rate' => '$limiter = new SoSecurity\\RateLimit\\RateLimiter($store);' . "\n" . '$decision = $limiter->consume("login", $ipAccountKey);' . "\n" . '// 拒绝时结束业务；验证密码前预占额度。',

@@ -74,3 +74,16 @@ php81 /path/to/composer audit --working-dir=tools --locked
 `.git/HEAD`、composer.json、demo/app.php、src、tests、bin和tools等仓库路径拒绝HTTP访问；演示首页及静态资源正常。私有数据位于Web根之外；只有demo/public映射为大小写明确的入口。原有基础里程碑的“未执行浏览器/PHP-FPM”是此前状态，此次追加不代表真实旧站生产业务已验收。
 
 演示Redis和Turnstile未配置，真实外部服务未执行；页面不宣称通过。上传、MySQL、SSRF等后续功能仍未实现。部署和复现见demo.md。
+
+## 核心加固与配置候选追加验收（2026-10-13）
+
+Policy/Change不可变、稳定异常reason、有界文件锁、分批清理、状态编码预算、Redis原子Lua CAS和网络等待预算已实现。工厂、只读诊断、Session原有Cookie策略保留和宿主重置版本比较已加入源码与演示。
+
+- PHP7.2与PHP8.5功能回归通过；加固29项、配置/诊断33项、Session24项、宿主SQL重置16项；演示现为95项。
+- Redis真实冲突、网络暂停、内存耗尽和诊断/配置变更测试已加入；保留原有24进程并发。Redis重启恢复边界尚待完成，不能据此宣称恢复后仍满足全部保护状态保证。
+- 两个PHP版本在独立16KiB tmpfs上实际验证ENOSPC写入失败与原记录保留，各4项；测试结束卸载并移除临时挂载点，不填满共享磁盘。
+- PHP8.5实际限制独立测试进程文件大小，验证OS部分写失败4项；PHP7.2缺POSIX扩展，此项未执行，不能当作通过。
+- CLI只读诊断退出状态及无状态文件写入已验证；PHPStan level5/目标PHP7.2通过。
+- 当前Web入口上的配置/诊断与故障页面HTTP测试通过，真实Chromium已验证工厂成功、配置拒绝、隔离锁超时、移动布局且无脚本异常。
+
+完整目标仍进行中，逐项剩余工作见execution-status.md。

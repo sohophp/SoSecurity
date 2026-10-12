@@ -9,7 +9,15 @@ use SoSecurity\Storage\Change;
 $directory = privateDirectory();
 try {
     ini_set('session.save_path', $directory);
+    ini_set('session.cookie_path', '/legacy');
+    ini_set('session.cookie_domain', '.example.test');
+    ini_set('session.cookie_lifetime', '600');
     SessionSecurity::configure(false);
+    Check::throws(SoSecurity\Exception\ConfigurationException::class, function () { new SessionStore('bad|namespace'); });
+    Check::throws(SoSecurity\Exception\ConfigurationException::class, function () { new SessionSecurity(10, 20, 'bad!namespace'); });
+    Check::same('/legacy', session_get_cookie_params()['path']);
+    Check::same('.example.test', session_get_cookie_params()['domain']);
+    Check::same(600, session_get_cookie_params()['lifetime']);
     session_id('attackerchosen123456789012345678');
     session_start();
     Check::same(false, session_id() === 'attackerchosen123456789012345678');

@@ -24,11 +24,11 @@ final class MemoryStore implements AtomicStore
         if (!$change instanceof Change) {
             throw new StorageException('Callback must return Change.');
         }
-        if ($change->value === null) {
+        if ($change->value() === null) {
             unset($this->states[$key]);
         } else {
             $this->states[$key] = Codec::encode($change);
         }
-        return $change->result;
+        return $change->result();
     }
 }

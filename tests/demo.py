@@ -49,13 +49,23 @@ def acceptance(base):
             if visitor is None and body.get('controls_token'):
                 controls = body['controls_token']
             return response.status, body, response.headers
-    for module in ['home', 'captcha', 'csrf', 'rate', 'password', 'reset', 'session', 'http', 'output', 'audit', 'storage']:
+    for module in ['home', 'configuration', 'captcha', 'csrf', 'rate', 'password', 'reset', 'session', 'http', 'output', 'audit', 'storage']:
         status, body, headers = call(module)
         check(200, status)
         check(module, body['module'])
         check('no-store', headers['Cache-Control'])
     check(403, call('rate', 'consume', csrf='tampered')[0])
     check(400, call('rate', 'hash')[0])
+    _, config_body, _ = call('configuration', 'construct')
+    check(True, config_body['result']['session_unchanged'])
+    check(True, config_body['result']['csrf_valid'])
+    check(400, call('configuration', 'bad_option')[0])
+    check(400, call('configuration', 'immutable')[0])
+    check(503, call('configuration', 'store_failure')[0])
+    status, config_body, _ = call('configuration', 'lock_timeout')
+    check(503, status)
+    check('storage.lock_timeout', config_body['result']['reason'])
+    check(200, call('configuration', 'diagnose')[0])
     malformed = urllib.request.Request(base + '?module=rate', data=urllib.parse.urlencode(
         {'action[]': 'consume', '_csrf': controls}).encode(), headers={'Accept': 'application/json'})
     try:

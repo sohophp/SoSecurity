@@ -11,14 +11,14 @@ final class IpRules
     {
         foreach ($rules as $rule) {
             if (!is_string($rule)) {
-                throw new \InvalidArgumentException('IP rules must be strings.');
+                throw new \SoSecurity\Exception\ConfigurationException('IP rules must be strings.');
             }
             $parts = explode('/', $rule);
             $bytes = @inet_pton($parts[0]);
             $bits = $bytes === false ? 0 : strlen($bytes) * 8;
             if (count($parts) > 2 || $bytes === false || (isset($parts[1])
                 && (!preg_match('/^(0|[1-9][0-9]*)$/D', $parts[1]) || (int) $parts[1] > $bits))) {
-                throw new \InvalidArgumentException('Invalid IP/CIDR rule.');
+                throw new \SoSecurity\Exception\ConfigurationException('Invalid IP/CIDR rule.');
             }
             $this->networks[] = [$bytes, isset($parts[1]) ? (int) $parts[1] : $bits];
         }

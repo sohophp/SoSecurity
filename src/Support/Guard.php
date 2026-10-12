@@ -8,7 +8,7 @@ final class Guard
     public static function label(string $value): string
     {
         if ($value === '' || strlen($value) > 256 || preg_match('/[\x00-\x1f\x7f]/', $value)) {
-            throw new \InvalidArgumentException('Expected a non-empty label of at most 256 bytes without controls.');
+            throw new \SoSecurity\Exception\ConfigurationException('Expected a non-empty label of at most 256 bytes without controls.');
         }
         return $value;
     }
@@ -16,16 +16,25 @@ final class Guard
     public static function duration(int $value): int
     {
         if ($value < 1 || $value > 31536000) {
-            throw new \InvalidArgumentException('Duration must be between 1 and 31536000 seconds.');
+            throw new \SoSecurity\Exception\ConfigurationException('Duration must be between 1 and 31536000 seconds.');
         }
         return $value;
+    }
+
+    public static function sessionKey(string $key): string
+    {
+        if (strpos($key, '|') !== false || strpos($key, '!') !== false
+            || (ini_get('session.serialize_handler') === 'php_binary' && strlen($key) > 127)) {
+            throw new \SoSecurity\Exception\ConfigurationException('Session namespace is incompatible with the native serializer.', 'configuration.session_namespace');
+        }
+        return $key;
     }
 
     public static function key(string $module, string $scope, string $binding): string
     {
         self::label($scope);
         if ($binding === '' || strlen($binding) > 1024) {
-            throw new \InvalidArgumentException('A server-side binding is required (maximum 1024 bytes).');
+            throw new \SoSecurity\Exception\ConfigurationException('A server-side binding is required (maximum 1024 bytes).');
         }
         return $module . ':' . hash('sha256', strlen($scope) . ':' . $scope . ':' . $binding);
     }

@@ -23,7 +23,7 @@ final class Captcha
     {
         Guard::duration($ttl);
         if ($attempts < 1 || $attempts > 10 || $capacity < 1 || $capacity > 16) {
-            throw new \InvalidArgumentException('Invalid CAPTCHA attempt limit or capacity.');
+            throw new \SoSecurity\Exception\ConfigurationException('Invalid CAPTCHA attempt limit or capacity.');
         }
         $this->store = $store;
         $this->ttl = $ttl;
@@ -44,7 +44,7 @@ final class Captcha
     {
         if ($length < 4 || $length > 8 || !preg_match('/^[A-Z2-9]{8,32}$/D', $alphabet)
             || count(array_unique(str_split($alphabet))) !== strlen($alphabet)) {
-            throw new \InvalidArgumentException('Use 4-8 characters and 8-32 distinct ASCII alphabet symbols.');
+            throw new \SoSecurity\Exception\ConfigurationException('Use 4-8 characters and 8-32 distinct ASCII alphabet symbols.');
         }
         $answer = '';
         for ($i = 0; $i < $length; ++$i) {
@@ -109,7 +109,7 @@ final class Captcha
             return;
         }
         if (count($state) > 16) {
-            throw new StorageException('Corrupt CAPTCHA state.');
+            throw new StorageException('Corrupt CAPTCHA state.', 'storage.corrupt');
         }
         foreach ($state as $id => $item) {
             if (!is_string($id) || !preg_match('/^[a-f0-9]{32}$/D', $id) || !is_array($item)
@@ -117,7 +117,7 @@ final class Captcha
                 || !is_string($item['digest']) || !preg_match('/^[a-f0-9]{64}$/D', $item['digest'])
                 || !is_int($item['expires']) || $item['expires'] <= 0
                 || !is_int($item['remaining']) || $item['remaining'] < 1 || $item['remaining'] > 10) {
-                throw new StorageException('Corrupt CAPTCHA state.');
+                throw new StorageException('Corrupt CAPTCHA state.', 'storage.corrupt');
             }
         }
     }

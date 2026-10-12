@@ -16,7 +16,7 @@ final class Escaper
     {
         $encoded = json_encode($value, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
         if ($encoded === false) {
-            throw new \InvalidArgumentException('Cannot encode JavaScript data.');
+            throw new \SoSecurity\Exception\ValidationException('Cannot encode JavaScript data.');
         }
         return $encoded;
     }

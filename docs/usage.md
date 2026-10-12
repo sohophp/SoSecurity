@@ -18,9 +18,9 @@ $redisStore = new SoSecurity\Storage\RedisStore($redis, 'shop-prod', $clock);
 
 所有共同使用的服务及存储必须使用一致的 Clock。生产使用系统时钟并同步服务器；Redis TTL 基于服务器真实时间。自定义 Clock 主要用于测试，不能在真实 Redis 上任意使用虚拟时间。
 
-文件适用于单主机本地磁盘；不能放共享 NFS；需定时 `$fileStore->prune()`、磁盘/权限监控。锁文件永远不删除；清理整个目录会清除保护状态。目录只能有一个站点的受信任进程读写；namespace 是逻辑隔离，不是不同文件系统用户的访问隔离。存储没有磁盘配额管理，公网创建入口必须先限流，防止随机主体持续创建数据。
+文件适用于单主机本地磁盘；不能放共享 NFS；需定时在同一实例循环 `$fileStore->pruneBatch(1000)` 到complete()，并监控磁盘/权限；prune()现在只执行一批。锁文件永远不删除；清理整个目录会清除保护状态。目录只能有一个站点的受信任进程读写；namespace 是逻辑隔离，不是不同文件系统用户的访问隔离。存储没有磁盘配额管理，公网创建入口必须先限流，防止随机主体持续创建数据。
 
-Redis 要求 phpredis、独立连接、无 serializer/prefix，不混用宿主的 MULTI/WATCH 状态。至少32次冲突后抛异常；回调可重试。配置 noeviction、权限和内存告警；Redis 重启/清空/逐出状态会丢失保护信息，库不能自动识别所有数据丢失。
+Redis 要求 phpredis、独立连接、无 serializer/prefix，不混用宿主的 MULTI/WATCH 状态。默认最多32次CAS尝试、1000ms总等待预算；Lua原子提交需要EVAL权限；回调可重试。配置 noeviction、权限和内存告警；Redis 重启/清空/逐出状态会丢失保护信息，库不能自动识别所有数据丢失。
 
 MemoryStore 只用于测试。SessionStore 不能用于 IP/账号跨 Session 限流，禁用锁的自定义 Session 驱动不能用于原子消费。
 
@@ -88,7 +88,7 @@ $limiter->reset('login.ip-account', $subject);    // 管理员明确解封/重�
 
 这些管理方法必须在宿主授权后调用；不是可直接暴露的公共接口。inspect 不占额度、创建记录或延长历史；达到额度但未触发自动封禁时 retryAfter 是剩余窗口。consume 第limit+1次触发封禁，封禁结束重开窗口，下一次越限提高阶梯；历史TTL过后从第一阶开始。historyTtl必须覆盖窗口和最长封禁。固定窗口可能在边缘形成突发流量；要更精确的滑动窗口属于后续策略。
 
-策略一旦使用，不要在不同进程对同一 scope 设置不同的额度、时间或阶梯；变更使用新scope，已存在状态保留其有效期。同一namespace可以用不同scope区分站点业务。bans 不要在实例化后变更。IP总量桶配宽松阈值，不自动永久封禁共享IP；单账号桶用于风险观察应慎用硬封禁，避免恶意锁死用户。
+策略一旦使用，不要在不同进程对同一 scope 设置不同的额度、时间或阶梯；变更使用新scope，已存在状态保留其有效期。同一namespace可以用不同scope区分站点业务。Policy不可变；读取使用limit()/window()/banDurations()/historyTtl()，变更时创建新策略并安排scope迁移。IP总量桶配宽松阈值，不自动永久封禁共享IP；单账号桶用于风险观察应慎用硬封禁，避免恶意锁死用户。
 
 ## 密码与重置
 
@@ -133,7 +133,7 @@ header('Set-Cookie: ' . SoSecurity\Session\SessionSecurity::cookieHeader(true, '
 $security->invalidate();
 ```
 
-PHP 7.2没有原生 SameSite 配置，start/rotate 后的显式 Cookie 头是必需步骤。configure使用host-only路径`/`Cookie；已有应用使用其他path/domain时先审核再接入，不可照抄覆盖原策略。原生及生成的同名同路径Cookie以最后发出的安全属性覆盖；反向代理不能重排/删除这些头。生产Secure=true，仅明确的本地HTTP演示才设false。
+PHP 7.2没有原生 SameSite 配置，start/rotate 后的显式 Cookie 头是必需步骤。configure默认保留宿主已有path/domain/lifetime，可以显式传入覆盖配置；Domain扩大会话Cookie可见范围，应先审核已有策略。原生及生成的同名同路径Cookie以最后发出的安全属性覆盖；反向代理不能重排/删除这些头。生产Secure=true，仅明确的本地HTTP演示才设false。
 
 touch首次调用建立时间基线，已有登录用户首次接入也从此时计时，不会追溯原始登录时间。rotate重新建立基线，旧Session并发请求可能需重新登录。保持失效标记直到重新认证。宿主已有生命周期时可只采用必要方法。
 
@@ -160,3 +160,5 @@ $logger->record('login.failed', 'login', $accountId, ['status' => 401]);
 HTML编码适用于HTML文本和加引号的普通属性，不适用于事件、style或srcdoc；JSON不是任意JavaScript模板清洗器；URL组件编码不检查scheme，不是SSRF/开放跳转防护。不要对Twig已自动编码的变量重复编码，不使用raw；富文本需要经审查HTML清理器。
 
 AuditLogger只保留allowed/retry_after/status的bool/非负int字段；其他上下文丢弃。event为规范常量代码，scope为受控常量；subject使用独立密钥HMAC假名化（密钥至少32字节），不能传密码/令牌/Session ID。sink故障抛给宿主，由宿主事先决定审计失败是否阻止业务，不能在动作完成后隐瞒业务结果。库没有内置日志文件、查询、日志保留期或自动事件订阅。
+
+可选配置工厂、完整配置参考、只读诊断和开发候选API迁移见 [configuration.md](configuration.md)。

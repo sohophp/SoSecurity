@@ -11,7 +11,7 @@ final class PasswordPolicy
     public function __construct(int $minimum = 15, int $maximumBytes = 72)
     {
         if ($minimum < 8 || $minimum > 128 || $maximumBytes < $minimum || $maximumBytes > 4096) {
-            throw new \InvalidArgumentException('Invalid password length policy.');
+            throw new \SoSecurity\Exception\ConfigurationException('Invalid password length policy.');
         }
         $this->minimum = $minimum;
         $this->maximumBytes = $maximumBytes;
