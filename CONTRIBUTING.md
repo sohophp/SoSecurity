@@ -1,0 +1,24 @@
+# 贡献与验证
+
+核心代码保持PHP7.2语法和PHP7.2–8.5运行时兼容，不添加框架强依赖，不用测试通过替代安全审查。安全漏洞走SECURITY.md中的私密路径。
+
+常规修改：先阅读docs/architecture.md和threat-model.md，保持修改范围集中；同时更新相关使用文档及回归测试。AtomicStore回调必须无外部副作用；测试存储失败、边界及并发，不把生产降级成空内存状态。
+
+```sh
+composer install
+composer validate --strict
+bin/check.sh php
+python3 tests/install.py php /path/to/composer
+# 开发工具与核心依赖隔离
+php81 /path/to/composer install --working-dir=tools
+php81 tools/vendor/bin/phpstan analyse -c phpstan.neon --no-progress
+php81 /path/to/composer audit --working-dir=tools --locked
+```
+
+测试使用无第三方依赖的断言运行框架（tests/bootstrap.php），检查失败非零退出；警告和弃用也转换为测试错误。tests/run.php是功能/边界测试；session.php与redis.php是真实驱动集成；concurrency.php每种情形启动24个独立PHP进程；test_http.py以隔离PHP服务器检查HTTP/Cookie；install.py验证独立消费者Composer安装。不能把NOT RUN记成PASS。
+
+Redis测试只对新建UNIX socket实例操作；不连接宿主实例，不FLUSHDB。CI检查缺少必需扩展时应失败，不能以跳过掩盖缺失。PHP8.2/8.4本地Redis扩展缺失的状态须保留在验证记录，完整矩阵CI运行前不宣称这些适配器已通过对应版本。
+
+PHPStan使用PHP7.2目标、level5，不维护忽略基线；开发工具在PHP8.1执行避免本机较旧glibc不支持新Turbo加速扩展。提高分析严格度应同时补齐真正有意义的类型约束，而不是盲目添加忽略。
+
+发布前完成docs/verification.md中待验收项，检查composer archive内容并审核公开API和默认策略。提交清楚描述行为和证据；git push、标签、Packagist登记和宿主部署是另外的操作，不由本地测试自动触发。
