@@ -99,6 +99,16 @@ final class Inspector
             }
             $checks[] = ['check'=>'outbound.network', 'status'=>'manual', 'reason'=>'http.network_unverified'];
         }
+        $api = $config->api();
+        if ($api === null) { $checks[] = ['check'=>'api.signatures','status'=>'not_configured','reason'=>'configuration.api']; }
+        else {
+            $provider = isset($api['key_provider']) ? ($services[$api['key_provider']] ?? null) : null;
+            $checks[] = ['check'=>'api.key_provider','status'=>!isset($api['key_provider']) ? 'not_configured' : ($provider instanceof \SoSecurity\Api\KeyProvider ? 'manual' : 'fail'),
+                'reason'=>$provider instanceof \SoSecurity\Api\KeyProvider ? 'api.key_lifecycle_unverified' : 'configuration.key_provider'];
+            $checks[] = ['check'=>'api.request_boundary','status'=>'manual','reason'=>'api.raw_request_unverified'];
+            $checks[] = ['check'=>'api.transport','status'=>strpos($api['origin'],'https://')===0 ? 'manual' : 'fail',
+                'reason'=>strpos($api['origin'],'https://')===0 ? 'api.tls_proxy_unverified' : 'api.http_demo_only'];
+        }
         return $checks;
     }
     private function redis(\Redis $redis, string $namespace): array

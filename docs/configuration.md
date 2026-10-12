@@ -112,3 +112,9 @@ php bin/diagnose.php /private/security-config.php --probe
 工厂物理存储命名空间为site:shared与site:tokens。原有直接组件的命名空间不会自动改名或迁移；切换真实旧站时先验证并行保护和旧记录保留期，不因引入工厂清空现有封禁。
 
 重置示例以宿主数据库version CAS防止旧令牌覆盖新密码。保存成功后的撤销故障返回reset.applied_cleanup_pending，明确密码已经更新；旧版本令牌不能越过SQL版本检查。宿主事务回滚不会复活已消费令牌，需要重新发令牌，不能由库提交或回滚宿主事务。
+
+## API 凭据与签名
+
+`apiKeys()` 只要求共享 storage，无需 HMAC 配置。`hmacSigner(SigningKey)` 要求 `api.origin`，不要求验证用存储或 KeyProvider。`hmacVerifier()` 同时要求可信 origin、共享 storage 及对应 `api.key_provider` 服务；不自动生成生产秘密。工厂拒绝 MemoryStore/SessionStore 及其命名空间包装作为 API 状态。
+
+api 的固定配置档、默认值与完整示例见 [api.md](api.md)。诊断 `api.key_provider/api.request_boundary/api.transport` 分别提示可信密钥生命周期、原始请求和 TLS/代理边界尚需宿主验收；仅签名端未提供 key_provider 时标记 not_configured，显式配置却未注入正确服务时 fail。只读诊断不加载/列出密钥，不把 HTTPS 配置字符串当成实际 TLS 验收。

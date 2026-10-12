@@ -16,6 +16,7 @@ with tempfile.TemporaryDirectory(prefix='sosecurity-archive-') as directory:
     with zipfile.ZipFile(Path(directory, 'sosecurity.zip')) as archive:
         names = archive.namelist()
         assert 'composer.json' in names and 'LICENSE' in names and 'src/Csrf/CsrfTokens.php' in names and 'resources/sql/mysql.sql' in names and 'src/Validation/Validator.php' in names and 'src/Upload/Saver.php' in names and 'src/Http/Outbound/Client.php' in names
+        assert 'src/Api/HmacVerifier.php' in names and 'src/Api/ApiKeys.php' in names and 'examples/api-request.php' in names
         unexpected = [name for name in names if name.startswith(('vendor/', 'tools/', 'tests/', 'bin/', 'demo/', '.git/', '.github/', '.phpstan-cache/', 'var/'))]
         assert not unexpected, unexpected[:10]
         assert not any(name.endswith(('.env', '.log', 'composer.lock')) for name in names)

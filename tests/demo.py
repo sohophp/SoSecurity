@@ -49,7 +49,7 @@ def acceptance(base):
             if visitor is None and body.get('controls_token'):
                 controls = body['controls_token']
             return response.status, body, response.headers
-    for module in ['home', 'configuration', 'validation', 'upload', 'captcha', 'csrf', 'rate', 'password', 'reset', 'session', 'http', 'network', 'output', 'audit', 'storage']:
+    for module in ['home', 'configuration', 'validation', 'upload', 'api', 'captcha', 'csrf', 'rate', 'password', 'reset', 'session', 'http', 'network', 'output', 'audit', 'storage']:
         status, body, headers = call(module)
         check(200, status)
         check(module, body['module'])

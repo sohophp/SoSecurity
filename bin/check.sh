@@ -11,6 +11,7 @@ task_runtime=${1:-php}
 "$task_runtime" tests/validation.php
 "$task_runtime" tests/http-policy.php
 "$task_runtime" tests/outbound.php
+"$task_runtime" tests/api.php
 "$task_runtime" tests/upload.php
 if "$task_runtime" -r 'exit(extension_loaded("pdo_sqlite") ? 0 : 1);'; then
     "$task_runtime" tests/reset-flow.php
@@ -29,6 +30,7 @@ if command -v redis-server >/dev/null && command -v redis-cli >/dev/null && "$ta
     redis-server --port 0 --unixsocket "$task_redis_socket" --unixsocketperm 700 --dir "$task_redis_dir" --save '' --appendonly no --daemonize yes --pidfile "$task_redis_dir/redis.pid" --logfile "$task_redis_dir/redis.log"
     export SOSECURITY_TEST_REDIS_SOCKET="$task_redis_socket"
     "$task_runtime" tests/redis.php
+    "$task_runtime" tests/api.php
     if command -v python3 >/dev/null; then python3 tests/redis_restart.py "$task_runtime"; fi
 else
     if [[ ${SOSECURITY_REQUIRE_REDIS:-0} == 1 ]]; then
@@ -47,6 +49,9 @@ else
 fi
 "$task_runtime" tests/concurrency.php
 if command -v python3 >/dev/null; then
+    python3 tests/api_vectors.py --php "$task_runtime"
+    python3 tests/api_http.py "$task_runtime"
+    python3 tests/api_demo.py "$task_runtime"
     python3 tests/network_demo.py "$task_runtime"
     python3 tests/cors_http.py "$task_runtime"
     python3 tests/upload_demo.py "$task_runtime"

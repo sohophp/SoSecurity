@@ -1,8 +1,8 @@
 # 威胁模型和安全边界
 
-资产：登录身份、Session/CSRF/重置令牌、验证码答案、密码哈希、限流状态及日志。攻击者可构造请求、表单和转发头，可并发调用并不断更换 Session/IP/账号；不能被假定只能从 UI 提交。
+资产：登录身份、Session/CSRF/重置令牌、验证码答案、密码哈希、限流状态、上传内容、外部连接边界、API凭据/签名密钥/Nonce及日志。攻击者可构造请求、表单和转发头，可并发调用并不断更换 Session/IP/账号；不能被假定只能从 UI 提交。
 
-| 威胁 | 0.1 控制 | 宿主责任/限制 |
+| 威胁 | 当前候选控制 | 宿主责任/限制 |
 | --- | --- | --- |
 | 跨站伪造/跨作用域令牌 | 随机摘要令牌、服务器绑定、作用域隔离 | 所有状态变化后端验证；GET 无写操作；XSS 能绕过 CSRF；不要把令牌写日志/URL |
 | 重放及并发消费 | 锁/Redis CAS 内单次消费 | 普通 CSRF 重用是明确策略；重置消费与业务写库不是跨资源事务，写库失败需重新发令牌 |
@@ -15,7 +15,9 @@
 | 多站点串用/存储泄露 | namespace、散列键、私有文件权限 | namespace 应固定且唯一；宿主不能将 Session ID、秘密或答案作为公开 URL/业务字段；不同应用不能共享同一可读文件目录 |
 | 日志泄露/注入 | 结构化事件、白名单数值字段、HMAC 假名化 | scope/event 使用服务器常量，subject 不得传入密码/令牌；日志系统保护、保留期、权限由宿主决定；不自动记录异常完整信息 |
 | XSS | HTML/引用属性编码、JSON 数据编码 | 不能用于 JS 标识符、事件属性、CSS、srcdoc 或不安全 URL；Twig 不使用 raw；富文本后续接成熟清理库 |
-| 文件上传/SSRF/API 签名 | 本里程碑未实现 | 不宣称 URL 格式验证能阻止 SSRF；不提供未测试的上传/签名安全保证 |
+| 文件上传 | 内容/类型/大小/图片解码预算、重新编码和私有排他保存 | 授权、CSRF、全局容量、保留及安全下载由宿主承担；未接真实扫描/CDR；见upload.md |
+| SSRF | 精确目标、全部A/AAAA公开地址、逐跳DNS/URI及实际peer pin、TLS和累计预算 | 不接受任意URL代理；真实基础设施路由/自定义适配/企业DNS及业务路径授权仍须验证；见outbound.md |
+| API伪造/篡改/重放 | 随机Bearer摘要及原子轮换撤销；固定RFC 9421配置档、绑定方法/完整URI/体摘要/Content-Type，共享Nonce | TLS、原始请求交付、密钥管理、权限/资源归属、入口预算及业务幂等由宿主承担；状态恢复/时钟异常不提供永久历史重放保证；见api.md |
 
 配置错误抛出异常，第三方验证码不可达抛出异常；宿主返回 503 并停止业务。拒绝后不能在 catch 中继续登录。攻击者能直接改写共享安全存储时，防护不再成立。
 
@@ -32,3 +34,5 @@ SoSecurity 不替代授权检查、参数化 SQL、HTTPS、基础设施防护或
 - [Cloudflare Siteverify](https://developers.cloudflare.com/turnstile/get-started/server-side-validation/)：服务端验证、300秒/单次使用及 hostname/action 检查。
 - [Redis Transactions](https://redis.io/docs/latest/develop/using-commands/transactions/)：WATCH/MULTI/EXEC 乐观并发事务。
 - [PHP 支持版本](https://www.php.net/supported-versions.php)：代码兼容不等于上游仍维护。
+
+- [RFC 9421](https://www.rfc-editor.org/rfc/rfc9421.html)、[RFC 9530](https://www.rfc-editor.org/rfc/rfc9530.html)：有界HTTP签名配置档与请求体摘要，不宣称通用协议/所有算法互操作。

@@ -16,6 +16,7 @@
 | 重置令牌 | 单次消费、重复消费、密码版本变更后旧令牌失效 |
 | 会话安全 | Session ID更新（只显示摘要指纹）、空闲/绝对过期和显式失效 |
 | HTTP与代理 | 可信CIDR、代理链、Report-Only/Cookie、跳转白名单、CORS预检、Permissions-Policy |
+| API凭据与签名 | 测试凭据签发/轮换/撤销/权限/访客隔离；内部签名、篡改/重放/过期/Nonce故障 |
 | 受限外部请求 | 固定公网目标真实HTTPS/DoH/pin；隔离内网、重定向、DNS变更、peer和响应超限拒绝 |
 | 输出编码 | HTML、JSON数据、URL组件编码；输入作为文本显示 |
 | 审计日志 | 结构化记录、字段白名单、主体假名化、清空当前访客日志 |
@@ -55,7 +56,7 @@ sudo -u apache php72 /var/www/php/7.2/soSecurity/bin/demo-cleanup.php
 - `SOSECURITY_DEMO_TURNSTILE_SITE_KEY` 与 `SOSECURITY_DEMO_TURNSTILE_SECRET`：同时配置后显示真实widget，后端调用Siteverify。
 - `SOSECURITY_DEMO_TURNSTILE_HOST`：固定的预期hostname，默认72.rocky.wsl；widget action固定demo。应确认服务是否支持配置的本地域名，不能关闭hostname/action校验来让演示显示通过。
 
-密钥只在服务端配置，不通过演示表单保存。没有实际配置与服务响应前，不把外部能力标记为已验收。当前MySQL已接入存储页，输入验证有独立页面；API签名将在实现后增加对应页面，不预先放置虚假成功按钮。
+密钥只在服务端配置，不通过演示表单保存。没有实际配置与服务响应前，不把外部能力标记为已验收。当前MySQL已接入存储页，输入验证有独立页面；API签名已提供固定内部测试页面，真实HTTP及独立签名互操作见api.md。
 
 ## 自动化与浏览器验收
 
@@ -130,3 +131,11 @@ python3 tests/native_outbound.py php72 php85
 ```
 
 后一个命令需要Linux sudo/unshare/ip/OpenSSL，使用临时网络命名空间与每进程测试CA，既不修改宿主路由也不安装系统CA。SDK默认实现已在六个本地PHP版本执行真实pin/TLS/DoH/重定向/预算验收；缺失版本仍未验证。
+
+## API 演示
+
+`?module=api` 提供短期 Bearer 凭据与 RFC 9421 有界 HMAC 签名。token 只在签发/轮换结果显示，不进入状态 JSON；输入验证同时检查当前访客归属。HMAC 密钥仅保留在私有服务器 Session，固定示例 URI 不发网络请求。先生成签名，测试篡改，再验证并消费 Nonce，最后重复验证；存储故障用固定独立故障对象，不破坏共享演示存储。所有操作仍通过控制表单 CSRF 和入口预算，分配/消费另有全站 30 次/分钟额度。
+
+核心、默认值、正常拒绝/故障及迁移边界见 [api.md](api.md)。`python3 tests/api_demo.py php72` 是隔离演示，`--url http://72.rocky.wsl/SoSecurity/` 验证实际 Apache/FPM 入口；不能把内部网页签名样例当成外部业务客户端验收。
+
+当前主演示测试为117项隔离/119项实际入口，API独立演示24项。对实际入口应按请求窗口分批运行测试；入口100次/分钟及API分配30次/分钟保持启用，不因验收临时降低保护。

@@ -22,10 +22,11 @@ final class Config
     private $session;
     private $upload;
     private $outbound;
+    private $api;
 
     public function __construct(array $config)
     {
-        self::known($config, ['site', 'storage', 'token_storage', 'csrf', 'captcha', 'rate_limits', 'password', 'session', 'upload', 'outbound']);
+        self::known($config, ['site', 'storage', 'token_storage', 'csrf', 'captcha', 'rate_limits', 'password', 'session', 'upload', 'outbound', 'api']);
         $this->site = self::text($config['site'] ?? null, 'site');
         Guard::label($this->site);
         if (strlen($this->site) > 128) { throw new ConfigurationException('Site identifier must be at most 128 bytes.'); }
@@ -87,6 +88,13 @@ final class Config
             $this->outbound = self::copy($outbound + $policy->options());
         }
         // Copy scalar option values into independent arrays; caller-owned array references must not mutate configuration.
+        $this->api = null;
+        if (array_key_exists('api', $config)) {
+            $api = self::map($config['api'], 'api');
+            if (array_key_exists('key_provider', $api)) { self::text($api['key_provider'], 'api.key_provider'); }
+            $policy = new \SoSecurity\Api\SignaturePolicy(array_diff_key($api, ['key_provider'=>true]));
+            $this->api = self::copy($api + $policy->options());
+        }
         $this->csrf = self::copy($this->csrf); $this->captcha = self::copy($this->captcha);
         $this->password = self::copy($this->password); $this->session = self::copy($this->session);
     }
@@ -98,6 +106,7 @@ final class Config
     public function captcha(): array { return $this->captcha; }
     public function password(): array { return $this->password; }
     public function outbound(): ?array { return $this->outbound; }
+    public function api(): ?array { return $this->api; }
     public function upload(): ?array { return $this->upload; }
     public function session(): array { return $this->session; }
     public function policy(string $name): Policy

@@ -18,15 +18,17 @@ function parallelSuccesses(string $kind, string $target, string $operation, arra
         if (!is_resource($process)) { throw new RuntimeException('Cannot start test worker.'); }
         fclose($pipes[0]); $processes[] = [$process, $pipes];
     }
-    $successes = 0;
+    $successes = 0; $lockTimeouts = 0;
     foreach ($processes as list($process, $pipes)) {
         $stdout = stream_get_contents($pipes[1]); $stderr = stream_get_contents($pipes[2]);
         fclose($pipes[1]); fclose($pipes[2]); $code = proc_close($process);
+        if ($code===0 && $stderr==='' && $stdout==='T' && $kind==='mysql' && $operation==='api-rotate') { ++$lockTimeouts; continue; }
         if ($code !== 0 || $stderr !== '' || !in_array($stdout, ['0', '1'], true)) {
             throw new RuntimeException('Worker failed: ' . $stderr . $stdout);
         }
         $successes += (int) $stdout;
     }
+    if ($operation==='api-rotate') { echo "RESULT $kind API rotation: $successes succeeded, $lockTimeouts explicitly rejected on bounded SQL lock wait\n"; }
     return $successes;
 }
 
@@ -54,6 +56,20 @@ try {
         $captcha = new Captcha($store); $challenge = $captcha->arithmetic('form', 'binding');
         preg_match('/^(\d+) \+ (\d+)/', $challenge->prompt, $parts);
         Check::same(1, parallelSuccesses($kind, $target, 'captcha', [$challenge->id, (string) ($parts[1] + $parts[2])]));
+        $key=new SoSecurity\Api\SigningKey('concurrency-key',str_repeat('k',32),'worker',['read']);
+        $signer=new SoSecurity\Api\HmacSigner(new SoSecurity\Api\SignaturePolicy(['origin'=>'https://api.example.com']),$key);
+        $headers=$signer->sign('POST','https://api.example.com/task','{}');
+        Check::same(1,parallelSuccesses($kind,$target,'hmac',[base64_encode(json_encode($headers))]));
+        $apiKeys=new SoSecurity\Api\ApiKeys($store); $credential=$apiKeys->issue('worker',['read'],120);
+        $rotated=parallelSuccesses($kind,$target,'api-rotate',[$credential->identity()->id()]);
+        Check::same(true,$kind==='mysql' ? $rotated>=1 && $rotated<=24 : $rotated===24);
+        Check::same(null,$apiKeys->authenticate($credential->token()));
+        $finalCredential=$apiKeys->rotate($credential->identity()->id());
+        Check::same('worker',$apiKeys->authenticate($finalCredential->token())->subject());
+        Check::same(true,$apiKeys->revoke($credential->identity()->id()));
+        Check::same(null,$apiKeys->authenticate($finalCredential->token()));
+        Check::same(null,$apiKeys->rotate($credential->identity()->id()));
+        echo "PASS $kind API: 24 identical signed requests / exactly one nonce accepted; concurrent rotation invalidates original credential; revocation cannot revive it\n";
         if ($kind === 'mysql') {
             $pdo->exec('DROP TABLE IF EXISTS accounts');
             $pdo->exec('CREATE TABLE accounts (id VARCHAR(128) PRIMARY KEY, version BIGINT NOT NULL, password_hash VARCHAR(255) NOT NULL) ENGINE=InnoDB');

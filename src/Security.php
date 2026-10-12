@@ -74,6 +74,27 @@ final class Security
         if (isset($options['transport']) && !$transport instanceof Http\Outbound\Transport) { throw new ConfigurationException('Inject a pinned Transport.', 'configuration.transport'); }
         return new Http\Outbound\Client(new Http\Outbound\Policy(array_diff_key($options, array_flip(['resolver','transport']))), $resolver, $transport);
     }
+    public function apiKeys(): Api\ApiKeys { return new Api\ApiKeys($this->apiStore(), $this->clock); }
+    public function hmacSigner(Api\SigningKey $key): Api\HmacSigner { return new Api\HmacSigner($this->apiPolicy(), $key, $this->clock); }
+    public function hmacVerifier(): Api\HmacVerifier
+    {
+        $policy = $this->apiPolicy(); $options = $this->config->api();
+        $provider = isset($options['key_provider']) ? ($this->services[$options['key_provider']] ?? null) : null;
+        if (!$provider instanceof Api\KeyProvider) { throw new ConfigurationException('Inject a signing KeyProvider.','configuration.key_provider'); }
+        return new Api\HmacVerifier($policy, $provider, new Api\NonceStore($this->apiStore(), $this->clock), $this->clock);
+    }
+    private function apiPolicy(): Api\SignaturePolicy
+    {
+        $options = $this->config->api();
+        if ($options === null) { throw new ConfigurationException('Configure a trusted signature origin.','configuration.api'); }
+        return new Api\SignaturePolicy(array_diff_key($options, ['key_provider'=>true]));
+    }
+    private function apiStore(): AtomicStore
+    {
+        $store = $this->store('shared');
+        if (!$this->shared($store)) { throw new ConfigurationException('API credentials and replay protection need shared atomic storage.','configuration.shared_store'); }
+        return $store;
+    }
     public function uploader(): Upload\Saver
     {
         $options = $this->config->upload();

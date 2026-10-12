@@ -10,7 +10,9 @@ root = Path(__file__).resolve().parent.parent
 runtime = sys.argv[1] if len(sys.argv) > 1 else 'php'
 with tempfile.TemporaryDirectory(prefix='sosecurity-mysql-') as directory:
     data = str(Path(directory, 'data')); socket = str(Path(directory, 'mysql.sock'))
-    common = ['mysqld', '--no-defaults', '--datadir=' + data, '--innodb-buffer-pool-size=32M', '--innodb-log-file-size=8M']
+    # MySQL 8's initialization can use >100 MiB of redo. A 16 MiB ring stalls on repeated rotation.
+    # Keep this test-only instance bounded, but large enough to initialize under the existing 180s limit.
+    common = ['mysqld', '--no-defaults', '--datadir=' + data, '--innodb-buffer-pool-size=32M', '--innodb-log-file-size=64M']
     if os.geteuid() == 0: common.append('--user=root')
     subprocess.run([*common, '--initialize-insecure', '--log-error=' + str(Path(directory, 'init.log'))], check=True, timeout=180)
     log = open(Path(directory, 'launcher.log'), 'w+')
@@ -30,6 +32,7 @@ with tempfile.TemporaryDirectory(prefix='sosecurity-mysql-') as directory:
         if setup.returncode: raise RuntimeError('Isolated MySQL account setup failed')
         env = os.environ.copy(); env['SOSECURITY_TEST_MYSQL_SOCKET'] = socket
         subprocess.run([runtime, str(root / 'tests/mysql.php')], env=env, check=True)
+        subprocess.run([runtime, str(root / 'tests/api.php')], env=env, check=True)
         subprocess.run([runtime, str(root / 'tests/concurrency.php')], env=env, check=True)
     finally:
         if server.poll() is None:

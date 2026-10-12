@@ -25,6 +25,25 @@ if ($operation === 'rate') {
 } elseif ($operation === 'upload') {
     (new SoSecurity\Upload\Saver(new SoSecurity\Upload\Validator(), $target, $argv[5]))->saveFile($argv[4], 'same-name.png');
     echo '1';
+} elseif ($operation === 'hmac') {
+    // Public fixed test material only. Never pass production credentials on a process command line.
+    $key=new SoSecurity\Api\SigningKey('concurrency-key',str_repeat('k',32),'worker',['read']);
+    $policy=new SoSecurity\Api\SignaturePolicy(['origin'=>'https://api.example.com']);
+    $headers=json_decode(base64_decode($argv[4],true),true);
+    $verifier=new SoSecurity\Api\HmacVerifier($policy,new SoSecurity\Api\KeyRing([$key]),new SoSecurity\Api\NonceStore($store));
+    echo $verifier->verify('POST','https://api.example.com/task','{}',$headers,'read')!==null ? '1' : '0';
+} elseif ($operation === 'api-rotate') {
+    try { $credential=(new SoSecurity\Api\ApiKeys($store))->rotate($argv[4]); }
+    catch (SoSecurity\Storage\StorageException $e) {
+        $previous=$e->getPrevious();
+        if ($kind==='mysql' && $previous instanceof PDOException && isset($previous->errorInfo[1]) && $previous->errorInfo[1]===1205) {
+            // Explicit, expected bounded rejection under contention; never count it as a successful rotation.
+            echo 'T'; exit;
+        }
+        throw $e;
+    }
+    // Every successful replacement may be superseded by another; only the final digest remains valid.
+    echo $credential!==null ? '1' : '0';
 } elseif ($operation === 'reset' && $kind === 'mysql') {
     require dirname(__DIR__) . '/examples/password-reset.php';
     $tokens = explode(',', $argv[4]);

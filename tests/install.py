@@ -35,6 +35,14 @@ if ((new SoSecurity\\Upload\\Policy())->maximumBytes() !== 5242880) { exit(5); }
 if (!(new SoSecurity\\Http\\Redirects('https://site.example'))->allows('/home')) { exit(6); }
 $rate = new SoSecurity\\RateLimit\\RateLimiter($store);
 if (!$rate->consume('login', 'ip-account')->allowed) { exit(2); }
+$keys = new SoSecurity\\Api\\ApiKeys($store);
+$credential = $keys->issue('installed-client', ['read']);
+if ($keys->authenticate($credential->token(), 'read')->subject() !== 'installed-client') { exit(7); }
+$key = SoSecurity\\Api\\SigningKey::generate('installed-client', ['read']);
+$policy = new SoSecurity\\Api\\SignaturePolicy(['origin'=>'https://api.example.com']);
+$headers = (new SoSecurity\\Api\\HmacSigner($policy, $key))->sign('POST','https://api.example.com/a','{}');
+$verifier = new SoSecurity\\Api\\HmacVerifier($policy,new SoSecurity\\Api\\KeyRing([$key]),new SoSecurity\\Api\\NonceStore($store));
+if ($verifier->verify('POST','https://api.example.com/a','{}',$headers,'read') === null || $verifier->verify('POST','https://api.example.com/a','{}',$headers) !== null) { exit(8); }
 echo "PASS Composer: fresh consumer installation, PSR-4 and public API on PHP " . PHP_VERSION . "\\n";
 ''')
     subprocess.run([runtime, str(Path(directory, 'verify.php'))], check=True)

@@ -28,6 +28,7 @@ use SoSecurity\Support\Clock;
 
 require __DIR__ . '/uploads.php';
 require __DIR__ . '/network.php';
+require __DIR__ . '/api.php';
 
 /** Only advances this visitor's demonstration time; never changes system time. */
 final class DemoClock implements Clock
@@ -46,7 +47,7 @@ final class DemoApp
     private const MODULES = [
         'home' => '功能总览', 'configuration' => '配置与诊断', 'captcha' => '验证码', 'csrf' => 'CSRF 防护', 'rate' => '限流与封禁',
         'upload' => '上传安全', 'validation' => '输入验证', 'password' => '密码安全', 'reset' => '重置令牌', 'session' => '会话安全',
-        'network' => '受限外部请求', 'http' => 'HTTP 与代理', 'output' => '输出编码', 'audit' => '审计日志', 'storage' => '存储与隔离',
+        'api' => 'API 凭据与签名', 'network' => '受限外部请求', 'http' => 'HTTP 与代理', 'output' => '输出编码', 'audit' => '审计日志', 'storage' => '存储与隔离',
     ];
     private const TEST_PASSWORD = 'Demo-only-7.2!';
     private $module;
@@ -102,6 +103,7 @@ final class DemoApp
                     'reset' => ['issue', 'consume', 'replay', 'change_version'],
                     'session' => ['touch', 'idle', 'absolute', 'rotate', 'invalidate'],
                     'network' => ['fetch', 'private', 'redirect_private', 'rebind', 'peer', 'oversize'],
+                    'api' => ['issue_key','check_key','scope_key','rotate_key','revoke_key','sign','verify','replay','tamper','expire','store_failure'],
                     'http' => ['resolve', 'headers', 'redirect', 'cors', 'permissions'], 'output' => ['encode'], 'audit' => ['record', 'clear'],
                     'storage' => ['increment', 'read', 'isolation'],
                     'upload' => ['upload', 'normal_sample', 'fake_sample', 'size_sample', 'path_sample', 'budget_sample', 'scanner_reject', 'scanner_fail', 'store_fail', 'clear'],
@@ -399,6 +401,14 @@ final class DemoApp
                 $this->result=['target'=>'https://www.php.net/robots.txt','status'=>$response->status(),'bytes'=>strlen($response->body()),
                     'sha256'=>hash('sha256',$response->body()),'message'=>'真实HTTPS请求完成；不提供任意URL代理，不显示响应正文或敏感头。'];
                 break;
+            case 'api':
+                if (in_array($action,['issue_key','rotate_key','sign','verify','replay'],true)) {
+                    $budget=(new RateLimiter($this->store,new Policy(30,60,[10],120)))->consume('demo-api-allocation','global');
+                    if (!$budget->allowed) { $this->status=429; $this->result=['message'=>'API 演示操作额度已用完，请稍后重试。']; header('Retry-After: '.$budget->retryAfter); break; }
+                }
+                $this->result=(new ApiSamples($this->store,$this->binding))->run($action,$this->input('api_token',128));
+                if (isset($this->result['valid']) && !$this->result['valid']) { $this->status=403; }
+                break;
             case 'http':
                 if ($action === 'resolve') {
                     $rules = preg_split('/\s*,\s*/', trim($this->input('trusted', 1024)), -1, PREG_SPLIT_NO_EMPTY);
@@ -458,6 +468,7 @@ final class DemoApp
     private function state(): array
     {
         switch ($this->module) {
+            case 'api': return (new ApiSamples($this->store,$this->binding))->state();
             case 'network': return ['target'=>'https://www.php.net/robots.txt','resolver'=>'Google JSON DoH，固定TLS端点和bootstrap IP',
                 'transport'=>extension_loaded('curl')?'已安装cURL，实际请求时验证网络/证书/地址与预算':'未安装cURL，真实请求未执行'];
             case 'upload': return ['files' => (new UploadSandbox($this->directory, $_SERVER['DOCUMENT_ROOT'] ?? dirname(__DIR__) . '/demo/public'))->files(),
@@ -497,7 +508,7 @@ final class DemoApp
         foreach (self::MODULES as $id => $label) {
             echo '<a href="?module=' . $id . '"' . ($id === $this->module ? ' aria-current="page"' : '') . '>' . $label . '</a>';
         }
-        echo '</nav><p class="aside-note">0.1.0-dev<br>PHP ' . Escaper::html(PHP_VERSION) . '<br>无需框架</p></aside><main><header><span class="eyebrow">可操作的功能演示</span><h1>'
+        echo '</nav><p class="aside-note">开发候选<br>PHP ' . Escaper::html(PHP_VERSION) . '<br>无需框架</p></aside><main><header><span class="eyebrow">可操作的功能演示</span><h1>'
             . self::MODULES[$this->module] . '</h1><p>使用测试数据体验实际组件。每位访客的令牌、操作状态和日志独立保存。</p></header>';
         if ($this->result !== null) {
             echo '<section class="result" role="status"><h2>本次结果 · HTTP ' . $this->status . '</h2><pre>'
@@ -507,14 +518,14 @@ final class DemoApp
         switch ($this->module) {
             case 'home':
                 echo '<div class="cards">';
-                $descriptions = ['network'=>'固定公网目标、DNS/重定向逐跳检查与故障拒绝', 'upload' => '内容检测、图片重新编码、私有保存与故障拒绝', 'validation' => '严格类型、Unicode 长度、嵌套错误与字段白名单', 'configuration' => '简单初始化、只读诊断与故障拒绝', 'captcha' => '图片与算术、错误次数、刷新和单次使用', 'csrf' => '正常验证、篡改、跨场景、过期和重放',
+                $descriptions = ['api'=>'测试凭据签发、轮换、撤销；HMAC 篡改和原子重放拒绝', 'network'=>'固定公网目标、DNS/重定向逐跳检查与故障拒绝', 'upload' => '内容检测、图片重新编码、私有保存与故障拒绝', 'validation' => '严格类型、Unicode 长度、嵌套错误与字段白名单', 'configuration' => '简单初始化、只读诊断与故障拒绝', 'captcha' => '图片与算术、错误次数、刷新和单次使用', 'csrf' => '正常验证、篡改、跨场景、过期和重放',
                     'rate' => '请求预算、阶梯封禁、手动封禁与解除', 'password' => '哈希验证、基本策略和旧密码升级',
                     'reset' => '一次性令牌与密码版本绑定', 'session' => '标识更新、空闲超时与绝对超时',
                     'http' => '可信代理链、响应头和安全 Cookie', 'output' => 'HTML、JSON 数据与 URL 组件编码', 'audit' => '结构化记录、字段白名单和主体假名化', 'storage' => '原子计数、跨请求保存与命名空间隔离'];
                 foreach ($descriptions as $id => $description) {
                     echo '<a class="card" href="?module=' . $id . '"><h2>' . self::MODULES[$id] . '</h2><p>' . $description . '</p><span>打开演示 →</span></a>';
                 }
-                echo '</div><p class="note">API 签名尚未实现；受限请求已提供固定目标演示；MySQL 存储需要服务端配置后演示；后续交付会同步增加演示。Turnstile 需配置真实服务密钥后启用。演示不等于生产环境或独立安全审计验收。</p>';
+                echo '</div><p class="note">API 签名和受限请求已提供固定测试演示；MySQL 存储需要服务端配置后演示。Turnstile 需配置真实服务密钥后启用。演示不等于生产环境或独立安全审计验收。</p>';
                 break;
             case 'configuration':
                 echo '<h2>配置一次，按需使用</h2><p>工厂校验 PHP 数组配置，不自动启动 Session。诊断不修改存储；错误配置和故障演示只影响隔离的测试对象。</p>';
@@ -586,6 +597,15 @@ final class DemoApp
                 $this->form($this->button('private','内网地址拒绝') . $this->button('redirect_private','重定向到内网') . $this->button('rebind','DNS 地址变为内网')
                     . $this->button('peer','连接地址不匹配') . $this->button('oversize','响应超出预算'));
                 break;
+            case 'api':
+                echo '<h2>短期 Bearer 测试凭据</h2><p>签发和轮换结果中的 token 只显示一次，请复制到下方验证。每位访客只保留一个有效测试凭据，120 秒到期；共享存储只保存摘要。网页操作仍需要 Session 和 CSRF。</p>';
+                $this->form('<label>测试 token<input name="api_token" autocomplete="off" spellcheck="false" maxlength="128"></label>' . $this->button('issue_key','签发测试凭据') . $this->button('check_key','验证凭据与归属')
+                    . $this->button('scope_key','尝试未授权范围') . $this->button('rotate_key','轮换测试凭据') . $this->button('revoke_key','撤销测试凭据'));
+                echo '<h2>RFC 9421 有界签名配置档</h2><p>绑定方法、完整目标 URI、请求体摘要和 Content-Type；固定算法 HMAC-SHA256。密钥仅保留在服务器 Session，不显示给浏览器。此页在服务器内部调用组件，不连接示例目标。</p>';
+                $this->form($this->button('sign','生成固定请求签名') . $this->button('tamper','篡改请求体') . $this->button('verify','验证并消费 Nonce') . $this->button('replay','再次验证同一签名')
+                    . $this->button('expire','过期签名样例') . $this->button('store_failure','模拟 Nonce 存储故障'));
+                echo '<p class="note">请先生成签名，再测试篡改、验证及重放。测试存储故障前请重新生成尚未消费的签名。真实业务仍须检查资源归属、权限和 TLS/代理边界；演示操作共用每分钟 30 次分配/消费额度。</p>';
+                break;
             case 'http':
                 echo '<h2>可信代理解析</h2><p>默认不信任转发头；下面的输入仅用于隔离模拟，不会配置网站的真实代理。</p>';
                 $this->form('<label>直接连接地址<input name="remote" value="10.0.0.1"></label><label>可信代理 CIDR（逗号分隔）<input name="trusted" value="10.0.0.0/8"></label>'
@@ -625,6 +645,7 @@ final class DemoApp
             echo '<section class="panel"><h2>当前状态</h2><pre data-demo-state>' . Escaper::html(json_encode($display, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) . '</pre></section>';
         }
         $examples = [
+            'api' => '$identity = $security->apiKeys()->fromAuthorization($authorization, "orders:read");' . "\n" . '$headers = $security->hmacSigner($signingKey)->sign("POST", $exactUri, $rawBody, "application/json");' . "\n" . '$identity = $security->hmacVerifier()->verify("POST", $exactUri, $rawBody, $headers, "orders:read");' . "\n" . '// 授权凭据管理、私有密钥、共享存储和资源归属由宿主提供。',
             'configuration' => '$security = SoSecurity\\Security::fromArray([' . "\n" . '    "site" => "my-site",' . "\n"
                 . '    "storage" => ["driver" => "file", "directory" => "/private/site/security"],' . "\n" . ']);' . "\n" . '$csrf = $security->csrf();',
             'upload' => '$validator = new SoSecurity\\Upload\\Validator();' . "\n" . '$saver = new SoSecurity\\Upload\\Saver($validator, $privateDirectory, $actualDocumentRoot);' . "\n" . '$saved = $saver->saveUpload($_FILES["file"]);' . "\n" . '// 业务授权、CSRF、请求预算和保留清理由宿主提供。',
