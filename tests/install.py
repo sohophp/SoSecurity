@@ -43,6 +43,10 @@ $policy = new SoSecurity\\Api\\SignaturePolicy(['origin'=>'https://api.example.c
 $headers = (new SoSecurity\\Api\\HmacSigner($policy, $key))->sign('POST','https://api.example.com/a','{}');
 $verifier = new SoSecurity\\Api\\HmacVerifier($policy,new SoSecurity\\Api\\KeyRing([$key]),new SoSecurity\\Api\\NonceStore($store));
 if ($verifier->verify('POST','https://api.example.com/a','{}',$headers,'read') === null || $verifier->verify('POST','https://api.example.com/a','{}',$headers) !== null) { exit(8); }
+$signedCsrf = new SoSecurity\\Csrf\\SignedTokens(new SoSecurity\\Support\\HmacKeys('install',['install'=>random_bytes(32)]),'consumer');
+$signedToken = $signedCsrf->issue('form','current-login');
+if (!$signedCsrf->verifyDoubleSubmit('form','current-login',$signedToken,$signedToken) || $signedCsrf->verify('form','another-login',$signedToken)) { exit(9); }
+if (!(new SoSecurity\\Csrf\\RequestPolicy())->requiresToken('POST','/form')) { exit(10); }
 echo "PASS Composer: fresh consumer installation, PSR-4 and public API on PHP " . PHP_VERSION . "\\n";
 ''')
     subprocess.run([runtime, str(Path(directory, 'verify.php'))], check=True)

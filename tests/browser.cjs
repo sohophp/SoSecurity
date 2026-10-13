@@ -76,7 +76,15 @@ const assert = require('node:assert/strict');
     assert.match(await ajax('expire'),/HTTP 403/); assert.match(await ajax('sign'),/HTTP 200/); assert.match(await ajax('store_failure'),/HTTP 503/);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     await page.screenshot({path: '/tmp/sosecurity-api-mobile.png',fullPage:true});
+    await page.goto(base+'?module=stateless');
+    assert.match(await ajax('issue'),/HTTP 200/); assert.match(await ajax('double'),/HTTP 200/);
+    assert.match(await ajax('tamper'),/HTTP 403/); assert.match(await ajax('cross_binding'),/HTTP 403/);
+    assert.match(await ajax('reuse'),/HTTP 200/); assert.match(await ajax('rotate_keep'),/HTTP 200/); assert.match(await ajax('verify'),/HTTP 200/);
+    assert.match(await ajax('rotate_drop'),/HTTP 200/); assert.match(await ajax('verify'),/HTTP 403/); assert.match(await ajax('bad_key'),/HTTP 400/);
+    assert.match(await ajax('policy'),/"requires_token": true/);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),true);
+    await page.screenshot({path:'/tmp/sosecurity-signed-csrf-mobile.png',fullPage:true});
     assert.deepEqual(errors, []);
-    console.log('PASS Chromium: validation/storage/upload/HTTP/outbound plus API rotation/revocation, tamper/replay/expiry/fault, inert output and mobile width');
+    console.log('PASS Chromium: validation/storage/upload/HTTP/outbound plus API rotation/revocation, tamper/replay/expiry/fault and signed CSRF cookie/binding/rotation/policy, inert output and mobile width');
   } finally { await context.close(); await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

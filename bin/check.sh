@@ -12,6 +12,7 @@ task_runtime=${1:-php}
 "$task_runtime" tests/http-policy.php
 "$task_runtime" tests/outbound.php
 "$task_runtime" tests/api.php
+"$task_runtime" tests/signed-csrf.php
 "$task_runtime" tests/upload.php
 if "$task_runtime" -r 'exit(extension_loaded("pdo_sqlite") ? 0 : 1);'; then
     "$task_runtime" tests/reset-flow.php
@@ -50,6 +51,14 @@ fi
 "$task_runtime" tests/concurrency.php
 if command -v python3 >/dev/null; then
     python3 tests/api_vectors.py --php "$task_runtime"
+    python3 tests/signed_csrf_vectors.py --php "$task_runtime"
+    python3 tests/signed_csrf_http.py "$task_runtime"
+    if command -v openssl >/dev/null; then python3 tests/signed_csrf_https.py "$task_runtime";
+    else
+        echo 'NOT RUN signed-CSRF HTTPS: openssl required'
+        if [[ ${SOSECURITY_REQUIRE_HTTP:-0} == 1 ]]; then exit 1; fi
+    fi
+    python3 tests/signed_csrf_demo.py "$task_runtime"
     python3 tests/api_http.py "$task_runtime"
     python3 tests/api_demo.py "$task_runtime"
     python3 tests/network_demo.py "$task_runtime"

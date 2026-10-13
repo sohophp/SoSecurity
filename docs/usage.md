@@ -39,7 +39,7 @@ $csrf->revoke('account.email-change', $binding);
 
 以上是各方法独立演示，不要在同一提交里机械重复验证。binding 是宿主保存在 Session 的随机值，登录后更新；不能取自提交表单、IP、静态账号 ID 或客户端 Cookie 的未验证字段。每个新表单发新令牌；默认最多16个并存，超过容量最旧表单失效。TTL 到期需要刷新；不要将不透明令牌暴露在 URL 或日志。普通令牌允许重复提交，业务幂等性另行处理。
 
-Twig：把 token 作为普通模板参数传入 `{{ csrf_token }}`，保留自动转义，不使用 `raw`。普通 PHP 用 `Escaper::html` 并给属性加引号。AJAX 可使用请求头；本库不自动解析请求体或给路由注册豁免。Bearer 认证且浏览器不自动发送凭证的 API 应按认证机制决定是否需要 CSRF，Cookie 认证的 API 仍需保护。
+Twig：把 token 作为普通模板参数传入 `{{ csrf_token }}`，保留自动转义，不使用 `raw`。普通 PHP 用 `Escaper::html` 并给属性加引号。AJAX 可使用请求头；本库不自动解析请求体或给路由注册豁免；可选RequestPolicy提供精确method/path决策，SignedTokens支持绑定当前已验证登录的无状态方案，见[signed-csrf.md](signed-csrf.md)。Bearer 认证且浏览器不自动发送凭证的 API 应按认证机制决定是否需要 CSRF，Cookie 认证的 API 仍需保护。
 
 ## 验证码
 

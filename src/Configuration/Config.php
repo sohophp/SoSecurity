@@ -23,10 +23,11 @@ final class Config
     private $upload;
     private $outbound;
     private $api;
+    private $statelessCsrf;
 
     public function __construct(array $config)
     {
-        self::known($config, ['site', 'storage', 'token_storage', 'csrf', 'captcha', 'rate_limits', 'password', 'session', 'upload', 'outbound', 'api']);
+        self::known($config, ['site', 'storage', 'token_storage', 'csrf', 'stateless_csrf', 'captcha', 'rate_limits', 'password', 'session', 'upload', 'outbound', 'api']);
         $this->site = self::text($config['site'] ?? null, 'site');
         Guard::label($this->site);
         if (strlen($this->site) > 128) { throw new ConfigurationException('Site identifier must be at most 128 bytes.'); }
@@ -34,9 +35,17 @@ final class Config
         $this->tokens = self::store(self::map(self::provided($config, 'token_storage', ['driver' => 'session']), 'token_storage'));
         if ($this->tokens['driver'] === 'session') { Guard::sessionKey('_sosecurity_' . $this->site . ':tokens'); }
         Guard::sessionKey('_sosecurity_session_' . $this->site);
-        $this->csrf = self::options(self::provided($config, 'csrf', []), ['ttl' => 7200, 'capacity' => 16], 'csrf');
+        $this->csrf = self::options(self::provided($config, 'csrf', []), ['ttl' => 7200, 'capacity' => 16, 'exemptions'=>[]], 'csrf');
         Guard::duration(self::integer($this->csrf['ttl'], 'csrf.ttl'));
         self::range($this->csrf['capacity'], 1, 64, 'csrf.capacity');
+        if (!is_array($this->csrf['exemptions'])) { throw new ConfigurationException('CSRF exemptions must be an array.','configuration.csrf_exemptions'); }
+        new \SoSecurity\Csrf\RequestPolicy($this->csrf['exemptions']);
+        $this->statelessCsrf=null;
+        if (array_key_exists('stateless_csrf',$config)) {
+            $options=self::options($config['stateless_csrf'],['keys'=>null,'ttl'=>7200],'stateless_csrf');
+            self::text($options['keys'],'stateless_csrf.keys'); self::range($options['ttl'],1,86400,'stateless_csrf.ttl');
+            $this->statelessCsrf=self::copy($options);
+        }
         $this->captcha = self::options(self::provided($config, 'captcha', []), ['ttl' => 300, 'attempts' => 3, 'capacity' => 4], 'captcha');
         Guard::duration(self::integer($this->captcha['ttl'], 'captcha.ttl'));
         self::range($this->captcha['attempts'], 1, 10, 'captcha.attempts');
@@ -103,6 +112,7 @@ final class Config
     public function storage(): ?array { return $this->storage; }
     public function tokenStorage(): array { return $this->tokens; }
     public function csrf(): array { return $this->csrf; }
+    public function statelessCsrf(): ?array { return $this->statelessCsrf; }
     public function captcha(): array { return $this->captcha; }
     public function password(): array { return $this->password; }
     public function outbound(): ?array { return $this->outbound; }

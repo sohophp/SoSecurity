@@ -109,6 +109,14 @@ final class Inspector
             $checks[] = ['check'=>'api.transport','status'=>strpos($api['origin'],'https://')===0 ? 'manual' : 'fail',
                 'reason'=>strpos($api['origin'],'https://')===0 ? 'api.tls_proxy_unverified' : 'api.http_demo_only'];
         }
+        $signed=$config->statelessCsrf();
+        if ($signed===null) { $checks[]=['check'=>'csrf.signed','status'=>'not_configured','reason'=>'configuration.stateless_csrf']; }
+        else {
+            $keys=$services[$signed['keys']] ?? null;
+            $checks[]=['check'=>'csrf.signed.keys','status'=>$keys instanceof \SoSecurity\Support\HmacKeys ? 'manual' : 'fail',
+                'reason'=>$keys instanceof \SoSecurity\Support\HmacKeys ? 'csrf.key_lifecycle_unverified' : 'configuration.keys'];
+            $checks[]=['check'=>'csrf.signed.binding','status'=>'manual','reason'=>'csrf.auth_binding_unverified'];
+        }
         return $checks;
     }
     private function redis(\Redis $redis, string $namespace): array

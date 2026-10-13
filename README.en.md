@@ -14,7 +14,7 @@ Storage options: locked native sessions for per-session challenges, private loca
 
 PHP 7.2/7.4/8.1/8.2/8.4/8.5 are available for local checks; PHP 7.3/8.0/8.3 require CI and have not been verified locally. CI configuration is not evidence of a completed CI run. The local demo Chromium and PHP-FPM paths have been verified; production-site browser/reverse-proxy, live Turnstile and independent security audit acceptance remain pending.
 
-API credentials and the bounded RFC 9421 HMAC/atomic nonce profile are implemented; see [API guide](docs/api.md). Optional stateless CSRF and framework adapters remain planned. See the [roadmap](docs/roadmap.md), [usage guide](docs/usage.md), [migration guide](docs/migration.md), and [security policy](SECURITY.md).
+API credentials and the bounded RFC 9421 HMAC/atomic nonce profile are implemented; see [API guide](docs/api.md). Signed stateless CSRF with authenticated-login binding, double-submit verification and exact route policies is implemented; see [signed CSRF guide](docs/signed-csrf.md). Optional framework adapters remain planned. See the [roadmap](docs/roadmap.md), [usage guide](docs/usage.md), [migration guide](docs/migration.md), and [security policy](SECURITY.md).
 
 This library does not replace authorization, parameterized SQL, HTTPS, runtime updates or infrastructure protection. Compatibility with end-of-life PHP does not restore its upstream security support. Tests do not constitute an independent security audit.
 

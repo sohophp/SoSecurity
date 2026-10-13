@@ -35,6 +35,15 @@ final class Security
         $options = $this->config->csrf();
         return new Csrf\CsrfTokens($this->store('tokens'), $options['ttl'], $options['capacity'], $this->clock);
     }
+    public function csrfPolicy(): Csrf\RequestPolicy { return new Csrf\RequestPolicy($this->config->csrf()['exemptions']); }
+    public function signedCsrf(): Csrf\SignedTokens
+    {
+        $options=$this->config->statelessCsrf();
+        if ($options===null) { throw new ConfigurationException('Configure signed CSRF keys explicitly.','configuration.stateless_csrf'); }
+        $keys=$this->services[$options['keys']] ?? null;
+        if (!$keys instanceof Support\HmacKeys) { throw new ConfigurationException('Inject private HmacKeys.','configuration.keys'); }
+        return new Csrf\SignedTokens($keys,$this->config->site(),$options['ttl'],$this->clock);
+    }
     public function captcha(): Captcha\Captcha
     {
         $options = $this->config->captcha();

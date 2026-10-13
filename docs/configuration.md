@@ -28,7 +28,7 @@ $hasher = $security->passwordHasher();
 | site | 必填 | 1–128字节固定站点标识，无控制字符；Session命名空间禁止|与!；php_binary序列化时需满足最终键长度；同一部署一致，不含秘密 |
 | storage | 未配置 | 共享后端，用于跨会话限流和密码找回 |
 | token_storage | driver=session | 验证码/CSRF后端；可以显式选择文件、Redis、MySQL或自定义存储 |
-| csrf | ttl=7200，capacity=16 | 秒；容量1–64 |
+| csrf | ttl=7200，capacity=16，exemptions=[] | 秒；容量1–64；精确method/path豁免最多32项 |
 | captcha | ttl=300，attempts=3，capacity=4 | 秒；错误预算1–10，并存1–16 |
 | rate_limits | default策略 | 命名策略，每个limit/window/bans/history_ttl；默认5/300/[60,300,900]/86400 |
 | password | bcrypt，cost=12，minimum=15，maximum_bytes=72 | 明确可用时选argon2id；不会静默降级；最小长度为Unicode码点，最大为字节 |
@@ -118,3 +118,7 @@ php bin/diagnose.php /private/security-config.php --probe
 `apiKeys()` 只要求共享 storage，无需 HMAC 配置。`hmacSigner(SigningKey)` 要求 `api.origin`，不要求验证用存储或 KeyProvider。`hmacVerifier()` 同时要求可信 origin、共享 storage 及对应 `api.key_provider` 服务；不自动生成生产秘密。工厂拒绝 MemoryStore/SessionStore 及其命名空间包装作为 API 状态。
 
 api 的固定配置档、默认值与完整示例见 [api.md](api.md)。诊断 `api.key_provider/api.request_boundary/api.transport` 分别提示可信密钥生命周期、原始请求和 TLS/代理边界尚需宿主验收；仅签名端未提供 key_provider 时标记 not_configured，显式配置却未注入正确服务时 fail。只读诊断不加载/列出密钥，不把 HTTPS 配置字符串当成实际 TLS 验收。
+
+## 可选无状态 CSRF
+
+配置 `stateless_csrf => ['keys'=>'private_csrf_keys','ttl'=>7200]`，服务注入 `Support\HmacKeys`，`signedCsrf()` 不要求storage或Session。ttl整数1–86400秒；key服务必填，无默认秘密。`csrfPolicy()` 使用csrf.exemptions纯决策，不自动关闭任何路由检查。密钥加载/可信登录绑定、Cookie及实际认证由宿主提供，诊断只读并标记需人工核实。完整双重提交示例、轮换及失败/迁移边界见 [signed-csrf.md](signed-csrf.md)。

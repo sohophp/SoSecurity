@@ -16,6 +16,7 @@
 | 重置令牌 | 单次消费、重复消费、密码版本变更后旧令牌失效 |
 | 会话安全 | Session ID更新（只显示摘要指纹）、空闲/绝对过期和显式失效 |
 | HTTP与代理 | 可信CIDR、代理链、Report-Only/Cookie、跳转白名单、CORS预检、Permissions-Policy |
+| 无状态CSRF | 签名与真实Cookie双重提交、登录/场景绑定、可重用/期限、密钥轮换、精确豁免预览 |
 | API凭据与签名 | 测试凭据签发/轮换/撤销/权限/访客隔离；内部签名、篡改/重放/过期/Nonce故障 |
 | 受限外部请求 | 固定公网目标真实HTTPS/DoH/pin；隔离内网、重定向、DNS变更、peer和响应超限拒绝 |
 | 输出编码 | HTML、JSON数据、URL组件编码；输入作为文本显示 |
@@ -139,3 +140,9 @@ python3 tests/native_outbound.py php72 php85
 核心、默认值、正常拒绝/故障及迁移边界见 [api.md](api.md)。`python3 tests/api_demo.py php72` 是隔离演示，`--url http://72.rocky.wsl/SoSecurity/` 验证实际 Apache/FPM 入口；不能把内部网页签名样例当成外部业务客户端验收。
 
 当前主演示测试为117项隔离/119项实际入口，API独立演示24项。对实际入口应按请求窗口分批运行测试；入口100次/分钟及API分配30次/分钟保持启用，不因验收临时降低保护。
+
+## 无状态 CSRF 演示
+
+`?module=stateless` 同步提供实际组件与独立Cookie测试。默认30秒，核心允许有效期内重用；单次消费继续有状态页。密钥轮换只修改本访客服务器Session内测试密钥，身份变更/时间推进仅模拟本访客上下文。所有网页操作仍有控制CSRF；固定豁免预览不应用到真实入口。HTTP入口不等于生产HTTPS；独立TLS/Chromium的__Host/Secure/HttpOnly及同站跨来源攻击证据见 [signed-csrf.md](signed-csrf.md)。
+
+独立演示 `python3 tests/signed_csrf_demo.py php72` 为30项；实际入口使用 `--url http://72.rocky.wsl/SoSecurity/`，按入口请求窗口分批执行，不修改100次/分钟额度。
