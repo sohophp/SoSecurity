@@ -15,8 +15,8 @@
 | HTTP/SSRF/API | URI/Redirects/Cors/Permissions、精确目标/公开地址/DoH与pin/预算客户端；Bearer摘要存储及轮换撤销、RFC 9421有界HMAC/原子Nonce，Python独立向量和真实HTTP，网页API演示；验收细节见verification.md | 更多传输/网络/生产宿主及独立复核；实际认证、密钥生命周期与恢复 |
 | 无状态CSRF与路由策略 | SignedTokens/HmacKeys/RequestPolicy、PHP数组工厂及只读诊断；118项核心、独立Python向量、无Session真实HTTP/临时TLS、可操作Cookie演示 | 生产登录绑定/代理/密钥轮换传播；逐令牌撤销/单次操作继续有状态方案；缺失平台与独立复核 |
 | 富文本HTML清理 | HTML Purifier 4.19.1可选适配、固定基础允许列表、DOM/字节/树/属性/输出预算及故障拒绝；正常/攻击/拒绝/故障演示及实际浏览器结构变异检查 | 复杂编辑器/图片/样式及自定义策略另行复核；缺失平台/生产渲染和独立审计 |
-| 发布验收 | 本地Git提交、Composer安装/压缩包测试、部分PHP及浏览器证据 | 九版本真实驱动/HTTP/新Composer消费者与78类API候选已通过；Linux已验证，Windows原生未执行；CoreRepo组件试点通过，原后台完整业务及独立复核待验收；授权后GitHub CI及公开包安装 |
+| 发布验收 | 本地Git提交、Composer安装/压缩包测试、部分PHP及浏览器证据 | 九版本真实驱动/HTTP/新Composer消费者与78类API候选已通过；Linux已验证；Windows原生7.2/8.5各472项组件及Composer通过，私有文件存储/上传保存不支持，其他Windows驱动/部署未执行；CoreRepo组件试点通过，原后台完整业务及独立复核待验收；授权后GitHub CI及公开包安装 |
 
 代码测试不能证明未执行的环境。原CLI中缺失的Redis/POSIX扩展在本次通过临时测试ini补齐，九版本实际驱动/部分写故障矩阵通过；原CLI/FPM配置未修改，直接运行时仍可能显示缺扩展。CI要求测试扩展完整，不能用跳过取得相应验收。详情见verification.md最新追加及release-readiness.md。
 
-目前目标保持进行中。Redis重启恢复、MySQL和基础输入验证已推进并交付演示；上传已交付私有演示；HTTP策略、受限请求和API Key/HMAC/Nonce已交付候选实现与演示；无状态CSRF已提供HMAC绑定、双重提交/精确路由策略、HTTP/HTTPS及浏览器证据；成熟HTML清理基础适配已交付；下一步继续跨版本/真实宿主/独立复核验收；不因单个阶段可用而标记完整计划完成。
+目前目标保持进行中。Redis重启恢复、MySQL和基础输入验证已推进并交付演示；上传已交付私有演示；HTTP策略、受限请求和API Key/HMAC/Nonce已交付候选实现与演示；无状态CSRF已提供HMAC绑定、双重提交/精确路由策略、HTTP/HTTPS及浏览器证据；成熟HTML清理基础适配已交付；下一步继续实际旧站业务/独立复核及授权发布验收；不因单个阶段可用而标记完整计划完成。

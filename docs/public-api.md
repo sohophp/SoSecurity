@@ -9,7 +9,7 @@ php85 bin/api-contract.php
 php72 bin/api-contract.php --write
 ```
 
-检查只使用Reflection，不调用模块构造器，不启动Session/发头/连接存储或初始化可选清理库。PHP8.5会把self解析为类名，旧运行时返回self拼写，工具按声明类规范化语义后比较，避免将反射差异错报成产品接口变化。继承关系记录父类及本库接口；PHP引擎自动追加的Stringable等内置接口不作为本库签名变化。遇到未支持的类型结构会失败，不能默默放宽PHP7.2要求。
+检查只使用Reflection，不调用模块构造器，不启动Session/发头/连接存储或初始化可选清理库。PHP8.5会把self解析为类名，旧运行时返回self拼写，工具按声明类规范化语义后比较，避免将反射差异错报成产品接口变化。源码路径分隔符统一后比较，Linux及原生Windows复用同一候选清单。继承关系记录父类及本库接口；PHP引擎自动追加的Stringable等内置接口不作为本库签名变化。遇到未支持的类型结构会失败，不能默默放宽PHP7.2要求。
 
 `Api\SignatureProfile`、`Http\Outbound\PublicAddress/RequestHeaders`、`Storage\Codec`、`Support\Guard/Deadline` 为内部实现辅助，不在稳定合同中；其他类即使公开仍须遵守其文档用途，例如MemoryStore仅用于测试。所有安全默认值/副作用/错误分类也属于行为承诺，需要功能与负面路径检查，签名相等不能证明行为安全。
 

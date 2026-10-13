@@ -17,7 +17,7 @@ $login = $security->rateLimiter();
 $hasher = $security->passwordHasher();
 ```
 
-目录由部署提前创建为应用拥有的0700私有目录，放在Web根之外。默认验证码/CSRF使用原生Session，跨会话请求限流和密码重置使用显式配置的共享storage。不需要存储的密码辅助可以只配置site。仅在调用需要共享存储的功能时，未配置storage才报错。
+目录由部署提前创建为应用拥有的0700私有目录，放在Web根之外。当前FileStore依赖POSIX私有权限，原生Windows目录不能通过此检查；不要跳过检查或降级为MemoryStore，平台证据见platforms.md。默认验证码/CSRF使用原生Session，跨会话请求限流和密码重置使用显式配置的共享storage。不需要存储的密码辅助可以只配置site。仅在调用需要共享存储的功能时，未配置storage才报错。
 
 原生登录完整例子见 [legacy-login.php](../examples/legacy-login.php)，密码重置宿主SQL版本比较例子见 [password-reset.php](../examples/password-reset.php)。后者不自动建表、发送邮件或提交宿主事务；演示账号表结构由测试/宿主明确创建。
 

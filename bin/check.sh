@@ -4,6 +4,7 @@ cd "$(dirname "$0")/.."
 task_runtime=${1:-php}
 "$task_runtime" bin/lint.php
 "$task_runtime" bin/api-contract.php
+"$task_runtime" tests/portable-core.php
 "$task_runtime" tests/run.php
 "$task_runtime" tests/session.php
 "$task_runtime" tests/hardening.php

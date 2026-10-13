@@ -13,6 +13,7 @@ function apiType(?ReflectionType $type,ReflectionClass $declaring): ?array
     return ['name'=>$name,'nullable'=>$type->allowsNull()];
 }
 $root=dirname(__DIR__);$classes=json_decode(file_get_contents($root.'/resources/api/classes.json'),true);
+$sourcePrefix=str_replace('\\','/',$root).'/src/';
 $contract=['schema'=>2,'classes'=>[]];
 foreach ($classes as $name) {
     $reflection=new ReflectionClass($name);$parent=$reflection->getParentClass();$interfaces=array_values(array_filter($reflection->getInterfaceNames(),static function (string $interface): bool { return !(new ReflectionClass($interface))->isInternal(); }));sort($interfaces);
@@ -24,7 +25,7 @@ foreach ($classes as $name) {
     ksort($entry['constants']);
     foreach ($reflection->getMethods(ReflectionMethod::IS_PUBLIC) as $method) {
         $file=$method->getDeclaringClass()->getFileName();
-        if ($file===false || strpos($file,$root.'/src/')!==0) { continue; }
+        if ($file===false || strpos(str_replace('\\','/',$file),$sourcePrefix)!==0) { continue; }
         $parameters=[];
         foreach ($method->getParameters() as $parameter) {
             $parameters[]=['name'=>$parameter->getName(),'type'=>apiType($parameter->getType(),$method->getDeclaringClass()),'reference'=>$parameter->isPassedByReference(),

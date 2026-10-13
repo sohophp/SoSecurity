@@ -229,3 +229,17 @@ CoreRepo已提交基线24a64019的独立工作区，PHP7.2/7.4各33项实际HTTP
 最终135个PHP文件语法检查、PHPStan level5/目标70200、Composer严格校验和开发工具/可选HTML依赖审计通过；文档追加后PHP7.2/8.5压缩包为123文件，仍无vendor/测试/演示/私有配置。
 
 未执行/未完成：原后台完整业务及SSO/真实第三方服务、Windows原生PHP/ACL/驱动（WSL互操作和Windows PATH查询不是PHP运行证据）、更多数据库/Redis/GD/cURL构建、生产密钥/代理/恢复链路、独立代码复核/专业审计、远端CI、GitHub/Packagist发布及公开包安装。完整1.0目标保持进行中；专业审计与独立代码复核分别记录。
+
+## Windows原生平台追加验收（2026-10-13）
+
+已执行并通过：专用Windows临时目录中的官方NTS x64 php.exe实际报告WINNT/PHP7.2.34与8.5.11，均由PowerShell运行tests/windows-check.ps1成功退出。每版本472项断言：6项私有文件系统拒绝、48项测试MemoryStore上的验证码/有状态CSRF/限流/密码/API Bearer轮换撤销/HMAC篡改与Nonce重放/代理/转义/审计脱敏流程、118签名CSRF、52严格验证、66 HTTP策略、80外部请求策略及模拟适配、24实际原生Session、58 HTML Purifier、2+2缺失/旧HTML依赖拒绝及16真实内存SQLite重置版本比较。MemoryStore仅用于测试，不支持跨请求共享状态声明；Windows实际外部网络不在80项模拟传输中。78类/接口API候选检查使用同一Linux签名清单，通过。
+
+两版本还在新的WindowsComposer消费者实际安装核心包，本地路径仓库关闭Packagist，无第三方强制依赖；消费者自己的autoload完成签名双重提交与跨登录拒绝验证。可选HTML测试使用已锁定4.19.1；测试代码及依赖树复制到临时Windows目录，未更改宿主工作区、PATH/注册表/系统CA、主机路由或网站PHP/FPM。下载来自PHP官方Windows站，实际TLS下载；本次计算的下载SHA256用于记录，不将自计算值称为第三方签名：7.2.zip为3c673eab656e26fd6bc3ad27fe71169ad888b04e21d63d3c6b3151d5ed216563，8.5.zip为0ea96e0d2b9b737a6036f05cf4e95c49313faa6d0f27bd97edb2742503f0c043。版本来源及复现说明见platforms.md。
+
+文件存储、上传保存和Validator私有临时目录在Windows模式0777时明确拒绝，并确认未留下状态文件。当前这些私有文件后端不支持原生Windows，不提供0700检查绕过；这属于已验证的限制，不是成功保存。Windows共享驱动仍须独立验收，不能把MemoryStore替代生产驱动。Linux九版本新增48项portable-core.php及规范化后的API检查通过，原完整驱动矩阵保持上一节范围。
+
+初次已执行但失败及修复：API开发检查按POSIX分隔符判断源文件，Windows忽略公开方法导致签名比较失败；仅规范化路径后两平台复用同一基线通过，不修改候选清单。PowerShell5.1向php -r传递嵌套引号产生解析错误；改为直接运行PHP测试文件后脚本通过。新组件组合测试最初误传Bearer文本给仅用于受信任管理的rotate(id)/revoke(id)，以及错误预期存储错误代码；按照已有公开合同修正测试后通过，未改变SDK契约。
+
+新增windows-components CI定义只运行明确范围的组件套件，远端未执行。未执行：Windows其他PHP版本/IIS/Apache/FastCGI、浏览器/GD上传、实际Redis/MySQL共享驱动及并发、NTFS/网络盘私有保存适配、实际外部网络/cURL/TLS/代理；真实旧站后台/SSO、独立复核及公开发布继续待验收。本节不将Windows局部组件结果扩展为Linux完整矩阵或所有平台能力相同。
+
+Windows阶段最终137个PHP文件语法、PHPStan level5/目标70200、Composer严格校验、CI YAML结构解析及PHP7.2/8.5各124文件发行包检查通过。九版本48项平台组件检查和API签名检查通过；临时WindowsPHP/消费者/源码目录及下载归档已回收，演示入口仍HTTP200，原PHP7.2/8.5哈希相同。
