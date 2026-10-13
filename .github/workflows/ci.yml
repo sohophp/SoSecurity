@@ -48,25 +48,6 @@ jobs:
           else
             composer audit --locked
           fi
-  windows-components:
-    runs-on: windows-2022
-    strategy:
-      fail-fast: false
-      matrix:
-        php: ['7.2', '8.5']
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: shivammathur/setup-php@d52fc211a0436f8839a587b3b5b8efddab4744ea # v2
-        with:
-          php-version: ${{ matrix.php }}
-          extensions: fileinfo, session, pdo_sqlite, dom, ctype
-          tools: composer
-          coverage: none
-      - run: composer validate --strict
-      - run: composer install --no-interaction --no-progress
-      - run: composer install --working-dir=integrations/htmlpurifier --no-interaction --no-progress
-      - run: ./tests/windows-check.ps1
-        shell: pwsh
   analysis:
     runs-on: ubuntu-22.04
     steps:

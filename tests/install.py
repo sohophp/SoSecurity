@@ -24,6 +24,8 @@ with tempfile.TemporaryDirectory(prefix='sosecurity-install-') as directory:
     Path(directory, 'verify.php').write_text('''<?php
 declare(strict_types=1);
 require __DIR__ . '/vendor/autoload.php';
+$presets = require __DIR__ . '/vendor/sohophp/sosecurity/examples/configuration-presets.php';
+if (SoSecurity\\Security::fromArray($presets['form_session'])->config()->tokenStorage()['driver'] !== 'session') { exit(13); }
 $store = new SoSecurity\\Storage\\MemoryStore();
 $csrf = new SoSecurity\\Csrf\\CsrfTokens($store);
 $token = $csrf->issue('form', 'session-binding');

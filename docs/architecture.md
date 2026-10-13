@@ -1,10 +1,26 @@
 # 架构决策
 
+## 组件依赖关系
+
+```mermaid
+flowchart TD
+    Host[宿主应用：认证、授权、路由和生命周期] --> Entry[直接实例化 / 可选 PHP 数组工厂]
+    Entry --> Stateful[有状态 CSRF、验证码、限流、重置、API 凭据与 Nonce]
+    Entry --> Independent[密码、编码、验证、签名、HTTP 策略及可选适配]
+    Stateful --> Contract[AtomicStore 原子契约]
+    Contract --> Session[宿主持锁 Session：当前会话挑战]
+    Contract --> Shared[私有文件 / 专用 Redis / PDO MySQL：共享状态]
+    Entry --> Clock[一致的 Clock 与稳定异常分类]
+    Host --> Audit[显式事件回调接宿主日志系统]
+```
+
+状态类共用契约，但不强制所有组件使用同一物理后端。签名端/无状态CSRF不要求令牌存储；宿主继续决定认证、业务写入和HTTP响应。
+
 ## ADR-001：单包、按需实例化
 
 `SoSecurity\` 使用 PSR-4。无全局启动器、路由、数据库 ORM 或认证系统；安装后不会改变应用行为。PHP 7.2 语法是核心基线；不使用属性类型、箭头函数、联合类型或 PHP 8 专用 API。开发工具使用独立 tools Composer 项目，避免现代静态分析工具阻断旧版 PHP 的运行时安装。
 
-核心依赖只有 PHP 内置能力，无必须安装的大型框架和密码学库。密码使用 `password_hash/password_verify`，随机数使用 `random_bytes/random_int`，固定格式摘要比较用 `hash_equals`。密码学高级功能暂不开发，避免自行实现成熟协议。
+核心依赖只有 PHP 内置能力，无必须安装的大型框架和密码学库。密码使用 `password_hash/password_verify`，随机数使用 `random_bytes/random_int`，固定格式摘要比较用 `hash_equals`。HMAC使用原生hash_hmac及有明确边界的签名配置档，不自行设计密码算法；高级认证能力保持可选。
 
 ## ADR-002：一个原子存储契约
 
@@ -16,7 +32,7 @@ RedisStore：专用 phpredis 连接，禁止序列化器和客户端前缀；原
 
 SessionStore：宿主先启动并持有 Session 锁；只修改自己命名空间，清理过期记录并限制记录数量。只能用于当前会话验证码/CSRF；不能用于跨会话登录限流。自定义 Session 驱动必须提供真实互斥锁；本库不能自动证明第三方驱动具备该性质。
 
-MemoryStore：测试/单进程示例，不用于生产限流。所有适配器遇到存储/编码错误抛异常，宿主拒绝敏感操作，不能切换到空内存数据。
+MemoryStore：仅用于测试，不用于生产共享安全状态。所有适配器遇到存储/编码错误抛异常，宿主拒绝敏感操作，不能切换到空内存数据。
 
 ## ADR-003：有状态令牌及有界容量
 

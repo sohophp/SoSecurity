@@ -1,4 +1,6 @@
-# 平台兼容范围与验证
+# 平台兼容范围与历史验证
+
+当前执行范围限定在已有项目环境。下文Windows结果是已完成且临时环境已清理的历史记录，不要求继续Windows操作；Windows CI任务已从本次自动计划撤除。
 
 PHP版本兼容和操作系统/后端兼容分别记录。Linux本地PHP7.2–8.5九版本完整矩阵已通过；Windows原生PHP7.2.34、8.5.11已运行下述组件检查，不能据此声称所有模块、驱动或Windows PHP版本完全覆盖。
 
@@ -32,7 +34,7 @@ composer install --working-dir=integrations/htmlpurifier --no-interaction --no-p
 
 脚本每一步检查退出码；含文件存储/上传保存拒绝测试，首次运行即要求真实WINNT环境。每版本472项断言及API签名检查是这个有明确范围的组件套件；不运行Linux命名空间、POSIX部分写、FileStore成功路径或三驱动竞争套件，也不把这些列为通过。
 
-本次原生验证使用专用临时Windows目录，关闭Packagist的本地路径仓库安装新消费者（无第三方依赖）；HTML使用已锁定的4.19.1适配验证依赖。未修改全局PATH、注册表、现有PHP/FPM、系统CA或主机路由。新增GitHub windows-components任务只是定义，远端执行仍未完成。
+本次原生验证使用专用临时Windows目录，关闭Packagist的本地路径仓库安装新消费者（无第三方依赖）；HTML使用已锁定的4.19.1适配验证依赖。未修改全局PATH、注册表、现有PHP/FPM、系统CA或主机路由。先前GitHub windows-components任务未在远端执行，现已撤除；目标PHP九版本Linux任务保持。
 
 ## 当前限制
 

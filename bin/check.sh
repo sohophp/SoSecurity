@@ -10,6 +10,7 @@ task_runtime=${1:-php}
 "$task_runtime" tests/hardening.php
 "$task_runtime" tests/storage-failure.php
 "$task_runtime" tests/configuration.php
+"$task_runtime" tests/configuration-presets.php
 "$task_runtime" tests/validation.php
 "$task_runtime" tests/http-policy.php
 "$task_runtime" tests/outbound.php

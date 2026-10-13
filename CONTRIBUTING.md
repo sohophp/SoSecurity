@@ -22,11 +22,13 @@ Redis测试只对新建UNIX socket实例操作；不连接宿主实例，不FLUS
 
 PHPStan使用PHP7.2目标、level5，不维护忽略基线；开发工具在PHP8.1执行避免本机较旧glibc不支持新Turbo加速扩展。提高分析严格度应同时补齐真正有意义的类型约束，而不是盲目添加忽略。
 
-发布前完成docs/verification.md中待验收项，检查composer archive内容并审核公开API和默认策略。提交清楚描述行为和证据；git push、标签、Packagist登记和宿主部署是另外的操作，不由本地测试自动触发。
+发布前按docs/release-readiness.md核对当前发行范围和对应verification.md证据，检查composer archive内容并审核公开API和默认策略。提交清楚描述行为和证据；git push、标签、Packagist登记和宿主部署是另外的操作，不由本地测试自动触发。
 
 加固验证包括hardening.php、configuration.php、reset-flow.php、storage-failure.php及bin/full-disk-check.sh。磁盘耗尽测试只能由脚本创建独立小型tmpfs，禁止填满宿主共享磁盘。完整目标状态见docs/execution-status.md。
 
 公开接口提案及类型/默认值比较见docs/public-api.md；`php72 bin/api-contract.php`不构造组件。未经评审不要自动改签名基线。1.0验收工作单见docs/release-readiness.md；完整私有MySQL顺序矩阵可运行 `python3 tests/mysql_check.py --matrix php72 php73 php74 php80 php81 php82 php83 php84 php85`，相关扩展必需条件按实际环境记录。
 
 
-Windows原生组件检查使用tests/windows-check.ps1；覆盖范围、必要测试扩展及文件存储/上传保存拒绝边界见docs/platforms.md。portable-core.php使用MemoryStore仅验证平台组件流程，不能代替共享后端或并发验收。
+Windows历史检查入口保留作资料，本次不运行或配置Windows。当前验证使用已有PHP CLI；portable-core.php使用MemoryStore仅验证组件流程，不能代替共享后端或并发验收。
+
+重整后文档导航见docs/index.md；需求与规划各只有一个权威入口。配置预设工作流由tests/configuration-presets.php检查，并加入bin/check.sh，不要求新增框架或外部服务。

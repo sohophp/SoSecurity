@@ -18,6 +18,7 @@ with tempfile.TemporaryDirectory(prefix='sosecurity-archive-') as directory:
         assert 'composer.json' in names and 'LICENSE' in names and 'src/Csrf/CsrfTokens.php' in names and 'resources/sql/mysql.sql' in names and 'src/Validation/Validator.php' in names and 'src/Upload/Saver.php' in names and 'src/Http/Outbound/Client.php' in names
         assert 'src/Api/HmacVerifier.php' in names and 'src/Api/ApiKeys.php' in names and 'examples/api-request.php' in names
         assert 'src/Csrf/SignedTokens.php' in names and 'src/Support/HmacKeys.php' in names and 'src/Csrf/RequestPolicy.php' in names
+        assert 'examples/configuration-presets.php' in names and 'docs/index.md' in names and 'docs/features.md' in names and 'docs/requirements.md' in names
         assert 'examples/signed-form.php' in names and 'src/Output/HtmlCleaner.php' in names and 'examples/rich-text.php' in names
         unexpected = [name for name in names if name.startswith(('vendor/', 'tools/', 'integrations/', 'resources/api/', 'tests/', 'bin/', 'demo/', '.git/', '.github/', '.phpstan-cache/', 'var/'))]
         assert not unexpected, unexpected[:10]

@@ -530,7 +530,7 @@ final class DemoApp
         echo '<section class="panel">';
         switch ($this->module) {
             case 'home':
-                echo '<div class="cards">';
+                echo '<p>SoSecurity 是按需使用的 PHP 安全加固组件库，可逐项替换旧代码。自动封禁属于请求限流体系，不需要系统 Fail2ban。</p><div class="cards">';
                 $descriptions = ['html'=>'成熟清理库、基础标签允许列表、资源预算和故障拒绝','stateless'=>'绑定登录的签名令牌、Cookie双重提交与精确豁免策略','api'=>'测试凭据签发、轮换、撤销；HMAC 篡改和原子重放拒绝', 'network'=>'固定公网目标、DNS/重定向逐跳检查与故障拒绝', 'upload' => '内容检测、图片重新编码、私有保存与故障拒绝', 'validation' => '严格类型、Unicode 长度、嵌套错误与字段白名单', 'configuration' => '简单初始化、只读诊断与故障拒绝', 'captcha' => '图片与算术、错误次数、刷新和单次使用', 'csrf' => '正常验证、篡改、跨场景、过期和重放',
                     'rate' => '请求预算、阶梯封禁、手动封禁与解除', 'password' => '哈希验证、基本策略和旧密码升级',
                     'reset' => '一次性令牌与密码版本绑定', 'session' => '标识更新、空闲超时与绝对超时',

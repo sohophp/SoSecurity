@@ -21,14 +21,41 @@ $hasher = $security->passwordHasher();
 
 原生登录完整例子见 [legacy-login.php](../examples/legacy-login.php)，密码重置宿主SQL版本比较例子见 [password-reset.php](../examples/password-reset.php)。后者不自动建表、发送邮件或提交宿主事务；演示账号表结构由测试/宿主明确创建。
 
+## 按场景选择最小配置
+
+[configuration-presets.php](../examples/configuration-presets.php)返回七种独立PHP配置，不读取环境/请求、写目录或初始化服务。选择一份并改为自己的固定site；不要把所有预设一起启用。
+
+```php
+$presets = require 'vendor/sohophp/sosecurity/examples/configuration-presets.php';
+$config = $presets['login_file'];
+$config['site'] = 'shop-production';
+$config['storage']['directory'] = '/private/shop/security'; // 部署预先创建的私有目录
+$security = SoSecurity\Security::fromArray($config);
+```
+
+| 预设 | 需要补充 | 用途 |
+| --- | --- | --- |
+| form_session | 固定site；宿主启动且持锁的Session、服务器生成的binding | 有状态CSRF/验证码 |
+| login_file | 私有目录，已确认的客户端IP及账号规范化 | 同主机跨会话登录预算 |
+| login_redis | services.security_redis独立连接、可信部署初始化 | 多进程/多站点共享预算 |
+| login_mysql | services.security_db独立PDO、部署建表 | InnoDB共享预算 |
+| api_signing | 真实固定HTTPS origin；私有SigningKey | 仅签名，不自动接入认证/验证端 |
+| signed_form | services.csrf_keys的HmacKeys；已验证的当前登录绑定 | 无状态CSRF |
+| rich_text | 明确安装可选HTML Purifier及DOM/ctype | 基础正文HTML清理 |
+
+login预设保留独立的ip和login策略；调用方先消费IP总量，再按规范化IP+账号消费login预算，认证/验证码与业务仍由宿主控制。API验证端另配置共享storage和key_provider，不能把仅签名的预设误当完整API认证入口。
+
 ## 顶层配置参考
 
 | 项 | 默认 | 规则 |
 | --- | --- | --- |
-| site | 必填 | 1–128字节固定站点标识，无控制字符；Session命名空间禁止|与!；php_binary序列化时需满足最终键长度；同一部署一致，不含秘密 |
+| site | 必填 | 1–128字节固定站点标识，无控制字符；Session命名空间禁止竖线和感叹号；php_binary序列化时需满足最终键长度；同一部署一致，不含秘密 |
 | storage | 未配置 | 共享后端，用于跨会话限流和密码找回 |
 | token_storage | driver=session | 验证码/CSRF后端；可以显式选择文件、Redis、MySQL或自定义存储 |
 | csrf | ttl=7200，capacity=16，exemptions=[] | 秒；容量1–64；精确method/path豁免最多32项 |
+| stateless_csrf | 未配置 | keys服务必填；ttl=7200秒，1–86400；不会生成默认密钥 |
+| api | 未配置 | origin必填；默认HTTPS、maximum_lifetime=300秒、clock_skew=30秒、maximum_body=1048576字节；验证端需key_provider |
+| html | 未配置 | 显式启用；输入65536/输出131072字节、2048节点、64深度、2048属性字节、allow_links=true；自定义sanitizer需审查 |
 | captcha | ttl=300，attempts=3，capacity=4 | 秒；错误预算1–10，并存1–16 |
 | rate_limits | default策略 | 命名策略，每个limit/window/bans/history_ttl；默认5/300/[60,300,900]/86400 |
 | password | bcrypt，cost=12，minimum=15，maximum_bytes=72 | 明确可用时选argon2id；不会静默降级；最小长度为Unicode码点，最大为字节 |

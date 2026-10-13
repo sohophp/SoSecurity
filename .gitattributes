@@ -3,7 +3,6 @@
 /bin export-ignore
 /.github export-ignore
 /.gitignore export-ignore
-/docs/requirements.md export-ignore
 /tools export-ignore
 /phpstan.neon export-ignore
 /vendor export-ignore
@@ -11,3 +10,6 @@
 /var export-ignore
 /demo export-ignore
 /.htaccess export-ignore
+
+/integrations export-ignore
+/resources/api export-ignore

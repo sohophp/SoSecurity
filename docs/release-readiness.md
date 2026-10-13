@@ -1,30 +1,28 @@
-# 1.0 发布验收工作单
+# 发行候选验收工作单
 
-当前基线为未发布候选，核心实现推进至HTTP/API、无状态CSRF和可选HTML清理。本单对应原始产品需求及next-steps.md，确认功能、证据和实际接入后才能冻结/发布；不把已有阶段可用当作完整目标完成。
+用于审核SoSecurity本身，依据requirements.md的最终需求，不要求改造其他现有项目。当前为未发布开发候选，版本号和稳定API承诺在复核后确定。
 
-| 要求 | 现有来源/可检查证据 | 当前验收动作 |
+| 项目 | 可审核材料 | 当前状态 |
 | --- | --- | --- |
-| CAPTCHA/场景/刷新/错误次数/一次消费/表单与AJAX | Captcha/Turnstile/ImageRenderer、run.php、demo/captcha、legacy-login.php | 九版本矩阵通过；真实第三方服务未配置时保持未执行；风险由宿主限流结果选择 |
-| 有状态/无状态CSRF、期限/范围/多标签/必要重放/路由豁免 | CsrfTokens/SignedTokens/RequestPolicy、session.php、signed-csrf.php及HTTP/TLS/浏览器、signed-form.php | 九版本矩阵通过；真实宿主Session/JTI与路由、Twig自动转义；单次要求使用原子方案 |
-| 限流/阶梯/人工封禁/检查与解除/IP规则/并发 | RateLimiter/Policy/Decision、IpRules/ClientIp、真实三驱动及24进程 | 九版本及三驱动并发通过；真实宿主IP/账号/路由组合与入口预算；不自建防火墙 |
-| Session/登录提升ID/期限/Cookie/失效与宿主保留 | SessionSecurity、Cookie、session.php/旧登录HTTP | 原生/FPM/HTTPS与真实宿主生命周期，不能接管现有SSO |
-| 密码/升级/旧hash/策略/重置一次性 | PasswordHasher/Policy/ResetTokens、SQL版本示例/并发 | 九版本通过，算法可用/不可用分开；真实宿主业务由接入项目负责验收；泄露检查可用可信回调，不默认调用外部服务 |
-| HTTP头/CORS/跳转/代理/SSRF | SecurityHeaders/Cors/Redirects/Uri/Outbound、native_outbound.py及浏览器 | 九版本实际cURL、DNS/TLS/IP/预算通过；真实拓扑另审查 |
-| 输出/Unicode/严格输入与富文本 | Escaper/Validator、validation.php、HtmlCleaner及实际浏览器 | 九版本通过；普通转义与清理上下文、可选依赖/缺扩展；不批量覆写旧HTML |
-| 上传/内容/路径/私有保存/图片及适配 | Upload组件、multipart/并发/部分写/ENOSPC、Scanner接口 | 九版本通过，仍需更多GD差异；真实扫描服务按需配置，不能把未接扫描当无恶意证明 |
-| API Key/范围/轮换撤销/HMAC/Nonce/认证区别 | Api模块、独立Python/HTTP/三驱动并发 | 九版本通过；真实密钥/身份/恢复边界；不替代OAuth平台 |
-| 日志事件/脱敏/自定义Sink/查看与诊断 | AuditLogger、demo近期事件、Inspector/CLI | 宿主日志设施查询/保留；不让任意敏感对象进入日志；不误报自定义服务已审查 |
-| 框架无关Composer、PHP7.2–8.5及可选依赖 | manifest/新消费者/core/可选HTML安装/归档 | 九版本实际完整检查已通过；扩展缺失与驱动差异；公开包安装待授权发布 |
-| 旧站少改动、不重构/不强制认证/数据库/路由 | migration.md、旧登录/重置示例 | 原生登录/重置等独立示例已验证；具体已有项目接入须由用户明确指定后另行执行 |
-| 文档/威胁/限制/贡献/变更/漏洞政策/许可证 | README中英、各功能指南、architecture、SECURITY、CONTRIBUTING、CHANGELOG、LICENSE | 同步当前能力与验收，不能声称未执行平台/独立审计 |
-| API冻结/独立复核/发布流程 | public-api.md、候选签名清单 | 独立复核未完成，最终API/默认值与回归冻结；发布需要具体结果批准 |
+| 功能覆盖与边界 | features.md、src、对应指南 | 12类基础需求有候选实现/明确宿主边界；高级能力可选 |
+| Composer与PHP7.2–8.5 | manifest、九版本安装/运行及archive记录 | 本地已通过；公开包安装待发布后验证 |
+| 原子性/并发/故障拒绝 | 真实Session/文件/Redis/MySQL、并发及资源故障套件 | 已有受控环境证据；生产后端/恢复由具体部署验收 |
+| 易用配置与独立迁移 | configuration、七个预设、examples及原生HTTP | 预设/示例可独立使用；不自动修改其他项目或接管认证 |
+| 演示与访问隔离 | demo/public、Apache入口、HTTP/浏览器及源码403 | 实际入口已验证；外部服务状态保持真实 |
+| 安全参考与威胁边界 | architecture、threat-model、具体安全指南 | 已记录；不宣称ASVS认证或独立审计通过 |
+| 公开API/错误/默认值 | public-api、78类签名清单、负面路径测试 | 提案检查通过；最终行为与稳定承诺需复核 |
+| 中文/英文文档与维护 | README中英、index、需求/规划/状态、SECURITY/CHANGELOG/LICENSE | 本轮统一；维护政策不虚构联系渠道或响应SLA |
+| 独立复核 | 可审查源码、测试证据及具体发现记录 | 未完成；不把作者自检称为独立复核，不自行创建子代理 |
+| 公开发布 | 精确候选提交、发行包检查、CI/标签/Packagist步骤 | 未执行；准备具体候选后按用户明确指令执行 |
 
-## 当前环境与待办
+## 最终复核清单
 
-本机原有六个CLI加新增PHP7.3.33、8.0.30、8.3.35，共覆盖九个目标版本。新增为Remi并行CLI及所需测试扩展，未安装FPM，原PHP7.2/8.5二进制哈希验证相同，实际演示仍为PHP7.2.34。三新增版本功能、实际命名空间TLS/DoH、消费者/可选HTML安装与小型tmpfs ENOSPC已通过；九版本完整Redis/MySQL/HTTP矩阵已完成，原CLI缺扩展通过临时测试ini补齐且不修改FPM配置，最新证据以verification.md为准。
+1. 所有稳定范围的API、配置默认值、单位、正常失败、异常分类、副作用、资源预算和宿主职责与源码一致。
+2. 核心无框架强依赖，安装/导入不接管会话、响应、连接或业务；可选依赖只约束对应模块。
+3. 限流/单次令牌/Nonce所用后端满足真实原子契约；无法确认或故障时拒绝敏感操作，不降级为空内存。
+4. 演示与示例不内置生产秘密/默认管理员，不提供任意URL代理、公开上传执行或任意管理操作。
+5. 测试范围如实记录，真实第三方服务、宿主/生产及专业审计与本地测试分别标注。
+6. 发行包包含所需源码、示例、指南及许可证，排除测试、演示、开发工具、私有配置和可选集成验证项目。
+7. 确定具体版本及候选提交，完成复核与变更说明后再执行获明确指令的公开发布。
 
-全版本矩阵可以共享一个新建无TCP私有MySQL实例并顺序运行，避免重复初始化；每个套件仍运行schema/事务/故障/并发，不连接宿主或演示数据库。安全隔离包含独立测试目录、Session、UNIX socket、网络命名空间和测试CA；不能把不同CLI路径当作主机级沙箱。Windows原生7.2.34/8.5.11各472项组件及新Composer消费者已通过；FileStore/上传保存因无法证明POSIX私有权限明确拒绝，不支持原生Windows，其他Windows共享驱动/网络/部署未执行。平台状态及复现见platforms.md。
-
-独立复核方式已询问；没有明确允许子代理前不创建它。CoreRepo专用试点已按用户纠正撤回；未要求接入的其他项目不属于本次实现范围。旧站兼容通过独立示例、可选配置和宿主边界文档交付，实际项目接入需明确指定。用户未回复不代表授权。与此同时继续完成环境、矩阵、文档、API及可审查发布材料。专业第三方审计与独立代码复核仍分别记录，不用测试或作者自检代替。
-
-高级TOTP/恢复码/可信设备/风险策略平台、持久化日志查询平台、完整富文本编辑器/媒体/CDR等保留原路线中的可选后续，不纳入“为了功能数量无限扩展”。必要安全场景与完整1.0验收仍须满足。
+真实网站接入属于后续由用户指定的工作。Windows历史证据可查platforms.md；本次不新增Windows任务或环境操作。当前运行记录以verification.md为准。
