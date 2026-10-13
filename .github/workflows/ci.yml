@@ -38,6 +38,9 @@ jobs:
       - run: python3 tests/native_outbound.py php
         env:
           SOSECURITY_REQUIRE_NATIVE_HTTP: '1'
+      - run: python3 tests/native_captcha.py php
+        env:
+          SOSECURITY_REQUIRE_NATIVE_HTTP: '1'
       - run: bin/full-disk-check.sh php
       - run: python3 tests/install.py php "$(command -v composer)"
       - run: python3 tests/archive.py php "$(command -v composer)"

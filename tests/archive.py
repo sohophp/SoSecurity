@@ -20,6 +20,7 @@ with tempfile.TemporaryDirectory(prefix='sosecurity-archive-') as directory:
         assert 'src/Csrf/SignedTokens.php' in names and 'src/Support/HmacKeys.php' in names and 'src/Csrf/RequestPolicy.php' in names
         assert 'examples/configuration-presets.php' in names and 'docs/index.md' in names and 'docs/features.md' in names and 'docs/requirements.md' in names
         assert 'examples/signed-form.php' in names and 'src/Output/HtmlCleaner.php' in names and 'examples/rich-text.php' in names
+        assert 'docs/captcha.md' in names and 'examples/captcha-types.php' in names and 'src/Captcha/HCaptcha.php' in names and 'src/Captcha/Recaptcha.php' in names
         unexpected = [name for name in names if name.startswith(('vendor/', 'tools/', 'integrations/', 'resources/api/', 'tests/', 'bin/', 'demo/', '.git/', '.github/', '.phpstan-cache/', 'var/'))]
         assert not unexpected, unexpected[:10]
         assert not any(name.endswith(('.env', '.log', 'composer.lock')) for name in names)

@@ -6,6 +6,8 @@ The current version is an **unreleased development candidate**. Use a local Comp
 
 Capabilities include CAPTCHA, stateful and signed stateless CSRF, application rate limiting and automatic/manual bans, passwords/reset tokens, opt-in session helpers, contextual output encoding, strict input validation, optional reviewed HTML cleanup, private uploads, HTTP/CORS/proxy/redirect policies, bounded pinned outbound HTTP, API credentials/HMAC/nonces, audit callbacks and diagnostics. Automatic bans reuse RateLimit; there is no system Fail2ban integration or separate AutoBan package.
 
+CAPTCHA includes digit/letter/mixed PNGs, addition/subtraction/multiplication/exact division, arithmetic images, server-verified slider and ordered click challenges, Turnstile, hCaptcha, and reCAPTCHA v2/v3. See the [CAPTCHA guide](docs/captcha.md); local challenges require rate limiting, and external business credentials are not preconfigured.
+
 Components work independently. The optional `Security::fromArray()` factory validates configuration without starting sessions, sending headers, connecting services or creating directories. Seven [configuration presets](examples/configuration-presets.php) demonstrate the common choices. Connections and private keys are explicitly supplied by the host. Shared sensitive state requires a suitable atomic backend; MemoryStore is test-only.
 
 The [interactive local demo](http://72.rocky.wsl/SoSecurity/) covers normal, rejected and fault paths. Unconfigured external services are labelled accurately. Standalone [examples](examples) show gradual migration without replacing host authentication, routing, persistence or session ownership. Existing projects are only changed when explicitly requested.

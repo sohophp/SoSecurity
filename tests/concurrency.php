@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require __DIR__ . '/bootstrap.php';
+require __DIR__ . '/captcha-support.php';
 use SoSecurity\Storage\FileStore;
 use SoSecurity\Storage\RedisStore;
 use SoSecurity\Csrf\CsrfTokens;
@@ -56,6 +57,12 @@ try {
         $captcha = new Captcha($store); $challenge = $captcha->arithmetic('form', 'binding');
         preg_match('/^(\d+) \+ (\d+)/', $challenge->prompt, $parts);
         Check::same(1, parallelSuccesses($kind, $target, 'captcha', [$challenge->id, (string) ($parts[1] + $parts[2])]));
+        foreach (['slider', 'click'] as $method) {
+            $interactive = $captcha->$method('form', 'binding');
+            $solution = captchaTestSolution($store, $interactive);
+            Check::same(1, parallelSuccesses($kind, $target, 'captcha', [$interactive->id, $solution]));
+        }
+        echo "PASS $kind interactive CAPTCHA: 24 simultaneous slider/click solutions, exactly one accepted per challenge\n";
         $key=new SoSecurity\Api\SigningKey('concurrency-key',str_repeat('k',32),'worker',['read']);
         $signer=new SoSecurity\Api\HmacSigner(new SoSecurity\Api\SignaturePolicy(['origin'=>'https://api.example.com']),$key);
         $headers=$signer->sign('POST','https://api.example.com/task','{}');

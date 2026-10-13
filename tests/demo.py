@@ -188,7 +188,7 @@ else:
             probe.bind(('127.0.0.1', 0)); port = probe.getsockname()[1]
         env = os.environ.copy()
         env['SOSECURITY_DEMO_STORAGE'] = str(storage)
-        for name in ['SOSECURITY_DEMO_TURNSTILE_SECRET', 'SOSECURITY_DEMO_TURNSTILE_SITE_KEY', 'SOSECURITY_DEMO_REDIS_SOCKET']:
+        for name in ['SOSECURITY_DEMO_TURNSTILE_SECRET', 'SOSECURITY_DEMO_TURNSTILE_SITE_KEY', 'SOSECURITY_DEMO_REDIS_SOCKET', 'SOSECURITY_DEMO_HCAPTCHA_SECRET', 'SOSECURITY_DEMO_HCAPTCHA_SITE_KEY', 'SOSECURITY_DEMO_RECAPTCHA_SECRET', 'SOSECURITY_DEMO_RECAPTCHA_SITE_KEY', 'SOSECURITY_DEMO_RECAPTCHA_V3_SECRET', 'SOSECURITY_DEMO_RECAPTCHA_V3_SITE_KEY']:
             env.pop(name, None)
         with open(Path(directory, 'server.log'), 'w+') as log:
             server = subprocess.Popen([args.runtime, '-d', f'session.save_path={sessions}', '-S', f'127.0.0.1:{port}',

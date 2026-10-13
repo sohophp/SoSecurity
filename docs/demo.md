@@ -7,7 +7,7 @@
 | 页面 | 演示内容 |
 | --- | --- |
 | 配置与诊断 | 工厂初始化、只读检查、配置拼错、策略不可变、隔离存储故障和文件锁超时 |
-| 验证码 | 算术/PNG图片生成，正确/错误答案，错误次数耗尽，成功后重放，刷新撤销和过期 |
+| 验证码 | 加减乘除/图片算术/数字/字母图片、滑块/顺序点选，正确/错误答案，错误次数耗尽，成功后重放，刷新撤销和过期 |
 | CSRF | 生成、普通验证、篡改、跨场景、单次消费、重放、撤销和过期 |
 | 限流与封禁 | 3次额度、5秒/15秒阶梯封禁、人工临时/永久封禁、解除和剩余等待时间 |
 | 上传安全 | 原生multipart、JPEG/PNG私有保存、正常/伪装/大小/路径/图片预算、隔离扫描与目录故障；当前访客清理 |
@@ -155,3 +155,7 @@ python3 tests/native_outbound.py php72 php85
 依赖安装、预算/渲染边界和浏览器六组结构变异XSS检查见 [html-cleaning.md](html-cleaning.md)。`python3 tests/html_demo.py php72` 为19项隔离检查；实际入口用--url，--browser另调用已安装Playwright，不给核心包增加Node依赖。
 
 最新主演示为123项隔离/125项实际入口；HTML独立19项，真实浏览器检查另行记录。
+
+## 扩展验证码演示
+
+[验证码页](http://72.rocky.wsl/SoSecurity/?module=captcha)新增本地类型、可缩放滑块、键盘顺序点选、重新选择和AJAX切换。第三方增加hCaptcha及reCAPTCHA v2/v3；环境变量、固定hostname/sitekey/action、评分和SDK隔离规则见[验证码指南](captcha.md)。未配置仍返回503；本地挑战复用过期/错误次数/一次消费及场景绑定。独立HTTP检查 `python3 tests/captcha-demo.py php72`，可选现有Playwright运行 `node tests/captcha-browser.cjs`；原生传输故障通过隔离网络/挂载/TLS检查 `python3 tests/native_captcha.py php72 php85`，不修改宿主hosts。

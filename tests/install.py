@@ -27,6 +27,21 @@ require __DIR__ . '/vendor/autoload.php';
 $presets = require __DIR__ . '/vendor/sohophp/sosecurity/examples/configuration-presets.php';
 if (SoSecurity\\Security::fromArray($presets['form_session'])->config()->tokenStorage()['driver'] !== 'session') { exit(13); }
 $store = new SoSecurity\\Storage\\MemoryStore();
+$captcha = new SoSecurity\\Captcha\\Captcha($store);
+$math = $captcha->arithmetic('installed', 'binding', 'divide');
+preg_match('/^(\\d+) \\/ (\\d+)/', $math->prompt, $parts);
+if (!$captcha->verify('installed', 'binding', $math->id, (string) intdiv((int) $parts[1], (int) $parts[2]))) { exit(14); }
+if (extension_loaded('gd')) {
+    foreach (['imageDigits', 'imageLetters', 'imageArithmetic', 'slider', 'click'] as $method) {
+        if (substr($captcha->$method('installed', 'binding')->image, 0, 4) !== "\\x89PNG") { exit(15); }
+    }
+}
+$hcaptcha = new SoSecurity\\Captcha\\HCaptcha('installed-test-secret-only', 'expected-sitekey', function () { return '{"success":true}'; });
+$recaptcha = new SoSecurity\\Captcha\\Recaptcha('installed-test-secret-only', 'site.example', 'login', 0.5,
+    function () { return '{"success":true,"hostname":"site.example","action":"login","score":0.7}'; });
+if (!$hcaptcha->verify('test-token') || !$recaptcha->verify('test-token')) { exit(16); }
+require __DIR__ . '/vendor/sohophp/sosecurity/examples/captcha-types.php';
+if (SoSecurity\\Examples\\createCaptchaChallenge($captcha, 'multiply', 'installed', 'binding')->image !== null) { exit(17); }
 $csrf = new SoSecurity\\Csrf\\CsrfTokens($store);
 $token = $csrf->issue('form', 'session-binding');
 if (!$csrf->verify('form', 'session-binding', $token, true)

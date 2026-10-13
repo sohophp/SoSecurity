@@ -27,11 +27,25 @@ final class ImageRenderer
 
     public function render(string $answer): string
     {
+        if (!preg_match('/^[A-Z0-9]{4,8}$/D', $answer) || $this->width < strlen($answer) * 18 + 16) {
+            throw new \SoSecurity\Exception\ConfigurationException('Answer or width is unsuitable for CAPTCHA rendering.');
+        }
+        return $this->draw($answer, 22);
+    }
+
+    public function renderQuestion(string $question): string
+    {
+        if (!preg_match('/^[0-9]{1,2} [+*\/-] [0-9]{1,2} = \?$/D', $question)
+            || $this->width < strlen($question) * 10 + 16) {
+            throw new \SoSecurity\Exception\ConfigurationException('Invalid arithmetic image question or width.');
+        }
+        return $this->draw($question, 14);
+    }
+
+    private function draw(string $answer, int $fontSize): string
+    {
         if (!extension_loaded('gd')) {
             throw new \SoSecurity\Exception\DependencyException('Image CAPTCHA requires ext-gd.');
-        }
-        if (!preg_match('/^[A-Z2-9]{4,8}$/D', $answer) || $this->width < strlen($answer) * 18 + 16) {
-            throw new \SoSecurity\Exception\ConfigurationException('Answer or width is unsuitable for CAPTCHA rendering.');
         }
         $image = imagecreatetruecolor($this->width, $this->height);
         if ($image === false) {
@@ -52,7 +66,7 @@ final class ImageRenderer
                 $x = (int) (8 + $i * $step);
                 if ($this->font === null) {
                     imagechar($image, 5, $x, (int) ($this->height / 2 - 8), $answer[$i], $foreground);
-                } elseif (imagettftext($image, 22, random_int(-15, 15), $x,
+                } elseif (imagettftext($image, $fontSize, random_int(-15, 15), $x,
                     (int) ($this->height / 2 + 10), $foreground, $this->font, $answer[$i]) === false) {
                     throw new \SoSecurity\Exception\DependencyException('Cannot render CAPTCHA font.');
                 }

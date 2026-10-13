@@ -38,7 +38,7 @@ CSRF、验证码默认复用宿主 Session；跨会话限流、密码重置和 A
 
 | 能力 | 内容 | 指南 |
 | --- | --- | --- |
-| 验证码 | 算术/图片/Turnstile、场景绑定、过期、错误预算、单次消费 | [使用指南](docs/usage.md) |
+| 验证码 | 多种算术/图片、滑块/点选、Turnstile/hCaptcha/reCAPTCHA、单次消费 | [验证码指南](docs/captcha.md) |
 | CSRF | 有状态令牌、多表单、可选单次消费；绑定登录的签名双重提交 | [CSRF配置](docs/configuration.md)、[无状态方案](docs/signed-csrf.md) |
 | 限流与封禁 | 自定义维度、阶梯封禁、手动封禁、到期恢复、查询与解除 | [使用指南](docs/usage.md) |
 | 密码与会话 | 原生哈希、旧哈希迁移、重置令牌、Session更新/期限及Cookie | [迁移指南](docs/migration.md) |

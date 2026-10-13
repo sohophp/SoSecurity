@@ -4,7 +4,7 @@
 
 | 需求 | 现有实现与边界 | 演示 | 示例/指南 |
 | --- | --- | --- | --- |
-| CAPTCHA | 算术、PNG图片及Turnstile；过期/错误次数/单次消费/场景绑定；真实Turnstile未配置时未执行 | [验证码](http://72.rocky.wsl/SoSecurity/?module=captcha) | [usage](usage.md)、[原生登录](../examples/legacy-login.php) |
+| CAPTCHA | 加减乘除/图片算术、字符/数字/字母PNG、滑块/顺序点选、Turnstile/hCaptcha/reCAPTCHA v2/v3；过期/错误次数/单次消费/场景绑定；真实第三方未配置时未执行 | [验证码](http://72.rocky.wsl/SoSecurity/?module=captcha) | [验证码指南](captcha.md)、[原生登录](../examples/legacy-login.php) |
 | CSRF | 有状态多令牌、可选单次消费；绑定已验证登录的签名双重提交；精确路由策略由宿主应用 | [有状态](http://72.rocky.wsl/SoSecurity/?module=csrf)、[无状态](http://72.rocky.wsl/SoSecurity/?module=stateless) | [签名方案](signed-csrf.md)、[独立表单](../examples/signed-form.php) |
 | 限流/自动封禁 | 任意IP/账号/组合/路由标识，固定窗口、阶梯/人工封禁、inspect/reset及Retry-After；无系统防火墙或独立AutoBan | [限流与封禁](http://72.rocky.wsl/SoSecurity/?module=rate) | [usage](usage.md)、[登录配置](configuration.md) |
 | Session | 显式更新ID、空闲/绝对期限、失效和Cookie；宿主仍管理启动、身份和注销 | [会话](http://72.rocky.wsl/SoSecurity/?module=session) | [迁移](migration.md) |

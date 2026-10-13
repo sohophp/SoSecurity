@@ -6,6 +6,8 @@ task_runtime=${1:-php}
 "$task_runtime" bin/api-contract.php
 "$task_runtime" tests/portable-core.php
 "$task_runtime" tests/run.php
+"$task_runtime" tests/captcha.php
+"$task_runtime" tests/captcha-providers.php
 "$task_runtime" tests/session.php
 "$task_runtime" tests/hardening.php
 "$task_runtime" tests/storage-failure.php
@@ -79,6 +81,7 @@ if command -v python3 >/dev/null; then
     python3 tests/upload_http.py "$task_runtime"
     python3 tests/test_http.py "$task_runtime"
     python3 tests/demo.py "$task_runtime"
+    python3 tests/captcha-demo.py "$task_runtime"
 else
     if [[ ${SOSECURITY_REQUIRE_HTTP:-0} == 1 ]]; then
         echo 'FAIL HTTP integration prerequisite Python 3 missing' >&2

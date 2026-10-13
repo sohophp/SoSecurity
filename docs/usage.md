@@ -43,6 +43,8 @@ Twig：把 token 作为普通模板参数传入 `{{ csrf_token }}`，保留自�
 
 ## 验证码
 
+验证码新增数字/字母图片、减法/乘法/整除/随机及图片算术、服务端滑块/点选、hCaptcha/reCAPTCHA；完整参数、前端提交格式和边界见[验证码指南](captcha.md)。
+
 ```php
 $captcha = new SoSecurity\Captcha\Captcha($sessionStore, 300, 3, 4, $clock);
 $challenge = $captcha->arithmetic('login', $binding);
@@ -57,7 +59,7 @@ $captcha->revoke('login', $binding);
 $newChallenge = $captcha->arithmetic('login', $binding);
 ```
 
-有效期1–31536000秒（默认300）、错误预算1–10（默认3）、并存1–16（默认4）；实际不宜配置超长验证码有效期。图片字符4–8位，8–32个不同大写ASCII字母/2–9数字；宽100–600、高40–200、噪点0–100；可选可读 TrueType 字体。使用 CSPRNG 生成。图片比较不区分大小写，输入前后空格会 trim；算术答案使用规范十进制字符串，01 不等于1。
+有效期1–31536000秒（默认300）、错误预算1–10（默认3）、并存1–16（默认4）；实际不宜配置超长验证码有效期。图片字符4–8位，8–32个不同大写ASCII字母/0–9数字；宽100–600、高40–200、噪点0–100；可选可读 TrueType 字体。使用 CSPRNG 生成。图片比较不区分大小写，输入前后空格会 trim；算术答案使用规范十进制字符串，01 不等于1。
 
 验证码不是抗自动化的完整方案；算术可自动求解，基础图片不保证抗 OCR。创建、刷新和验证端点都应限流。能力需要更强时用第三方：
 
@@ -66,7 +68,7 @@ $provider = new SoSecurity\Captcha\Turnstile(getenv('TURNSTILE_SECRET'), 'www.ex
 $valid = $provider->verify($_POST['cf-turnstile-response'] ?? null, $trustedClientIp);
 ```
 
-前端 widget 配置 `data-action="login"`，服务端固定 expected hostname 和 action；不能从请求头/用户提交值动态取期望值。仅接受后端 Siteverify 结果。默认传输固定HTTPS地址、校验TLS、禁止跳转、连接3秒/总8秒、响应16KiB上限；不可用抛异常。可注入可信 HTTP transport 回调，入参为请求字段数组，返回 JSON 原始字符串；回调必须等价实现安全传输，不能记录 secret/token。本次未调用真实服务。
+前端 widget 配置 `data-action="login"`，服务端固定 expected hostname 和 action；不能从请求头/用户提交值动态取期望值。仅接受后端 Siteverify 结果。默认传输固定HTTPS地址、校验TLS、禁止跳转、连接3秒/总8秒、响应16KiB上限；不可用抛异常。可注入可信 HTTP transport 回调，入参为请求字段数组，返回 JSON 原始字符串；回调必须等价实现安全传输，不能记录 secret/token。真实业务服务验收见[验证码指南](captcha.md)及验证记录，模拟适配器检查不代表真实服务已配置。
 
 ## 请求预算与封禁
 

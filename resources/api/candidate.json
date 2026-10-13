@@ -1302,6 +1302,48 @@
                             "variadic": false,
                             "optional": false,
                             "default": null
+                        },
+                        {
+                            "name": "operation",
+                            "type": {
+                                "name": "string",
+                                "nullable": false
+                            },
+                            "reference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "default": "add"
+                        }
+                    ]
+                },
+                "click": {
+                    "static": false,
+                    "return": {
+                        "name": "SoSecurity\\Captcha\\Challenge",
+                        "nullable": false
+                    },
+                    "parameters": [
+                        {
+                            "name": "scope",
+                            "type": {
+                                "name": "string",
+                                "nullable": false
+                            },
+                            "reference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "default": null
+                        },
+                        {
+                            "name": "binding",
+                            "type": {
+                                "name": "string",
+                                "nullable": false
+                            },
+                            "reference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "default": null
                         }
                     ]
                 },
@@ -1369,10 +1411,200 @@
                         }
                     ]
                 },
+                "imageArithmetic": {
+                    "static": false,
+                    "return": {
+                        "name": "SoSecurity\\Captcha\\Challenge",
+                        "nullable": false
+                    },
+                    "parameters": [
+                        {
+                            "name": "scope",
+                            "type": {
+                                "name": "string",
+                                "nullable": false
+                            },
+                            "reference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "default": null
+                        },
+                        {
+                            "name": "binding",
+                            "type": {
+                                "name": "string",
+                                "nullable": false
+                            },
+                            "reference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "default": null
+                        },
+                        {
+                            "name": "operation",
+                            "type": {
+                                "name": "string",
+                                "nullable": false
+                            },
+                            "reference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "default": "mixed"
+                        },
+                        {
+                            "name": "renderer",
+                            "type": {
+                                "name": "SoSecurity\\Captcha\\ImageRenderer",
+                                "nullable": true
+                            },
+                            "reference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "default": null
+                        }
+                    ]
+                },
+                "imageDigits": {
+                    "static": false,
+                    "return": {
+                        "name": "SoSecurity\\Captcha\\Challenge",
+                        "nullable": false
+                    },
+                    "parameters": [
+                        {
+                            "name": "scope",
+                            "type": {
+                                "name": "string",
+                                "nullable": false
+                            },
+                            "reference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "default": null
+                        },
+                        {
+                            "name": "binding",
+                            "type": {
+                                "name": "string",
+                                "nullable": false
+                            },
+                            "reference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "default": null
+                        },
+                        {
+                            "name": "renderer",
+                            "type": {
+                                "name": "SoSecurity\\Captcha\\ImageRenderer",
+                                "nullable": true
+                            },
+                            "reference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "default": null
+                        },
+                        {
+                            "name": "length",
+                            "type": {
+                                "name": "int",
+                                "nullable": false
+                            },
+                            "reference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "default": 5
+                        }
+                    ]
+                },
+                "imageLetters": {
+                    "static": false,
+                    "return": {
+                        "name": "SoSecurity\\Captcha\\Challenge",
+                        "nullable": false
+                    },
+                    "parameters": [
+                        {
+                            "name": "scope",
+                            "type": {
+                                "name": "string",
+                                "nullable": false
+                            },
+                            "reference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "default": null
+                        },
+                        {
+                            "name": "binding",
+                            "type": {
+                                "name": "string",
+                                "nullable": false
+                            },
+                            "reference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "default": null
+                        },
+                        {
+                            "name": "renderer",
+                            "type": {
+                                "name": "SoSecurity\\Captcha\\ImageRenderer",
+                                "nullable": true
+                            },
+                            "reference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "default": null
+                        },
+                        {
+                            "name": "length",
+                            "type": {
+                                "name": "int",
+                                "nullable": false
+                            },
+                            "reference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "default": 5
+                        }
+                    ]
+                },
                 "revoke": {
                     "static": false,
                     "return": {
                         "name": "void",
+                        "nullable": false
+                    },
+                    "parameters": [
+                        {
+                            "name": "scope",
+                            "type": {
+                                "name": "string",
+                                "nullable": false
+                            },
+                            "reference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "default": null
+                        },
+                        {
+                            "name": "binding",
+                            "type": {
+                                "name": "string",
+                                "nullable": false
+                            },
+                            "reference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "default": null
+                        }
+                    ]
+                },
+                "slider": {
+                    "static": false,
+                    "return": {
+                        "name": "SoSecurity\\Captcha\\Challenge",
                         "nullable": false
                     },
                     "parameters": [
@@ -1505,6 +1737,17 @@
                             "variadic": false,
                             "optional": false,
                             "default": null
+                        },
+                        {
+                            "name": "presentation",
+                            "type": {
+                                "name": "array",
+                                "nullable": false
+                            },
+                            "reference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "default": []
                         }
                     ]
                 }
@@ -1522,11 +1765,93 @@
                     "static": false,
                     "default": null
                 },
+                "presentation": {
+                    "static": false,
+                    "default": null
+                },
                 "prompt": {
                     "static": false,
                     "default": null
                 }
             }
+        },
+        "SoSecurity\\Captcha\\HCaptcha": {
+            "kind": "class",
+            "final": true,
+            "abstract": false,
+            "parent": null,
+            "interfaces": [],
+            "constants": [],
+            "methods": {
+                "__construct": {
+                    "static": false,
+                    "return": null,
+                    "parameters": [
+                        {
+                            "name": "secret",
+                            "type": {
+                                "name": "string",
+                                "nullable": false
+                            },
+                            "reference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "default": null
+                        },
+                        {
+                            "name": "siteKey",
+                            "type": {
+                                "name": "string",
+                                "nullable": false
+                            },
+                            "reference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "default": null
+                        },
+                        {
+                            "name": "transport",
+                            "type": {
+                                "name": "callable",
+                                "nullable": true
+                            },
+                            "reference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "default": null
+                        }
+                    ]
+                },
+                "verify": {
+                    "static": false,
+                    "return": {
+                        "name": "bool",
+                        "nullable": false
+                    },
+                    "parameters": [
+                        {
+                            "name": "token",
+                            "type": null,
+                            "reference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "default": null
+                        },
+                        {
+                            "name": "clientIp",
+                            "type": {
+                                "name": "string",
+                                "nullable": true
+                            },
+                            "reference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "default": null
+                        }
+                    ]
+                }
+            },
+            "properties": []
         },
         "SoSecurity\\Captcha\\ImageRenderer": {
             "kind": "class",
@@ -1602,6 +1927,126 @@
                             "reference": false,
                             "variadic": false,
                             "optional": false,
+                            "default": null
+                        }
+                    ]
+                },
+                "renderQuestion": {
+                    "static": false,
+                    "return": {
+                        "name": "string",
+                        "nullable": false
+                    },
+                    "parameters": [
+                        {
+                            "name": "question",
+                            "type": {
+                                "name": "string",
+                                "nullable": false
+                            },
+                            "reference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "default": null
+                        }
+                    ]
+                }
+            },
+            "properties": []
+        },
+        "SoSecurity\\Captcha\\Recaptcha": {
+            "kind": "class",
+            "final": true,
+            "abstract": false,
+            "parent": null,
+            "interfaces": [],
+            "constants": [],
+            "methods": {
+                "__construct": {
+                    "static": false,
+                    "return": null,
+                    "parameters": [
+                        {
+                            "name": "secret",
+                            "type": {
+                                "name": "string",
+                                "nullable": false
+                            },
+                            "reference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "default": null
+                        },
+                        {
+                            "name": "hostname",
+                            "type": {
+                                "name": "string",
+                                "nullable": false
+                            },
+                            "reference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "default": null
+                        },
+                        {
+                            "name": "action",
+                            "type": {
+                                "name": "string",
+                                "nullable": true
+                            },
+                            "reference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "default": null
+                        },
+                        {
+                            "name": "minimumScore",
+                            "type": {
+                                "name": "float",
+                                "nullable": false
+                            },
+                            "reference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "default": 0.5
+                        },
+                        {
+                            "name": "transport",
+                            "type": {
+                                "name": "callable",
+                                "nullable": true
+                            },
+                            "reference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "default": null
+                        }
+                    ]
+                },
+                "verify": {
+                    "static": false,
+                    "return": {
+                        "name": "bool",
+                        "nullable": false
+                    },
+                    "parameters": [
+                        {
+                            "name": "token",
+                            "type": null,
+                            "reference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "default": null
+                        },
+                        {
+                            "name": "clientIp",
+                            "type": {
+                                "name": "string",
+                                "nullable": true
+                            },
+                            "reference": false,
+                            "variadic": false,
+                            "optional": true,
                             "default": null
                         }
                     ]

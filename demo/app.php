@@ -6,6 +6,8 @@ namespace SoSecurityDemo;
 use SoSecurity\Audit\AuditLogger;
 use SoSecurity\Captcha\Captcha;
 use SoSecurity\Captcha\Turnstile;
+use SoSecurity\Captcha\HCaptcha;
+use SoSecurity\Captcha\Recaptcha;
 use SoSecurity\Csrf\CsrfTokens;
 use SoSecurity\Http\ClientIp;
 use SoSecurity\Http\Cookie;
@@ -98,7 +100,7 @@ final class DemoApp
             } else {
                 $action = $_POST['action'] ?? '';
                 $allowed = [
-                    'captcha' => ['math', 'image', 'verify', 'refresh', 'expire', 'turnstile'],
+                    'captcha' => ['math', 'subtract', 'multiply', 'divide', 'mixed', 'image_math', 'image', 'digits', 'letters', 'slider', 'click', 'verify', 'refresh', 'expire', 'turnstile', 'hcaptcha', 'recaptcha', 'recaptcha_v3'],
                     'csrf' => ['issue', 'verify', 'tamper', 'cross_scope', 'once', 'replay', 'expire', 'revoke'],
                     'stateless'=>['issue','verify','reuse','tamper','cross_scope','cross_binding','double','cookie_mismatch','expire','rotate_keep','rotate_drop','binding_change','policy','bad_key'],
                     'html'=>['clean','links','normal','attack','size_limit','tree_limit','provider_failure'],
@@ -141,7 +143,12 @@ final class DemoApp
         }
         header('Set-Cookie: ' . Cookie::header(session_name(), session_id(), $this->base, $this->secure), false);
         header('Cache-Control: no-store');
-        $csp = "default-src 'self'; script-src 'self' https://challenges.cloudflare.com; style-src 'self'; img-src 'self' data:; frame-src https://challenges.cloudflare.com; connect-src 'self' https://challenges.cloudflare.com; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+        $providerSources = [];
+        if ($this->providerConfigured('turnstile')) { $providerSources[] = 'https://challenges.cloudflare.com'; }
+        if ($this->providerConfigured('hcaptcha')) { $providerSources[] = 'https://hcaptcha.com https://*.hcaptcha.com'; }
+        if ($this->providerConfigured('recaptcha') || $this->providerConfigured('recaptcha_v3')) { $providerSources[] = 'https://www.google.com https://www.gstatic.com'; }
+        $sources = implode(' ', $providerSources);
+        $csp = "default-src 'self'; script-src 'self' $sources; style-src 'self' $sources; font-src 'self' $sources; img-src 'self' data: $sources; frame-src 'self' $sources; connect-src 'self' $sources; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
         foreach (SecurityHeaders::build($csp, false) as $name => $value) { header($name . ': ' . $value); }
         http_response_code($this->status);
         $state = $this->state();
@@ -169,6 +176,12 @@ final class DemoApp
         $clock = new DemoClock('csrf');
         return new CsrfTokens(new SessionStore('demo-csrf', $clock), 30, 16, $clock);
     }
+    private function providerConfigured(string $name): bool
+    {
+        $prefix = 'SOSECURITY_DEMO_' . strtoupper($name);
+        return (bool) (getenv($prefix . '_SECRET') && getenv($prefix . '_SITE_KEY'));
+    }
+
     private function captcha(): Captcha
     {
         $clock = new DemoClock('captcha');
@@ -300,25 +313,45 @@ final class DemoApp
                 if ($result->valid()) { $this->result['data'] = $result->data(); }
                 break;
             case 'captcha':
-                if (in_array($action, ['math', 'image', 'refresh'], true)) {
+                if (in_array($action, ['math', 'subtract', 'multiply', 'divide', 'mixed', 'image_math', 'image', 'digits', 'letters', 'slider', 'click', 'refresh'], true)) {
                     if ($action === 'refresh') { $this->captcha()->revoke('playground', $this->binding); }
-                    $challenge = $action === 'image' ? $this->captcha()->image('playground', $this->binding)
-                        : $this->captcha()->arithmetic('playground', $this->binding);
+                    $captcha = $this->captcha();
+                    switch ($action) {
+                        case 'image': $challenge = $captcha->image('playground', $this->binding); break;
+                        case 'digits': $challenge = $captcha->imageDigits('playground', $this->binding); break;
+                        case 'letters': $challenge = $captcha->imageLetters('playground', $this->binding); break;
+                        case 'image_math': $challenge = $captcha->imageArithmetic('playground', $this->binding); break;
+                        case 'slider': $challenge = $captcha->slider('playground', $this->binding); break;
+                        case 'click': $challenge = $captcha->click('playground', $this->binding); break;
+                        default: $challenge = $captcha->arithmetic('playground', $this->binding, in_array($action, ['math', 'refresh'], true) ? 'add' : $action);
+                    }
+                    $presentation = $challenge->presentation;
+                    if (isset($presentation['piece'])) { $presentation['piece'] = 'data:image/png;base64,' . base64_encode($presentation['piece']); }
                     $_SESSION['demo_challenge'] = ['id' => $challenge->id, 'prompt' => $challenge->prompt,
                         'image' => $challenge->image === null ? null : 'data:image/png;base64,' . base64_encode($challenge->image),
-                        'expires_at' => $challenge->expiresAt];
+                        'expires_at' => $challenge->expiresAt, 'presentation' => $presentation];
                     $this->result = ['message' => '已生成挑战；成功验证后不能重复使用。'];
                 } elseif ($action === 'expire') {
                     (new DemoClock('captcha'))->advance(31);
                     $this->result = ['message' => '仅将当前访客验证码的演示时钟推进 31 秒；现在提交会被拒绝。'];
-                } elseif ($action === 'turnstile') {
-                    $secret = getenv('SOSECURITY_DEMO_TURNSTILE_SECRET');
-                    $siteKey = getenv('SOSECURITY_DEMO_TURNSTILE_SITE_KEY');
-                    if (!$secret || !$siteKey) {
-                        $this->status = 503; $this->result = ['message' => 'Turnstile 尚未配置，未执行外部服务验证。'];
+                } elseif (in_array($action, ['turnstile', 'hcaptcha', 'recaptcha', 'recaptcha_v3'], true)) {
+                    if (!$this->providerConfigured($action)) {
+                        $this->status = 503; $this->result = ['message' => $action . ' 尚未配置，未执行外部服务验证。'];
                     } else {
-                        $provider = new Turnstile($secret, getenv('SOSECURITY_DEMO_TURNSTILE_HOST') ?: '72.rocky.wsl', 'demo');
-                        $this->checked($provider->verify($_POST['cf-turnstile-response'] ?? null));
+                        $budget = (new RateLimiter($this->store, new Policy(8, 60, [60], 120)))
+                            ->consume('demo-captcha-provider', (new ClientIp())->resolve($_SERVER));
+                        if (!$budget->allowed) {
+                            $this->status = 429; header('Retry-After: ' . $budget->retryAfter);
+                            $this->result = ['message' => '外部验证请求过于频繁，请稍后重试。'];
+                        } else {
+                            $prefix = 'SOSECURITY_DEMO_' . strtoupper($action);
+                            $secret = getenv($prefix . '_SECRET');
+                            $host = getenv($prefix . '_HOST') ?: '72.rocky.wsl';
+                            if ($action === 'turnstile') { $provider = new Turnstile($secret, $host, 'demo'); $field = 'cf-turnstile-response'; }
+                            elseif ($action === 'hcaptcha') { $provider = new HCaptcha($secret, getenv($prefix . '_SITE_KEY')); $field = 'h-captcha-response'; }
+                            else { $provider = new Recaptcha($secret, $host, $action === 'recaptcha_v3' ? 'demo' : null); $field = 'g-recaptcha-response'; }
+                            $this->checked($provider->verify($_POST[$field] ?? null, (new ClientIp())->resolve($_SERVER)));
+                        }
                     }
                 } else {
                     $this->checked($this->captcha()->verify('playground', $this->binding,
@@ -487,7 +520,8 @@ final class DemoApp
             case 'upload': return ['files' => (new UploadSandbox($this->directory, $_SERVER['DOCUMENT_ROOT'] ?? dirname(__DIR__) . '/demo/public'))->files(),
                 'maximum_bytes' => 1048576, 'maximum_files' => 3, 'retention_seconds' => 600, 'scanner' => '未配置真实扫描服务，故障按钮只使用隔离测试实现'];
             case 'captcha': return ['challenge' => $_SESSION['demo_challenge'] ?? null,
-                'turnstile_configured' => (bool) (getenv('SOSECURITY_DEMO_TURNSTILE_SECRET') && getenv('SOSECURITY_DEMO_TURNSTILE_SITE_KEY'))];
+                'turnstile_configured' => $this->providerConfigured('turnstile'), 'hcaptcha_configured' => $this->providerConfigured('hcaptcha'),
+                'recaptcha_configured' => $this->providerConfigured('recaptcha'), 'recaptcha_v3_configured' => $this->providerConfigured('recaptcha_v3')];
             case 'csrf': return ['token' => $_SESSION['demo_csrf_token'] ?? null];
             case 'rate': $decision = $this->limiter()->inspect('playground', $this->binding);
                 return ['allowed' => $decision->allowed, 'remaining' => $decision->remaining, 'retry_after' => $decision->retryAfter, 'permanent' => $decision->permanent];
@@ -531,14 +565,14 @@ final class DemoApp
         switch ($this->module) {
             case 'home':
                 echo '<p>SoSecurity 是按需使用的 PHP 安全加固组件库，可逐项替换旧代码。自动封禁属于请求限流体系，不需要系统 Fail2ban。</p><div class="cards">';
-                $descriptions = ['html'=>'成熟清理库、基础标签允许列表、资源预算和故障拒绝','stateless'=>'绑定登录的签名令牌、Cookie双重提交与精确豁免策略','api'=>'测试凭据签发、轮换、撤销；HMAC 篡改和原子重放拒绝', 'network'=>'固定公网目标、DNS/重定向逐跳检查与故障拒绝', 'upload' => '内容检测、图片重新编码、私有保存与故障拒绝', 'validation' => '严格类型、Unicode 长度、嵌套错误与字段白名单', 'configuration' => '简单初始化、只读诊断与故障拒绝', 'captcha' => '图片与算术、错误次数、刷新和单次使用', 'csrf' => '正常验证、篡改、跨场景、过期和重放',
+                $descriptions = ['html'=>'成熟清理库、基础标签允许列表、资源预算和故障拒绝','stateless'=>'绑定登录的签名令牌、Cookie双重提交与精确豁免策略','api'=>'测试凭据签发、轮换、撤销；HMAC 篡改和原子重放拒绝', 'network'=>'固定公网目标、DNS/重定向逐跳检查与故障拒绝', 'upload' => '内容检测、图片重新编码、私有保存与故障拒绝', 'validation' => '严格类型、Unicode 长度、嵌套错误与字段白名单', 'configuration' => '简单初始化、只读诊断与故障拒绝', 'captcha' => '多种图片/算术、滑块与点选、第三方验证、刷新和单次使用', 'csrf' => '正常验证、篡改、跨场景、过期和重放',
                     'rate' => '请求预算、阶梯封禁、手动封禁与解除', 'password' => '哈希验证、基本策略和旧密码升级',
                     'reset' => '一次性令牌与密码版本绑定', 'session' => '标识更新、空闲超时与绝对超时',
                     'http' => '可信代理链、响应头和安全 Cookie', 'output' => 'HTML、JSON 数据与 URL 组件编码', 'audit' => '结构化记录、字段白名单和主体假名化', 'storage' => '原子计数、跨请求保存与命名空间隔离'];
                 foreach ($descriptions as $id => $description) {
                     echo '<a class="card" href="?module=' . $id . '"><h2>' . self::MODULES[$id] . '</h2><p>' . $description . '</p><span>打开演示 →</span></a>';
                 }
-                echo '</div><p class="note">API 签名和受限请求已提供固定测试演示；MySQL 存储需要服务端配置后演示。Turnstile 需配置真实服务密钥后启用。演示不等于生产环境或独立安全审计验收。</p>';
+                echo '</div><p class="note">API 签名和受限请求已提供固定测试演示；MySQL 存储需要服务端配置后演示。第三方验证码需配置真实服务密钥后启用。演示不等于生产环境或独立安全审计验收。</p>';
                 break;
             case 'configuration':
                 echo '<h2>配置一次，按需使用</h2><p>工厂校验 PHP 数组配置，不自动启动 Session。诊断不修改存储；错误配置和故障演示只影响隔离的测试对象。</p>';
@@ -562,18 +596,43 @@ final class DemoApp
                     . $this->button('invalid_sample', '类型与格式错误') . $this->button('unknown_sample', '尝试未声明字段'));
                 break;
             case 'captcha':
-                echo '<h2>生成与验证</h2><p>有效期 30 秒，最多错误 3 次；成功后再次提交会被拒绝。</p>';
-                $this->form($this->button('math', '生成算术验证码') . $this->button('image', '生成图片验证码') . $this->button('refresh', '刷新并撤销旧挑战') . $this->button('expire', '模拟过期'));
-                if ($state['challenge']) {
-                    $challenge = $state['challenge'];
-                    echo '<div class="challenge">' . ($challenge['image'] ? '<img alt="图片验证码" src="' . Escaper::html($challenge['image']) . '">' : '<strong>' . Escaper::html($challenge['prompt']) . '</strong>') . '</div>';
-                    $this->form('<input type="hidden" name="challenge_id" value="' . Escaper::html($challenge['id']) . '"><label>答案<input name="answer" maxlength="32" autocomplete="off"></label>' . $this->button('verify', '验证答案'));
+                echo '<h2>生成与验证</h2><p>有效期 30 秒，最多错误 3 次；成功后再次提交会被拒绝。滑块和点选也由服务端验证。所有本地形式都应配合请求限流，不能保证阻止自动化识别；可切换文字算术作为交互备用方案。</p>';
+                $buttons = ['math'=>'加法', 'subtract'=>'减法', 'multiply'=>'乘法', 'divide'=>'整除', 'mixed'=>'随机算术',
+                    'image_math'=>'图片算术', 'image'=>'混合字符图片', 'digits'=>'纯数字图片', 'letters'=>'纯字母图片',
+                    'slider'=>'滑块拼图', 'click'=>'顺序点选', 'refresh'=>'刷新并撤销旧挑战', 'expire'=>'模拟过期'];
+                $controls = ''; foreach ($buttons as $action => $label) { $controls .= $this->button($action, $label); }
+                $this->form($controls);
+                $challenge = $state['challenge'];
+                echo '<div class="challenge" data-captcha="' . Escaper::html(json_encode($challenge)) . '">';
+                if ($challenge) {
+                    echo '<strong>' . Escaper::html($challenge['prompt']) . '</strong>';
+                    if ($challenge['image']) { echo '<img alt="图片验证码" src="' . Escaper::html($challenge['image']) . '">'; }
+                } else { echo '请先生成一种验证码。'; }
+                echo '</div>';
+                $this->form('<input type="hidden" name="challenge_id" value="' . Escaper::html($challenge['id'] ?? '') . '"><label>答案<input name="answer" maxlength="32" autocomplete="off"></label>' . $this->button('verify', '验证答案'));
+                $v3Page = ($_GET['provider'] ?? null) === 'recaptcha_v3';
+                foreach (['turnstile'=>'Cloudflare Turnstile', 'hcaptcha'=>'hCaptcha', 'recaptcha'=>'Google reCAPTCHA v2', 'recaptcha_v3'=>'Google reCAPTCHA v3'] as $provider => $label) {
+                    echo '<h2>' . $label . '</h2>';
+                    if (!$state[$provider . '_configured']) { echo '<p class="note">尚未配置真实服务，外部验证未执行。</p>'; continue; }
+                    $siteKey = Escaper::html(getenv('SOSECURITY_DEMO_' . strtoupper($provider) . '_SITE_KEY'));
+                    if ($provider === 'turnstile') {
+                        echo '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" defer></script>';
+                        $widget = '<div class="cf-turnstile" data-sitekey="' . $siteKey . '" data-action="demo"></div>';
+                    } elseif ($provider === 'hcaptcha') {
+                        echo '<script src="https://js.hcaptcha.com/1/api.js?recaptchacompat=off" defer></script>';
+                        $widget = '<div class="h-captcha" data-sitekey="' . $siteKey . '"></div>';
+                    } elseif ($provider === 'recaptcha') {
+                        if ($v3Page) { echo '<p><a href="' . Escaper::html($this->base . '?module=captcha') . '">打开 v2 演示</a></p>'; continue; }
+                        echo '<script src="https://www.google.com/recaptcha/api.js" defer></script>';
+                        $widget = '<div class="g-recaptcha" data-sitekey="' . $siteKey . '"></div>';
+                    } else {
+                        if (!$v3Page) { echo '<p><a href="' . Escaper::html($this->base . '?module=captcha&provider=recaptcha_v3') . '">打开 v3 演示（独立 SDK 页面）</a></p>'; continue; }
+                        echo '<script src="https://www.google.com/recaptcha/api.js?render=' . $siteKey . '" defer></script><p>action 固定 demo，最低评分 0.5；提交前即时获取令牌。</p>';
+                        $widget = '<div data-recaptcha-v3="' . $siteKey . '"></div><input type="hidden" name="g-recaptcha-response">';
+
+                    }
+                    $this->form($widget . $this->button($provider, '服务端验证'));
                 }
-                echo '<h2>Cloudflare Turnstile</h2>';
-                if ($state['turnstile_configured']) {
-                    echo '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" defer></script>';
-                    $this->form('<div class="cf-turnstile" data-sitekey="' . Escaper::html(getenv('SOSECURITY_DEMO_TURNSTILE_SITE_KEY')) . '" data-action="demo"></div>' . $this->button('turnstile', '服务端验证'));
-                } else { echo '<p class="note">尚未配置真实服务，外部验证未执行。算术与图片验证码可以直接体验。</p>'; }
                 break;
             case 'csrf':
                 echo '<h2>令牌生命周期</h2><p>普通验证允许重用；单次消费后的重放会被拒绝。篡改和跨场景按钮使用实际验证器。</p>';
@@ -678,6 +737,7 @@ final class DemoApp
             $display = $state;
             if (isset($display['challenge']['image']) && $display['challenge']['image'] !== null) {
                 $display['challenge']['image'] = '[PNG 图片已在上方显示]';
+                if (isset($display['challenge']['presentation']['piece'])) { $display['challenge']['presentation']['piece'] = '[PNG 拼图片段已在上方显示]'; }
             }
             echo '<section class="panel"><h2>当前状态</h2><pre data-demo-state>' . Escaper::html(json_encode($display, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) . '</pre></section>';
         }

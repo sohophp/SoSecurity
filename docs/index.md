@@ -7,7 +7,8 @@
 | 项目要做什么、哪些不属于本次范围 | [产品需求](requirements.md) |
 | 现在有哪些能力、演示在哪 | [功能清单](features.md)、[演示说明](demo.md) |
 | 少量配置开始使用 | [配置与诊断](configuration.md)、[配置预设](../examples/configuration-presets.php) |
-| 验证码、CSRF、限流、密码、会话、审计怎么调用 | [组件使用指南](usage.md) |
+| 验证码类型、交互与第三方验证怎么接入 | [验证码指南](captcha.md)、[类型选择示例](../examples/captcha-types.php) |
+| CSRF、限流、密码、会话、审计怎么调用 | [组件使用指南](usage.md) |
 | 如何逐项替换旧代码，保留原业务 | [迁移指南](migration.md)、[独立登录示例](../examples/legacy-login.php) |
 | 选择共享存储与维护状态 | [MySQL](mysql.md)、[Redis初始化/恢复](redis-recovery.md) |
 | 严格输入验证与错误本地化 | [输入验证](validation.md) |
