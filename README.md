@@ -76,4 +76,4 @@ MIT License。
 
 新增指南：[HTML清理](docs/html-cleaning.md) · [无状态CSRF](docs/signed-csrf.md) · [API凭据与签名](docs/api.md) · [HTTP策略](docs/http-policy.md) · [受限请求](docs/outbound.md) · [上传安全](docs/upload.md) · [MySQL存储](docs/mysql.md) · [输入验证](docs/validation.md) · [Redis初始化与恢复](docs/redis-recovery.md)。
 
-发布材料：[平台范围](docs/platforms.md) · [公开API提案](docs/public-api.md) · [1.0验收工作单](docs/release-readiness.md) · [CoreRepo组件试点](docs/core-repo-pilot.md)。
+发布材料：[平台范围](docs/platforms.md) · [公开API提案](docs/public-api.md) · [1.0验收工作单](docs/release-readiness.md)。

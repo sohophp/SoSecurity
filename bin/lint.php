@@ -4,7 +4,7 @@ declare(strict_types=1);
 $root = dirname(__DIR__);
 $failed = false;
 $count = 0;
-foreach (['src', 'tests', 'examples', 'demo', 'bin', 'integrations/core-repo'] as $directory) {
+foreach (['src', 'tests', 'examples', 'demo', 'bin'] as $directory) {
     $iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($root . '/' . $directory));
     foreach ($iterator as $file) {
         if ($file->getExtension() !== 'php') {

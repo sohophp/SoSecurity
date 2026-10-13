@@ -13,4 +13,4 @@ php72 bin/api-contract.php --write
 
 `Api\SignatureProfile`、`Http\Outbound\PublicAddress/RequestHeaders`、`Storage\Codec`、`Support\Guard/Deadline` 为内部实现辅助，不在稳定合同中；其他类即使公开仍须遵守其文档用途，例如MemoryStore仅用于测试。所有安全默认值/副作用/错误分类也属于行为承诺，需要功能与负面路径检查，签名相等不能证明行为安全。
 
-可选适配器和示例不要求框架；examples为可调用接入示例，宿主认证/权限/请求解析仍由真实应用承担。ABI清单和生成器用于源码开发审核，核心压缩包排除该开发清单，保留MySQL运行时schema。正式冻结须有全目标版本实际运行/Composer证据、真实旧站试点、独立复核和发布审核。
+可选适配器和示例不要求框架；examples为可调用接入示例，宿主认证/权限/请求解析仍由真实应用承担。ABI清单和生成器用于源码开发审核，核心压缩包排除该开发清单，保留MySQL运行时schema。正式冻结须有全目标版本实际运行/Composer证据、独立迁移示例、独立复核和发布审核。

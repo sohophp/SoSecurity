@@ -28,6 +28,5 @@ PHPStan使用PHP7.2目标、level5，不维护忽略基线；开发工具在PHP8
 
 公开接口提案及类型/默认值比较见docs/public-api.md；`php72 bin/api-contract.php`不构造组件。未经评审不要自动改签名基线。1.0验收工作单见docs/release-readiness.md；完整私有MySQL顺序矩阵可运行 `python3 tests/mysql_check.py --matrix php72 php73 php74 php80 php81 php82 php83 php84 php85`，相关扩展必需条件按实际环境记录。
 
-可选真实宿主组件试点见docs/core-repo-pilot.md；只有提供独立CoreRepo工作区与受信任的宿主依赖自动加载器时运行，不读取真实业务配置。
 
 Windows原生组件检查使用tests/windows-check.ps1；覆盖范围、必要测试扩展及文件存储/上传保存拒绝边界见docs/platforms.md。portable-core.php使用MemoryStore仅验证平台组件流程，不能代替共享后端或并发验收。

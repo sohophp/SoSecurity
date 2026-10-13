@@ -222,7 +222,7 @@ Policy/Change不可变、稳定异常reason、有界文件锁、分批清理、�
 
 新增三版本各23项实际命名空间cURL/TLS/DoH/IPv4/IPv6/重定向/预算通过，补齐先前六版本相同测试的目标版本范围；各7项独立小型tmpfs ENOSPC通过。没有改宿主路由/CA或填满共享磁盘。九版本新消费者安装及HTML可选依赖审计通过；压缩包排除resources/api及所有integrations测试项目。新增公开API候选包含78类/接口的签名/默认值/继承/本库接口/公开常量及属性默认值，九版本检查通过；PHP8引擎自动Stringable及8.5反射self差异经规范化，不掩盖本库真实接口变化。候选清单仍未经独立复核和正式冻结。
 
-CoreRepo已提交基线24a64019的独立工作区，PHP7.2/7.4各33项实际HTTP组件检查通过；真实Session/SessionManager/Symfony CSRF/Twig与独立Composer SoSecurity共同运行，验证码/共享失败预算/Session更新/宿主数据保留/存储故障503等见core-repo-pilot.md。原CoreRepo工作区有未提交改动，试点没有修改它；现有第三方vendor只读用于该集成，未证明其全部依赖安全，也没有接入真实旧站数据库/管理员/SSO/路由。
+CoreRepo已提交基线24a64019的独立工作区，PHP7.2/7.4各33项实际HTTP组件检查通过；真实Session/SessionManager/Symfony CSRF/Twig与独立Composer SoSecurity共同运行，验证码/共享失败预算/Session更新/宿主数据保留/存储故障503。此为已撤回的历史实验，不属于本次交付验收。原CoreRepo工作区有未提交改动，试点没有修改它；现有第三方vendor只读用于该集成，未证明其全部依赖安全，也没有接入真实旧站数据库/管理员/SSO/路由。
 
 初次已执行但失败及修复：API候选比较遇到不同PHP反射self/Stringable差异，按声明类与引擎内置接口规范化后九版本通过；临时Redis模块缺少其构建依赖igbinary/msgpack，补齐同版本测试模块并验证子进程继承ini后完整套件无跳过通过；试点自动加载优先级最初触发宿主类来源503拒绝，修复注册顺序后两版本通过。
 
@@ -243,3 +243,7 @@ CoreRepo已提交基线24a64019的独立工作区，PHP7.2/7.4各33项实际HTTP
 新增windows-components CI定义只运行明确范围的组件套件，远端未执行。未执行：Windows其他PHP版本/IIS/Apache/FastCGI、浏览器/GD上传、实际Redis/MySQL共享驱动及并发、NTFS/网络盘私有保存适配、实际外部网络/cURL/TLS/代理；真实旧站后台/SSO、独立复核及公开发布继续待验收。本节不将Windows局部组件结果扩展为Linux完整矩阵或所有平台能力相同。
 
 Windows阶段最终137个PHP文件语法、PHPStan level5/目标70200、Composer严格校验、CI YAML结构解析及PHP7.2/8.5各124文件发行包检查通过。九版本48项平台组件检查和API签名检查通过；临时WindowsPHP/消费者/源码目录及下载归档已回收，演示入口仍HTTP200，原PHP7.2/8.5哈希相同。
+
+## 范围纠正（2026-10-13）
+
+用户明确未要求接入CoreRepo。先前由开发代理自行选取的CoreRepo专用试点超出了已确认的项目范围，现已删除其测试入口/运行脚本/专用文档，并移除代理创建的干净独立工作区。原CoreRepo工作区Git状态移除前后完全相同，未修改其业务、数据库或SSO。保留此前测试记录作为历史，不将其计为当前交付或发布前置条件。本次范围为SoSecurity本身、独立迁移示例和72.rocky.wsl/SoSecurity演示；其他项目接入必须由用户明确指定。
