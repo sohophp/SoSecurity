@@ -25,3 +25,5 @@ The unreleased candidate now includes strict bounded input validation and dedica
 [Upload validation and private storage](docs/upload.md) now support bounded content inspection, image decode/reencoding, exclusive random names and scanner/file-manager adapters. The demo upload area is private and quota/retention limited; no public file serving route is added.
 
 Exact-origin redirects/CORS, opt-in Permissions-Policy and bounded pinned outbound HTTP are now implemented. See [HTTP policies](docs/http-policy.md) and [outbound requests](docs/outbound.md), including DNS provider privacy, redirect/credential behavior and transport evidence.
+
+Optional rich-text cleanup now uses a bounded, fixed basic-fragment policy around HTML Purifier 4.19.1. The core still has no mandatory third-party dependency; explicit installation, DOM/ctype requirements, resource limits and body-rendering boundaries are documented in [HTML cleanup](docs/html-cleaning.md). Custom adapters require host review.

@@ -5,3 +5,4 @@
 /var/
 /tools/vendor/
 __pycache__/
+/integrations/*/vendor/

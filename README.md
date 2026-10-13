@@ -4,7 +4,7 @@
 
 框架无关、按需使用的 PHP Web 安全组件。Composer 包名 `sohophp/sosecurity`，命名空间 `SoSecurity\`，核心代码目标 PHP **7.2–8.5**。
 
-当前为 **未发布开发候选版本（已推进到0.5 HTTP/API阶段）**：验证码（算术、PNG 图片、Turnstile）、有状态 CSRF、原子请求预算与封禁、密码哈希/迁移/重置令牌、会话安全辅助、可信代理/CIDR、输出编码、Cookie/基础响应头和脱敏审计回调。Session、本地文件、Redis及PDO MySQL存储可独立选择；新增严格输入验证、可选配置工厂和只读诊断。新增私有文件上传校验/保存；新增安全跳转/CORS/权限头及有界受限外部请求；新增摘要存储的API Key与RFC 9421有界HMAC签名/共享原子Nonce；新增绑定登录的无状态签名CSRF与精确路由策略；完整发布验收继续进行。
+当前为 **未发布开发候选版本（已推进到0.5 HTTP/API阶段）**：验证码（算术、PNG 图片、Turnstile）、有状态 CSRF、原子请求预算与封禁、密码哈希/迁移/重置令牌、会话安全辅助、可信代理/CIDR、输出编码、Cookie/基础响应头和脱敏审计回调。Session、本地文件、Redis及PDO MySQL存储可独立选择；新增严格输入验证、可选配置工厂和只读诊断。新增私有文件上传校验/保存；新增安全跳转/CORS/权限头及有界受限外部请求；新增摘要存储的API Key与RFC 9421有界HMAC签名/共享原子Nonce；新增绑定登录的无状态签名CSRF与精确路由策略；新增成熟HTML Purifier的可选受限富文本适配；完整发布验收继续进行。
 
 ## 安装
 
@@ -61,6 +61,7 @@ bin/check.sh php
 python3 tests/install.py php /path/to/composer
 # 独立开发工具在 PHP 8.1+ 环境安装，不影响 PHP 7.2 核心包。
 php81 /path/to/composer install --working-dir=tools
+php72 /path/to/composer install --working-dir=integrations/htmlpurifier
 php81 tools/vendor/bin/phpstan analyse -c phpstan.neon --no-progress
 php81 /path/to/composer audit --working-dir=tools --locked
 ```
@@ -73,4 +74,4 @@ MIT License。
 
 完整进一步计划仍在执行中，当前进度与未完成验收见 [execution-status.md](docs/execution-status.md)。
 
-新增指南：[无状态CSRF](docs/signed-csrf.md) · [API凭据与签名](docs/api.md) · [HTTP策略](docs/http-policy.md) · [受限请求](docs/outbound.md) · [上传安全](docs/upload.md) · [MySQL存储](docs/mysql.md) · [输入验证](docs/validation.md) · [Redis初始化与恢复](docs/redis-recovery.md)。
+新增指南：[HTML清理](docs/html-cleaning.md) · [无状态CSRF](docs/signed-csrf.md) · [API凭据与签名](docs/api.md) · [HTTP策略](docs/http-policy.md) · [受限请求](docs/outbound.md) · [上传安全](docs/upload.md) · [MySQL存储](docs/mysql.md) · [输入验证](docs/validation.md) · [Redis初始化与恢复](docs/redis-recovery.md)。

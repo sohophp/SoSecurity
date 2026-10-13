@@ -3,4 +3,6 @@ parameters:
     phpVersion: 70200
     paths:
         - src
+    bootstrapFiles:
+        - integrations/htmlpurifier/vendor/autoload.php
     tmpDir: .phpstan-cache

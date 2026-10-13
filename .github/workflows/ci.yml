@@ -17,7 +17,7 @@ jobs:
       - uses: shivammathur/setup-php@d52fc211a0436f8839a587b3b5b8efddab4744ea # v2
         with:
           php-version: ${{ matrix.php }}
-          extensions: fileinfo, gd, redis, curl, session, pdo_sqlite, pdo_mysql, intl, pcntl, posix
+          extensions: fileinfo, gd, redis, curl, session, pdo_sqlite, pdo_mysql, intl, pcntl, posix, dom, ctype
           tools: composer
           coverage: none
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
@@ -25,6 +25,7 @@ jobs:
           python-version: '3.x'
       - run: sudo apt-get update && sudo apt-get install -y redis-server mysql-server iproute2 openssl
       - run: composer validate --strict && composer install --no-interaction --no-progress
+      - run: composer validate --strict --working-dir=integrations/htmlpurifier && composer install --working-dir=integrations/htmlpurifier --no-interaction --no-progress && composer audit --working-dir=integrations/htmlpurifier --locked
       - run: bin/check.sh php
         env:
           SOSECURITY_REQUIRE_REDIS: '1'
@@ -33,6 +34,7 @@ jobs:
           SOSECURITY_REQUIRE_MYSQL: '1'
           SOSECURITY_REQUIRE_UPLOAD: '1'
           SOSECURITY_REQUIRE_POSIX: '1'
+          SOSECURITY_REQUIRE_HTML: '1'
       - run: python3 tests/native_outbound.py php
         env:
           SOSECURITY_REQUIRE_NATIVE_HTTP: '1'
@@ -57,6 +59,7 @@ jobs:
           tools: composer
           coverage: none
       - run: composer install --no-interaction --no-progress
+      - run: composer validate --strict --working-dir=integrations/htmlpurifier && composer install --working-dir=integrations/htmlpurifier --no-interaction --no-progress && composer audit --working-dir=integrations/htmlpurifier --locked
       - run: composer validate --strict --working-dir=tools && composer install --working-dir=tools --no-interaction --no-progress
       - run: php tools/vendor/bin/phpstan analyse -c phpstan.neon --no-progress
       - run: composer audit --working-dir=tools --locked

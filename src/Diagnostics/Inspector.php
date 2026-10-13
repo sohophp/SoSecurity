@@ -117,6 +117,23 @@ final class Inspector
                 'reason'=>$keys instanceof \SoSecurity\Support\HmacKeys ? 'csrf.key_lifecycle_unverified' : 'configuration.keys'];
             $checks[]=['check'=>'csrf.signed.binding','status'=>'manual','reason'=>'csrf.auth_binding_unverified'];
         }
+        $html=$config->html();
+        if ($html===null) { $checks[]=['check'=>'html','status'=>'not_configured','reason'=>'configuration.html']; }
+        else {
+            $dom=extension_loaded('dom'); $checks[]=['check'=>'html.dom','status'=>$dom ? 'pass' : 'fail','reason'=>$dom ? 'dependency.available' : 'dependency.dom'];
+            if (isset($html['sanitizer'])) {
+                $sanitizer=$services[$html['sanitizer']] ?? null;
+                $checks[]=['check'=>'html.sanitizer','status'=>$sanitizer instanceof \SoSecurity\Output\HtmlSanitizer ? 'manual' : 'fail',
+                    'reason'=>$sanitizer instanceof \SoSecurity\Output\HtmlSanitizer ? 'html.adapter_unverified' : 'configuration.html_sanitizer'];
+            } else {
+                // Does not invoke application autoloaders, initialize provider configuration, or write a cache.
+                $provider=class_exists('HTMLPurifier',false) && defined('HTMLPurifier::VERSION');
+                $version=$provider && \SoSecurity\Output\HtmlPurifierSanitizer::supportsVersion(\HTMLPurifier::VERSION);
+                $checks[]=['check'=>'html.purifier','status'=>$version && extension_loaded('ctype') ? 'pass' : 'manual',
+                    'reason'=>$version ? (extension_loaded('ctype') ? 'dependency.available' : 'dependency.ctype') : 'dependency.htmlpurifier_unverified'];
+            }
+            $checks[]=['check'=>'html.render_context','status'=>'manual','reason'=>'html.body_context_unverified'];
+        }
         return $checks;
     }
     private function redis(\Redis $redis, string $namespace): array

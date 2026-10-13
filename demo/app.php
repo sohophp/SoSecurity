@@ -30,6 +30,7 @@ require __DIR__ . '/uploads.php';
 require __DIR__ . '/network.php';
 require __DIR__ . '/api.php';
 require __DIR__ . '/stateless.php';
+require __DIR__ . '/html.php';
 
 /** Only advances this visitor's demonstration time; never changes system time. */
 final class DemoClock implements Clock
@@ -48,7 +49,7 @@ final class DemoApp
     private const MODULES = [
         'home' => '功能总览', 'configuration' => '配置与诊断', 'captcha' => '验证码', 'csrf' => 'CSRF 防护', 'stateless'=>'无状态 CSRF', 'rate' => '限流与封禁',
         'upload' => '上传安全', 'validation' => '输入验证', 'password' => '密码安全', 'reset' => '重置令牌', 'session' => '会话安全',
-        'api' => 'API 凭据与签名', 'network' => '受限外部请求', 'http' => 'HTTP 与代理', 'output' => '输出编码', 'audit' => '审计日志', 'storage' => '存储与隔离',
+        'api' => 'API 凭据与签名', 'network' => '受限外部请求', 'http' => 'HTTP 与代理', 'html'=>'富文本 HTML 清理', 'output' => '输出编码', 'audit' => '审计日志', 'storage' => '存储与隔离',
     ];
     private const TEST_PASSWORD = 'Demo-only-7.2!';
     private $module;
@@ -100,6 +101,7 @@ final class DemoApp
                     'captcha' => ['math', 'image', 'verify', 'refresh', 'expire', 'turnstile'],
                     'csrf' => ['issue', 'verify', 'tamper', 'cross_scope', 'once', 'replay', 'expire', 'revoke'],
                     'stateless'=>['issue','verify','reuse','tamper','cross_scope','cross_binding','double','cookie_mismatch','expire','rotate_keep','rotate_drop','binding_change','policy','bad_key'],
+                    'html'=>['clean','links','normal','attack','size_limit','tree_limit','provider_failure'],
                     'rate' => ['consume', 'ban', 'permanent', 'reset'],
                     'password' => ['hash', 'verify', 'policy', 'legacy'],
                     'reset' => ['issue', 'consume', 'replay', 'change_version'],
@@ -123,7 +125,7 @@ final class DemoApp
                         $this->status = 503; $this->result = ['reason' => $e->reason(), 'message' => '存储不可用，敏感操作没有放行。'];
                     }
                     catch (\SoSecurity\Exception\ValidationException $e) {
-                        $this->status = $module === 'upload' ? 422 : 400; $this->result = ['reason' => $e->reason(), 'message' => $module === 'upload' ? '上传被拒绝，请检查格式、大小或演示额度。' : '输入未通过验证，请检查字段。'];
+                        $this->status = in_array($module,['upload','html'],true) ? 422 : 400; $this->result = ['reason' => $e->reason(), 'message' => $module === 'upload' ? '上传被拒绝，请检查格式、大小或演示额度。' : '输入未通过验证，请检查字段。'];
                     }
                     catch (\SoSecurity\Exception\SecurityException $e) {
                         $this->status = 503; $this->result = ['reason' => $e->reason(), 'message' => $module === 'upload' ? '处理依赖发生故障，上传没有放行。' : '处理依赖发生故障，本次操作已拒绝。'];
@@ -415,6 +417,9 @@ final class DemoApp
                 $this->result=(new SignedCsrfSamples($this->binding,$this->base,$this->secure))->run($action,$this->input('token',256),$this->input('method',32),$this->input('path',2048));
                 if (isset($this->result['valid']) && !$this->result['valid']) { $this->status=403; }
                 break;
+            case 'html':
+                $this->result=HtmlSamples::run($action,$this->input('html',8192));
+                break;
             case 'http':
                 if ($action === 'resolve') {
                     $rules = preg_split('/\s*,\s*/', trim($this->input('trusted', 1024)), -1, PREG_SPLIT_NO_EMPTY);
@@ -474,6 +479,7 @@ final class DemoApp
     private function state(): array
     {
         switch ($this->module) {
+            case 'html': return HtmlSamples::state();
             case 'stateless': return (new SignedCsrfSamples($this->binding,$this->base,$this->secure))->state();
             case 'api': return (new ApiSamples($this->store,$this->binding))->state();
             case 'network': return ['target'=>'https://www.php.net/robots.txt','resolver'=>'Google JSON DoH，固定TLS端点和bootstrap IP',
@@ -525,7 +531,7 @@ final class DemoApp
         switch ($this->module) {
             case 'home':
                 echo '<div class="cards">';
-                $descriptions = ['stateless'=>'绑定登录的签名令牌、Cookie双重提交与精确豁免策略','api'=>'测试凭据签发、轮换、撤销；HMAC 篡改和原子重放拒绝', 'network'=>'固定公网目标、DNS/重定向逐跳检查与故障拒绝', 'upload' => '内容检测、图片重新编码、私有保存与故障拒绝', 'validation' => '严格类型、Unicode 长度、嵌套错误与字段白名单', 'configuration' => '简单初始化、只读诊断与故障拒绝', 'captcha' => '图片与算术、错误次数、刷新和单次使用', 'csrf' => '正常验证、篡改、跨场景、过期和重放',
+                $descriptions = ['html'=>'成熟清理库、基础标签允许列表、资源预算和故障拒绝','stateless'=>'绑定登录的签名令牌、Cookie双重提交与精确豁免策略','api'=>'测试凭据签发、轮换、撤销；HMAC 篡改和原子重放拒绝', 'network'=>'固定公网目标、DNS/重定向逐跳检查与故障拒绝', 'upload' => '内容检测、图片重新编码、私有保存与故障拒绝', 'validation' => '严格类型、Unicode 长度、嵌套错误与字段白名单', 'configuration' => '简单初始化、只读诊断与故障拒绝', 'captcha' => '图片与算术、错误次数、刷新和单次使用', 'csrf' => '正常验证、篡改、跨场景、过期和重放',
                     'rate' => '请求预算、阶梯封禁、手动封禁与解除', 'password' => '哈希验证、基本策略和旧密码升级',
                     'reset' => '一次性令牌与密码版本绑定', 'session' => '标识更新、空闲超时与绝对超时',
                     'http' => '可信代理链、响应头和安全 Cookie', 'output' => 'HTML、JSON 数据与 URL 组件编码', 'audit' => '结构化记录、字段白名单和主体假名化', 'storage' => '原子计数、跨请求保存与命名空间隔离'];
@@ -640,6 +646,19 @@ final class DemoApp
                 echo '<h2>上下文编码</h2><p>结果以文本显示，输入不会被作为 HTML 或脚本执行。URL 组件编码不等于 URL 安全策略。</p>';
                 $this->form('<label>测试文本<textarea name="text" rows="4">&lt;script&gt;alert("demo")&lt;/script&gt;</textarea></label>' . $this->button('encode', '查看编码结果'));
                 break;
+            case 'html':
+                echo '<h2>经过允许列表清理的基础富文本</h2><p>默认演示只保留段落、强调、标题和列表等基础排版；脚本、样式、SVG/MathML、表单、图片及嵌入资源均移除。输入最多8 KiB，节点/属性合计256、解析深度24。</p>';
+                if (!$state['dependency_ready']) { echo '<p class="note">可选HTML Purifier或DOM/ctype扩展未配置，真实清理未执行；请求会明确拒绝。</p>'; }
+                $this->form('<label>测试HTML<textarea name="html" rows="6">'.Escaper::html('<p>中文<strong>粗体</strong><a href="https://example.com">链接</a></p>').'</textarea></label>'
+                    . $this->button('clean','清理基础排版') . $this->button('links','清理并保留安全协议链接（源码）') . $this->button('normal','正常排版样例')
+                    . $this->button('attack','脚本/资源攻击样例') . $this->button('size_limit','输入超限') . $this->button('tree_limit','嵌套超限') . $this->button('provider_failure','清理服务故障样例'));
+                if ($state['last'] && $state['last']['preview']) {
+                    // Only fixed-policy HTML Purifier output, never raw input or a custom provider, is previewed.
+                    $preview='<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src &#039;none&#039;; base-uri &#039;none&#039;; form-action &#039;none&#039;"><body>'.$state['last']['output'].'</body></html>';
+                    echo '<h2>清理后预览</h2><iframe class="html-preview" title="清理后的基础HTML预览" sandbox="" referrerpolicy="no-referrer" srcdoc="'.Escaper::html($preview).'"></iframe>';
+                }
+                echo '<p class="note">这是基础HTML正文片段，不保留任意样式、图片、脚本或编辑器扩展；输入验证和普通输出编码仍独立使用。链接版只显示源码，不加载资源。生产保留原始内容并预览迁移差异。</p>';
+                break;
             case 'audit':
                 echo '<h2>白名单与假名化</h2><p>日志仅保存在当前访客的演示 Session，最多显示 20 条；不连接生产日志系统。</p>';
                 $this->form($this->button('record', '记录含模拟敏感字段的事件') . $this->button('clear', '清空演示日志'));
@@ -663,6 +682,7 @@ final class DemoApp
             echo '<section class="panel"><h2>当前状态</h2><pre data-demo-state>' . Escaper::html(json_encode($display, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) . '</pre></section>';
         }
         $examples = [
+            'html'=>'$cleaner = $security->htmlCleaner();' . "\n" . '$fragment = $cleaner->clean($untrustedRichText);' . "\n" . '// 仅用于经过审查的HTML正文片段；普通文本继续Escaper/Twig自动转义。',
             'stateless'=>'$csrf = $security->signedCsrf();' . "\n" . '$token = $csrf->reuseOrIssue("orders:update", $verifiedLoginBinding, $existingCookie);' . "\n" . '$valid = $csrf->verifyDoubleSubmit("orders:update", $verifiedLoginBinding, $cookie, $submitted);' . "\n" . '// 私有密钥、已验证登录绑定和Cookie发送由宿主负责。',
             'api' => '$identity = $security->apiKeys()->fromAuthorization($authorization, "orders:read");' . "\n" . '$headers = $security->hmacSigner($signingKey)->sign("POST", $exactUri, $rawBody, "application/json");' . "\n" . '$identity = $security->hmacVerifier()->verify("POST", $exactUri, $rawBody, $headers, "orders:read");' . "\n" . '// 授权凭据管理、私有密钥、共享存储和资源归属由宿主提供。',
             'configuration' => '$security = SoSecurity\\Security::fromArray([' . "\n" . '    "site" => "my-site",' . "\n"

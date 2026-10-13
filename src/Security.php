@@ -113,6 +113,14 @@ final class Security
         $policy = new Upload\Policy(array_diff_key($options, array_flip(['directory', 'document_root', 'scanner'])));
         return new Upload\Saver(new Upload\Validator($policy), $options['directory'], $options['document_root'], $scanner);
     }
+    public function htmlCleaner(): Output\HtmlCleaner
+    {
+        $options=$this->config->html();
+        if ($options===null) { throw new ConfigurationException('Opt in to reviewed rich-text cleaning.','configuration.html'); }
+        $sanitizer=isset($options['sanitizer']) ? ($this->services[$options['sanitizer']] ?? null) : new Output\HtmlPurifierSanitizer($options['allow_links']);
+        if (!$sanitizer instanceof Output\HtmlSanitizer) { throw new ConfigurationException('Inject a reviewed HtmlSanitizer.','configuration.html_sanitizer'); }
+        return new Output\HtmlCleaner($sanitizer,new Output\HtmlPolicy(array_diff_key($options,['sanitizer'=>true])));
+    }
     public function session(): Session\SessionSecurity
     {
         $options = $this->config->session();

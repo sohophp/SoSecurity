@@ -16,6 +16,7 @@
 | 重置令牌 | 单次消费、重复消费、密码版本变更后旧令牌失效 |
 | 会话安全 | Session ID更新（只显示摘要指纹）、空闲/绝对过期和显式失效 |
 | HTTP与代理 | 可信CIDR、代理链、Report-Only/Cookie、跳转白名单、CORS预检、Permissions-Policy |
+| 富文本HTML清理 | 基础排版/攻击输入/协议链接源码、树/大小拒绝、固定服务故障、sandbox预览 |
 | 无状态CSRF | 签名与真实Cookie双重提交、登录/场景绑定、可重用/期限、密钥轮换、精确豁免预览 |
 | API凭据与签名 | 测试凭据签发/轮换/撤销/权限/访客隔离；内部签名、篡改/重放/过期/Nonce故障 |
 | 受限外部请求 | 固定公网目标真实HTTPS/DoH/pin；隔离内网、重定向、DNS变更、peer和响应超限拒绝 |
@@ -146,3 +147,11 @@ python3 tests/native_outbound.py php72 php85
 `?module=stateless` 同步提供实际组件与独立Cookie测试。默认30秒，核心允许有效期内重用；单次消费继续有状态页。密钥轮换只修改本访客服务器Session内测试密钥，身份变更/时间推进仅模拟本访客上下文。所有网页操作仍有控制CSRF；固定豁免预览不应用到真实入口。HTTP入口不等于生产HTTPS；独立TLS/Chromium的__Host/Secure/HttpOnly及同站跨来源攻击证据见 [signed-csrf.md](signed-csrf.md)。
 
 独立演示 `python3 tests/signed_csrf_demo.py php72` 为30项；实际入口使用 `--url http://72.rocky.wsl/SoSecurity/`，按入口请求窗口分批执行，不修改100次/分钟额度。
+
+## HTML 清理演示
+
+`?module=html` 使用独立安装的HTML Purifier 4.19.1，默认严格基础标签/无链接预览，链接策略结果只显示源码。原始输入不执行，sandbox预览没有脚本权限，清理服务故障用固定模拟实现而非破坏真实依赖。每访客仅在Session保存最近一次8KiB输入/16KiB输出用于显示；CSRF和入口100次/分钟保持启用，未配置可选依赖时明确显示未执行并拒绝清理。
+
+依赖安装、预算/渲染边界和浏览器六组结构变异XSS检查见 [html-cleaning.md](html-cleaning.md)。`python3 tests/html_demo.py php72` 为19项隔离检查；实际入口用--url，--browser另调用已安装Playwright，不给核心包增加Node依赖。
+
+最新主演示为123项隔离/125项实际入口；HTML独立19项，真实浏览器检查另行记录。

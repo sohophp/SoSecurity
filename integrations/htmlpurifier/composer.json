@@ -1,0 +1,7 @@
+{
+    "name": "sosecurity/htmlpurifier-verification",
+    "description": "Optional adapter verification and local demo dependency; excluded from the runtime package",
+    "license": "MIT",
+    "require": {"php": ">=7.2 <8.6", "ezyang/htmlpurifier": "^4.19.1"},
+    "config": {"allow-plugins": false, "platform": {"php": "7.2.34"}}
+}

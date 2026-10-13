@@ -122,3 +122,7 @@ api 的固定配置档、默认值与完整示例见 [api.md](api.md)。诊断 `
 ## 可选无状态 CSRF
 
 配置 `stateless_csrf => ['keys'=>'private_csrf_keys','ttl'=>7200]`，服务注入 `Support\HmacKeys`，`signedCsrf()` 不要求storage或Session。ttl整数1–86400秒；key服务必填，无默认秘密。`csrfPolicy()` 使用csrf.exemptions纯决策，不自动关闭任何路由检查。密钥加载/可信登录绑定、Cookie及实际认证由宿主提供，诊断只读并标记需人工核实。完整双重提交示例、轮换及失败/迁移边界见 [signed-csrf.md](signed-csrf.md)。
+
+## 可选富文本清理
+
+显式 `html => []` 启用默认受限HTML Purifier适配，`htmlCleaner()` 要求宿主安装可选包及DOM/ctype。输入/输出/节点/深度/属性预算、allow_links默认值和限制见 [html-cleaning.md](html-cleaning.md)。自定义html.sanitizer需注入经过审查的HtmlSanitizer；诊断只读，不构造或调用它，安全策略/渲染上下文标记manual。没有原文返回、strip_tags或正则“清理”的降级方案。

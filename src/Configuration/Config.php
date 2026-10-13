@@ -24,10 +24,11 @@ final class Config
     private $outbound;
     private $api;
     private $statelessCsrf;
+    private $html;
 
     public function __construct(array $config)
     {
-        self::known($config, ['site', 'storage', 'token_storage', 'csrf', 'stateless_csrf', 'captcha', 'rate_limits', 'password', 'session', 'upload', 'outbound', 'api']);
+        self::known($config, ['site', 'storage', 'token_storage', 'csrf', 'stateless_csrf', 'captcha', 'rate_limits', 'password', 'session', 'upload', 'outbound', 'api', 'html']);
         $this->site = self::text($config['site'] ?? null, 'site');
         Guard::label($this->site);
         if (strlen($this->site) > 128) { throw new ConfigurationException('Site identifier must be at most 128 bytes.'); }
@@ -106,6 +107,13 @@ final class Config
         }
         $this->csrf = self::copy($this->csrf); $this->captcha = self::copy($this->captcha);
         $this->password = self::copy($this->password); $this->session = self::copy($this->session);
+        $this->html=null;
+        if (array_key_exists('html',$config)) {
+            $html=self::map($config['html'],'html');
+            if (array_key_exists('sanitizer',$html)) { self::text($html['sanitizer'],'html.sanitizer'); }
+            $policy=new \SoSecurity\Output\HtmlPolicy(array_diff_key($html,['sanitizer'=>true]));
+            $this->html=self::copy($html+$policy->options());
+        }
     }
 
     public function site(): string { return $this->site; }
@@ -113,6 +121,7 @@ final class Config
     public function tokenStorage(): array { return $this->tokens; }
     public function csrf(): array { return $this->csrf; }
     public function statelessCsrf(): ?array { return $this->statelessCsrf; }
+    public function html(): ?array { return $this->html; }
     public function captcha(): array { return $this->captcha; }
     public function password(): array { return $this->password; }
     public function outbound(): ?array { return $this->outbound; }

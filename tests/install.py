@@ -47,6 +47,8 @@ $signedCsrf = new SoSecurity\\Csrf\\SignedTokens(new SoSecurity\\Support\\HmacKe
 $signedToken = $signedCsrf->issue('form','current-login');
 if (!$signedCsrf->verifyDoubleSubmit('form','current-login',$signedToken,$signedToken) || $signedCsrf->verify('form','another-login',$signedToken)) { exit(9); }
 if (!(new SoSecurity\\Csrf\\RequestPolicy())->requiresToken('POST','/form')) { exit(10); }
+try { SoSecurity\\Security::fromArray(['site'=>'consumer','html'=>[]])->htmlCleaner(); exit(11); }
+catch (SoSecurity\\Exception\\DependencyException $e) { if ($e->reason()!=='dependency.htmlpurifier') { exit(12); } }
 echo "PASS Composer: fresh consumer installation, PSR-4 and public API on PHP " . PHP_VERSION . "\\n";
 ''')
     subprocess.run([runtime, str(Path(directory, 'verify.php'))], check=True)

@@ -13,6 +13,14 @@ task_runtime=${1:-php}
 "$task_runtime" tests/outbound.php
 "$task_runtime" tests/api.php
 "$task_runtime" tests/signed-csrf.php
+if [[ -f integrations/htmlpurifier/vendor/autoload.php ]]; then
+    "$task_runtime" tests/html.php
+else
+    echo 'NOT RUN optional HTML cleaner: install integrations/htmlpurifier Composer project'
+    if [[ ${SOSECURITY_REQUIRE_HTML:-0} == 1 ]]; then exit 1; fi
+fi
+"$task_runtime" tests/html-dependencies.php
+"$task_runtime" tests/html-dependencies.php old
 "$task_runtime" tests/upload.php
 if "$task_runtime" -r 'exit(extension_loaded("pdo_sqlite") ? 0 : 1);'; then
     "$task_runtime" tests/reset-flow.php
@@ -59,6 +67,7 @@ if command -v python3 >/dev/null; then
         if [[ ${SOSECURITY_REQUIRE_HTTP:-0} == 1 ]]; then exit 1; fi
     fi
     python3 tests/signed_csrf_demo.py "$task_runtime"
+    if [[ -f integrations/htmlpurifier/vendor/autoload.php ]]; then python3 tests/html_demo.py "$task_runtime"; fi
     python3 tests/api_http.py "$task_runtime"
     python3 tests/api_demo.py "$task_runtime"
     python3 tests/network_demo.py "$task_runtime"
