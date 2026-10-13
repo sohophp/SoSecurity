@@ -4,7 +4,7 @@
 
 框架无关、按需使用的 PHP Web 安全组件。Composer 包名 `sohophp/sosecurity`，命名空间 `SoSecurity\`，核心代码目标 PHP **7.2–8.5**。
 
-当前为 **未发布开发候选版本（已推进到0.5 HTTP/API阶段）**：验证码（算术、PNG 图片、Turnstile）、有状态 CSRF、原子请求预算与封禁、密码哈希/迁移/重置令牌、会话安全辅助、可信代理/CIDR、输出编码、Cookie/基础响应头和脱敏审计回调。Session、本地文件、Redis及PDO MySQL存储可独立选择；新增严格输入验证、可选配置工厂和只读诊断。新增私有文件上传校验/保存；新增安全跳转/CORS/权限头及有界受限外部请求；新增摘要存储的API Key与RFC 9421有界HMAC签名/共享原子Nonce；新增绑定登录的无状态签名CSRF与精确路由策略；新增成熟HTML Purifier的可选受限富文本适配；完整发布验收继续进行。
+当前为 **未发布开发候选版本（进入1.0验收阶段）**：验证码（算术、PNG 图片、Turnstile）、有状态 CSRF、原子请求预算与封禁、密码哈希/迁移/重置令牌、会话安全辅助、可信代理/CIDR、输出编码、Cookie/基础响应头和脱敏审计回调。Session、本地文件、Redis及PDO MySQL存储可独立选择；新增严格输入验证、可选配置工厂和只读诊断。新增私有文件上传校验/保存；新增安全跳转/CORS/权限头及有界受限外部请求；新增摘要存储的API Key与RFC 9421有界HMAC签名/共享原子Nonce；新增绑定登录的无状态签名CSRF与精确路由策略；新增成熟HTML Purifier的可选受限富文本适配；完整发布验收继续进行。
 
 ## 安装
 
@@ -66,7 +66,7 @@ php81 tools/vendor/bin/phpstan analyse -c phpstan.neon --no-progress
 php81 /path/to/composer audit --working-dir=tools --locked
 ```
 
-`bin/check.sh` 运行单元/Session/真实 HTTP/文件并发测试；有 redis-server、redis-cli 和 ext-redis 时自动创建独立 UNIX socket Redis 实例测试并关闭，不连接已有站点实例。另有mysqld/mysql/PDO MySQL时创建无TCP独立MySQL并验证事务与并发，用完关闭；不会连接宿主已有MySQL。PHP 7.3、8.0、8.3 本次本地未执行；全版本 CI 已定义但未在 GitHub 运行。
+`bin/check.sh` 运行单元/Session/真实 HTTP/文件并发测试；有 redis-server、redis-cli 和 ext-redis 时自动创建独立 UNIX socket Redis 实例测试并关闭，不连接已有站点实例。另有mysqld/mysql/PDO MySQL时创建无TCP独立MySQL并验证事务与并发，用完关闭；不会连接宿主已有MySQL。本机已实际执行PHP7.2–8.5九版本功能、隔离Redis/MySQL及HTTP矩阵，并验证新Composer消费者安装。缺扩展的既有CLI通过临时测试ini补齐，未改变网站PHP-FPM配置。全版本CI已定义，尚未在GitHub运行；逐项证据见verification.md。
 
 库不能替代业务授权、参数化 SQL、HTTPS、服务器更新或基础设施防护。旧版 PHP 代码兼容不代表运行时重新获得安全维护。内部测试不是独立安全审计。参见 [威胁模型](docs/threat-model.md) 和 [安全报告政策](SECURITY.md)。
 
@@ -75,3 +75,5 @@ MIT License。
 完整进一步计划仍在执行中，当前进度与未完成验收见 [execution-status.md](docs/execution-status.md)。
 
 新增指南：[HTML清理](docs/html-cleaning.md) · [无状态CSRF](docs/signed-csrf.md) · [API凭据与签名](docs/api.md) · [HTTP策略](docs/http-policy.md) · [受限请求](docs/outbound.md) · [上传安全](docs/upload.md) · [MySQL存储](docs/mysql.md) · [输入验证](docs/validation.md) · [Redis初始化与恢复](docs/redis-recovery.md)。
+
+发布材料：[公开API提案](docs/public-api.md) · [1.0验收工作单](docs/release-readiness.md) · [CoreRepo组件试点](docs/core-repo-pilot.md)。

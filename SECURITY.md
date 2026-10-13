@@ -1,6 +1,6 @@
 # 安全政策 / Security policy
 
-当前为未发布的0.1.0-dev候选版本，还没有稳定维护分支。正式版本发布后，维护范围、修复版本和迁移路径将在这里及CHANGELOG更新。PHP兼容性与PHP上游安全支持是不同事项。
+当前为未发布开发候选版本，还没有稳定维护分支。正式版本发布后，维护范围、修复版本和迁移路径将在这里及CHANGELOG更新。PHP兼容性与PHP上游安全支持是不同事项。
 
 请勿在公开Issue中粘贴可利用细节、真实账号、凭证、Session ID或敏感数据。优先使用仓库可用的[GitHub私密漏洞报告](https://github.com/sohophp/SoSecurity/security/advisories)；如果仓库尚未启用该入口，先通过不含漏洞细节的Issue请求维护者建立私密沟通渠道。项目不会承诺当前并不存在的邮件地址或响应SLA。
 

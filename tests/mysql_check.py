@@ -7,7 +7,9 @@ import tempfile
 import time
 from pathlib import Path
 root = Path(__file__).resolve().parent.parent
-runtime = sys.argv[1] if len(sys.argv) > 1 else 'php'
+matrix = len(sys.argv)>1 and sys.argv[1]=='--matrix'
+runtimes = sys.argv[2:] if matrix else sys.argv[1:]
+if not runtimes: runtimes=['php']
 with tempfile.TemporaryDirectory(prefix='sosecurity-mysql-') as directory:
     data = str(Path(directory, 'data')); socket = str(Path(directory, 'mysql.sock'))
     # MySQL 8's initialization can use >100 MiB of redo. A 16 MiB ring stalls on repeated rotation.
@@ -30,10 +32,21 @@ with tempfile.TemporaryDirectory(prefix='sosecurity-mysql-') as directory:
         else: raise RuntimeError('Isolated MySQL startup timeout')
         setup = sql("CREATE DATABASE sosecurity_test CHARACTER SET utf8mb4 COLLATE utf8mb4_bin; CREATE USER 'sosecurity_test'@'localhost' IDENTIFIED WITH mysql_native_password BY 'integration-only'; GRANT ALL ON sosecurity_test.* TO 'sosecurity_test'@'localhost';")
         if setup.returncode: raise RuntimeError('Isolated MySQL account setup failed')
-        env = os.environ.copy(); env['SOSECURITY_TEST_MYSQL_SOCKET'] = socket
-        subprocess.run([runtime, str(root / 'tests/mysql.php')], env=env, check=True)
-        subprocess.run([runtime, str(root / 'tests/api.php')], env=env, check=True)
-        subprocess.run([runtime, str(root / 'tests/concurrency.php')], env=env, check=True)
+        env = os.environ.copy(); env['SOSECURITY_TEST_MYSQL_SOCKET'] = socket; env['SOSECURITY_TEST_ROOT']=str(root)
+        if matrix:
+            # One private server reused sequentially. Each suite resets its test schema; there are no concurrent suites.
+            # Prepare the table before check.sh's early API contract, then let mysql.php run its full schema tests.
+            install='require getenv("SOSECURITY_TEST_ROOT")."/vendor/autoload.php"; $pdo=new PDO("mysql:unix_socket=".getenv("SOSECURITY_TEST_MYSQL_SOCKET").";dbname=sosecurity_test;charset=utf8mb4","sosecurity_test","integration-only",[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION]); SoSecurity\\Storage\\MySqlStore::install($pdo);'
+            subprocess.run([runtimes[0],'-r',install],env=env,check=True)
+            for runtime in runtimes:
+                print('BEGIN full isolated matrix: '+runtime,flush=True)
+                subprocess.run([str(root/'bin/check.sh'),runtime],cwd=root,env=env,check=True)
+                print('PASS full isolated matrix: '+runtime,flush=True)
+        else:
+            for runtime in runtimes:
+                subprocess.run([runtime, str(root / 'tests/mysql.php')], env=env, check=True)
+                subprocess.run([runtime, str(root / 'tests/api.php')], env=env, check=True)
+                subprocess.run([runtime, str(root / 'tests/concurrency.php')], env=env, check=True)
     finally:
         if server.poll() is None:
             sql('SHUTDOWN')

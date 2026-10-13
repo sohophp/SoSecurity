@@ -2,7 +2,7 @@
 
 Framework-independent PHP security helpers, designed for PHP 7.2 through 8.5. Package: `sohophp/sosecurity`; namespace: `SoSecurity\`. Documentation is primarily in [Simplified Chinese](README.md).
 
-The current **unreleased local candidate (HTTP/API stage)** contains arithmetic/image/Turnstile CAPTCHA, stateful CSRF, atomic request budgets and bans, native password hashing and migration helpers, single-use reset tokens, opt-in session security, trusted proxy/CIDR helpers, contextual output encoding, cookies/security headers and structured audit callbacks.
+The current **unreleased local candidate (1.0 acceptance stage)** contains arithmetic/image/Turnstile CAPTCHA, stateful CSRF, atomic request budgets and bans, native password hashing and migration helpers, single-use reset tokens, opt-in session security, trusted proxy/CIDR helpers, contextual output encoding, cookies/security headers and structured audit callbacks.
 
 No GitHub release or Packagist publication has occurred. Try it using a Composer path repository with `"require": {"sohophp/sosecurity": "@dev"}`. After publication, the intended installation command is `composer require sohophp/sosecurity`.
 
@@ -12,7 +12,7 @@ Storage options: locked native sessions for per-session challenges, private loca
 
 `bin/check.sh php` runs functional, session, HTTP and concurrency tests. Python 3 enables the HTTP integration test. Redis tools and ext-redis enable an isolated test server with no TCP listener. `python3 tests/install.py php /path/to/composer` validates installation from a fresh consumer. Static analysis tools are isolated under `tools/` and require PHP 8.1+.
 
-PHP 7.2/7.4/8.1/8.2/8.4/8.5 are available for local checks; PHP 7.3/8.0/8.3 require CI and have not been verified locally. CI configuration is not evidence of a completed CI run. The local demo Chromium and PHP-FPM paths have been verified; production-site browser/reverse-proxy, live Turnstile and independent security audit acceptance remain pending.
+All nine PHP versions from 7.2 through 8.5 have now run locally, including isolated Redis/MySQL/HTTP suites and fresh Composer consumer installations. Missing extensions on existing CLIs were supplied through temporary test-only configuration; website FPM settings were preserved. CI configuration is not evidence of a completed CI run. The local demo Chromium and PHP-FPM paths have been verified; production-site browser/reverse-proxy, live Turnstile and independent security audit acceptance remain pending.
 
 API credentials and the bounded RFC 9421 HMAC/atomic nonce profile are implemented; see [API guide](docs/api.md). Signed stateless CSRF with authenticated-login binding, double-submit verification and exact route policies is implemented; see [signed CSRF guide](docs/signed-csrf.md). Optional framework adapters remain planned. See the [roadmap](docs/roadmap.md), [usage guide](docs/usage.md), [migration guide](docs/migration.md), and [security policy](SECURITY.md).
 
@@ -27,3 +27,5 @@ The unreleased candidate now includes strict bounded input validation and dedica
 Exact-origin redirects/CORS, opt-in Permissions-Policy and bounded pinned outbound HTTP are now implemented. See [HTTP policies](docs/http-policy.md) and [outbound requests](docs/outbound.md), including DNS provider privacy, redirect/credential behavior and transport evidence.
 
 Optional rich-text cleanup now uses a bounded, fixed basic-fragment policy around HTML Purifier 4.19.1. The core still has no mandatory third-party dependency; explicit installation, DOM/ctype requirements, resource limits and body-rendering boundaries are documented in [HTML cleanup](docs/html-cleaning.md). Custom adapters require host review.
+
+A [public API proposal](docs/public-api.md), [release acceptance checklist](docs/release-readiness.md) and [isolated CoreRepo component pilot](docs/core-repo-pilot.md) are available. The pilot verifies actual host Session/Symfony CSRF/Twig components with test credentials; it does not certify the complete admin/SSO/production flow. Native Windows execution and independent review remain pending.

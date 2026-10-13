@@ -8,5 +8,5 @@
     "autoload-dev": {"psr-4": {"SoSecurity\\Tests\\": "tests/"}},
     "suggest": {"ext-session": "Native session helpers and SessionStore", "ext-gd": "Image CAPTCHA", "ext-redis": "Shared atomic Redis storage", "ext-curl": "Turnstile and bounded pinned outbound HTTP transport", "ext-pdo_mysql": "Shared atomic InnoDB storage", "ext-intl": "Optional explicit NFC input normalization", "ext-fileinfo": "Upload content MIME inspection", "ext-dom": "HTML parser resource preflight and reviewed HTML Purifier lexer", "ext-ctype": "HTML Purifier lexer helpers", "ezyang/htmlpurifier": "Optional HTML cleaning; reviewed 4.19.1+ within 4.x"},
     "scripts": {"test": "@php tests/run.php", "lint": "@php bin/lint.php"},
-    "archive": {"exclude": ["/vendor", "/tools", "/integrations", "/tests", "/bin", "/demo", "/.htaccess", "/.github", "/var", "/.phpstan-cache", "/.phpunit.cache", "/phpstan.neon", "/composer.lock", "/.env", "/.env.*", "/docs/requirements.md"]}
+    "archive": {"exclude": ["/vendor", "/tools", "/integrations", "/tests", "/bin", "/demo", "/resources/api", "/.htaccess", "/.github", "/var", "/.phpstan-cache", "/.phpunit.cache", "/phpstan.neon", "/composer.lock", "/.env", "/.env.*", "/docs/requirements.md"]}
 }
