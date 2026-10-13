@@ -4,6 +4,7 @@
 
 | 要解决的问题 | 入口 |
 | --- | --- |
+| 用通用规范指导 PHP 网站自查与 AI 检查修复 | [PHP 网站安全自查规范](php-website-security-checklist.md) |
 | 项目要做什么、哪些不属于本次范围 | [产品需求](requirements.md) |
 | 现在有哪些能力、演示在哪 | [功能清单](features.md)、[演示说明](demo.md) |
 | 少量配置开始使用 | [配置与诊断](configuration.md)、[配置预设](../examples/configuration-presets.php) |
