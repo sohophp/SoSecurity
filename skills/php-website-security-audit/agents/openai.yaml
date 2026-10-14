@@ -1,0 +1,4 @@
+interface:
+  display_name: "PHP 网站安全自查"
+  short_description: "按通用清单检查与修复 PHP 网站，保留兼容边界并报告实际验证证据"
+  default_prompt: "使用 $php-website-security-audit 检查当前 PHP 项目，在已授权范围内修复并复验，按规范补充可复用检查项。"

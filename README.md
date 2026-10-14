@@ -57,6 +57,10 @@ CSRF、验证码默认复用宿主 Session；跨会话限流、密码重置和 A
 
 ## 质量与维护
 
+AI 检查 PHP 网站时可使用 [PHP 网站安全自查技能](skills/php-website-security-audit/SKILL.md)，调用名称为 `$php-website-security-audit`。技能包含可独立使用的通用清单，不强制接入本组件库。将完整技能目录安装到 AI 工具的技能目录后使用；是否需要新会话或重新加载取决于工具。
+
+通用清单仍以 [PHP 网站安全自查规范](docs/php-website-security-checklist.md)为维护源，修改后运行 `python3 scripts/sync-security-audit-skill.py` 更新随包引用，使用 `--check` 只检查一致性。独立副本的修改不表示维护源或其他安装已同步。
+
 本机已执行 PHP7.2–8.5 九版本功能、独立消费者 Composer 安装、真实隔离 Redis/MySQL/HTTP及并发测试。详细证据见[验证记录](docs/verification.md)，开发命令见[贡献指南](CONTRIBUTING.md)。CI定义、作者自检和演示不等同于远端执行或独立安全审计。
 
 项目整理依据见[产品需求](docs/requirements.md)，当前实施顺序见[总体规划](docs/roadmap.md)。本次工作限定在SoSecurity、独立示例和指定演示；已有项目接入及公开发布需明确指令。不再自行使用Windows环境。
