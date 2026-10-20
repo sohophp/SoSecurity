@@ -1,0 +1,13 @@
+<?php
+declare(strict_types=1);
+require __DIR__.'/bootstrap.php';require __DIR__.'/webhook-inbox-support.php';
+$config=json_decode(stream_get_contents(STDIN),true);$mysql=$config['driver']==='mysql';$clock=new TestClock();$clock->time=$config['time'];
+$dsn=$mysql?'mysql:unix_socket='.$config['target'].';dbname=sosecurity_test;charset=utf8mb4':'sqlite:'.$config['target'];
+$pdo=new InboxTestConnection($dsn,$mysql?'sosecurity_test':null,$mysql?'integration-only':null,[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,PDO::ATTR_TIMEOUT=>10]);if($mysql){$pdo->setAttribute(PDO::ATTR_EMULATE_PREPARES,false);}
+$endpoint=new SoSecurity\Webhook\Endpoint('inbox','tenant','provider-account','https://hooks.example/events','standard-hmac');$keys=new SoSecurity\Support\HmacKeys('old',['old'=>str_repeat('s',32)]);
+$service=new SoSecurity\Webhook\SqlProcessor($pdo,'inbox-test-site',$endpoint,$keys,static function(string $body){$data=json_decode($body,true);return new SoSecurity\Webhook\Message($data['id'],$data['type'],$data['resource'],['version'=>$data['version']]);},static function($endpoint,$message)use($pdo,$mysql):bool{$q=$pdo->prepare('SELECT account,enabled,version FROM webhook_test_resources WHERE tenant=:tenant AND id=:id'.($mysql?' FOR UPDATE':''));$q->execute(['tenant'=>$endpoint->scope(),'id'=>$message->resource()]);$row=$q->fetch(PDO::FETCH_ASSOC);return is_array($row)&&$row['account']===$endpoint->account()&&(int)$row['enabled']===1&&$row['version']===$message->context()['version'];},static function(){return true;},new SoSecurity\Webhook\ProcessingPolicy(['lease_seconds'=>2]),$clock);
+if($config['operation']==='claim'){$claim=$service->claim($config['receipt'],'worker');echo json_encode(['status'=>$claim===null?'denied':'claimed','token'=>$claim===null?null:$claim->token()]);return;}
+$checkpoint=static function()use($config):void{if(file_put_contents($config['checkpoint'],'ready')!==5||!chmod($config['checkpoint'],0600)){throw new RuntimeException('Checkpoint allocation failed.');}while(true){usleep(100000);}};
+if($config['operation']==='crash-before'){$pdo->beforeCommit=$checkpoint;}elseif($config['operation']==='crash-after'){$pdo->afterCommit=$checkpoint;}
+$status=$service->execute('worker',$config['token'],static function(PDO $pdo,$message,string $payload,$status):bool{$q=$pdo->prepare('INSERT INTO webhook_test_effects VALUES(:receipt,:resource,:version)');$q->execute(['receipt'=>$status->receiptId(),'resource'=>$message->resource(),'version'=>$message->context()['version']]);return true;});
+echo json_encode(['status'=>$status===null?'denied':$status->status()]);

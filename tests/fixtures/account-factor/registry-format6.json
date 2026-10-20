@@ -1,0 +1,6 @@
+{
+  "root_file": "src/Account/FactorRegistry.php",
+  "transformation": "Rename class only; all previous parsing and operations unchanged",
+  "fixture_sha256": "a1a450c0e71e7aa2057bd6dfd01ea890dc9add3d1a68d6db9800d55a05dfe11f",
+  "original_sha256": "22ba65230277f5e4559d669131bd26e03edd21b7cfc6a124126a6a12aacd3d6b"
+}

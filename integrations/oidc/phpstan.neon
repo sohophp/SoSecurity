@@ -1,0 +1,7 @@
+parameters:
+    level: 5
+    phpVersion: 70200
+    paths:
+        - src
+    # The upstream client's getters can return false/null despite their PHPDoc string/object claims.
+    treatPhpDocTypesAsCertain: false

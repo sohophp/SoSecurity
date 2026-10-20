@@ -18,7 +18,7 @@ final class Turnstile
             || !preg_match('/^[A-Za-z0-9_-]{1,32}$/D', $action)) {
             throw new \SoSecurity\Exception\ConfigurationException('Invalid Turnstile secret, expected hostname or action.');
         }
-        $this->secret = $secret;
+        $this->secret = static function () use ($secret): string { return $secret; };
         $this->hostname = $hostname;
         $this->action = $action;
         $this->transport = $transport;
@@ -30,9 +30,19 @@ final class Turnstile
         if (!is_string($token) || $token === '' || strlen($token) > 2048 || preg_match('/[\x00-\x20\x7f]/', $token)) {
             return false;
         }
-        $data = SiteVerify::verify('turnstile', ['secret' => $this->secret, 'response' => $token], $clientIp, $this->transport);
+        $data = SiteVerify::verify('turnstile', ['secret' => $this->secret(), 'response' => $token], $clientIp, $this->transport);
         return $data['success'] && ($data['hostname'] ?? null) === $this->hostname
             && ($data['action'] ?? null) === $this->action;
     }
+
+    private function secret(): string
+    {
+        if (!$this->secret instanceof \Closure) { throw new \SoSecurity\Exception\ConfigurationException('Reload private CAPTCHA configuration.', 'configuration.captcha_secret'); }
+        return ($this->secret)();
+    }
+
+    public function __debugInfo(): array { return ['provider' => 'turnstile', 'secret' => '[redacted]']; }
+    public function __sleep(): array { throw new \SoSecurity\Exception\ConfigurationException('Do not serialize CAPTCHA configuration.', 'configuration.captcha_serialization'); }
+    public function __wakeup(): void { throw new \SoSecurity\Exception\ConfigurationException('Rebuild CAPTCHA configuration from trusted input.', 'configuration.captcha_serialization'); }
 
 }

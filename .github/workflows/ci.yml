@@ -17,7 +17,7 @@ jobs:
       - uses: shivammathur/setup-php@d52fc211a0436f8839a587b3b5b8efddab4744ea # v2
         with:
           php-version: ${{ matrix.php }}
-          extensions: fileinfo, gd, redis, curl, session, pdo_sqlite, pdo_mysql, intl, pcntl, posix, dom, ctype
+          extensions: fileinfo, gd, redis, curl, session, pdo_sqlite, pdo_mysql, sqlite3, intl, pcntl, posix, dom, ctype, sodium
           tools: composer
           coverage: none
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
@@ -26,7 +26,34 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y redis-server mysql-server iproute2 openssl
       - run: composer validate --strict && composer install --no-interaction --no-progress
       - run: composer validate --strict --working-dir=integrations/htmlpurifier && composer install --working-dir=integrations/htmlpurifier --no-interaction --no-progress && composer audit --working-dir=integrations/htmlpurifier --locked
-      - run: bin/check.sh php
+      - run: composer validate --strict --working-dir=integrations/psr15 && python3 tests/psr15_consumer.py php
+      - run: composer validate --strict --working-dir=integrations/psr3 && python3 tests/psr3_consumer.py php
+      - run: python3 tests/optional_archives.py
+      - name: Optional OIDC consumer and local integration
+        if: ${{ matrix.php != '8.4' && matrix.php != '8.5' }}
+        run: python3 tests/oidc_consumer.py --archive php
+      - name: Install WebAuthn browser test dependency
+        if: ${{ matrix.php == '7.2' || matrix.php == '8.2' || matrix.php == '8.5' }}
+        run: |
+          npm install --prefix "$RUNNER_TEMP/sosecurity-playwright" --no-save --no-audit --no-fund --ignore-scripts playwright@1.58.2
+          "$RUNNER_TEMP/sosecurity-playwright/node_modules/.bin/playwright" install --with-deps chromium
+      - name: Managed MFA native browser
+        if: ${{ matrix.php == '7.2' || matrix.php == '8.5' }}
+        run: SOSECURITY_PLAYWRIGHT_MODULE="$RUNNER_TEMP/sosecurity-playwright/node_modules/playwright" python3 tests/managed_auth_http.py --browser php
+      - name: Optional WebAuthn consumer and local components
+        if: ${{ matrix.php == '8.2' || matrix.php == '8.3' || matrix.php == '8.4' || matrix.php == '8.5' }}
+        run: |
+          if [ "${{ matrix.php }}" = "8.2" ] || [ "${{ matrix.php }}" = "8.5" ]; then
+            SOSECURITY_PLAYWRIGHT_MODULE="$RUNNER_TEMP/sosecurity-playwright/node_modules/playwright" python3 tests/webauthn_consumer.py --archive --mysql --browser php
+          else
+            python3 tests/webauthn_consumer.py --archive php
+          fi
+      - run: |
+          if php -r 'exit(PHP_VERSION_ID >= 80000 ? 0 : 1);'; then
+            python3 tests/psr3_consumer.py --psr2 php
+            python3 tests/psr3_consumer.py --psr3 php
+          fi
+      - run: python3 tests/mysql_check.py --matrix php
         env:
           SOSECURITY_REQUIRE_REDIS: '1'
           SOSECURITY_REQUIRE_HTTP: '1'
@@ -35,14 +62,30 @@ jobs:
           SOSECURITY_REQUIRE_UPLOAD: '1'
           SOSECURITY_REQUIRE_POSIX: '1'
           SOSECURITY_REQUIRE_HTML: '1'
+          SOSECURITY_REQUIRE_CRYPTO: '1'
+          SOSECURITY_REQUIRE_AUTHORITY: '1'
+      - run: python3 tests/link_owner_http.py php
+        env:
+          SOSECURITY_REQUIRE_RESET: '1'
       - run: python3 tests/native_outbound.py php
         env:
           SOSECURITY_REQUIRE_NATIVE_HTTP: '1'
+      - run: python3 tests/outbox_native.py php
+      - run: python3 tests/outbox_native.py --authority php
+      - run: python3 tests/outbox_resolution.py php
       - run: python3 tests/native_captcha.py php
+        env:
+          SOSECURITY_REQUIRE_NATIVE_HTTP: '1'
+      - run: python3 tests/native_password.py php
         env:
           SOSECURITY_REQUIRE_NATIVE_HTTP: '1'
       - run: bin/full-disk-check.sh php
       - run: python3 tests/install.py php "$(command -v composer)"
+        env:
+          SOSECURITY_REQUIRE_RESET: '1'
+          SOSECURITY_REQUIRE_CRYPTO: '1'
+          SOSECURITY_REQUIRE_AUTHORITY: '1'
+      - run: python3 tests/account_factor_consumer.py php "$(command -v composer)"
       - run: python3 tests/archive.py php "$(command -v composer)"
       - name: Runtime dependency audit
         run: |
@@ -58,11 +101,11 @@ jobs:
       - uses: shivammathur/setup-php@d52fc211a0436f8839a587b3b5b8efddab4744ea # v2
         with:
           php-version: '8.1'
-          extensions: redis, gd, curl
+          extensions: redis, gd, curl, pdo_sqlite, sqlite3, sodium
           tools: composer
           coverage: none
       - run: composer install --no-interaction --no-progress
       - run: composer validate --strict --working-dir=integrations/htmlpurifier && composer install --working-dir=integrations/htmlpurifier --no-interaction --no-progress && composer audit --working-dir=integrations/htmlpurifier --locked
       - run: composer validate --strict --working-dir=tools && composer install --working-dir=tools --no-interaction --no-progress
-      - run: php tools/vendor/bin/phpstan analyse -c phpstan.neon --no-progress
+      - run: php tools/vendor/bin/phpstan analyse -c phpstan.neon --no-progress src examples/outbox-business.php examples/outbox-recovery.php examples/outbox-resolution.php examples/outbox-resolution-archive.php examples/outbox-authority.php
       - run: composer audit --working-dir=tools --locked

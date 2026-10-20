@@ -13,6 +13,7 @@ final class FileStore implements AtomicStore
 {
     private $directory;
     private $namespace;
+    private $snapshotBinding;
     private $clock;
     private $lockTimeoutMs;
     private $pruneIterator;
@@ -26,10 +27,16 @@ final class FileStore implements AtomicStore
         if ($real === false || !is_dir($real) || !is_writable($real) || (fileperms($real) & 0077) !== 0) {
             throw new StorageException('Use an existing writable private directory (0700).');
         }
+        $stat=@lstat($real);if(!is_array($stat)||($stat['mode']&0170000)!==0040000){throw new StorageException('Cannot bind security state directory.','storage.io');}$this->snapshotBinding=hash('sha256','SoSecurity.FileStore.Directory.1.'.base64_encode($real).':'.$stat['dev'].':'.$stat['ino'].':'.$stat['uid']);
         $this->directory = $real;
         $this->namespace = $namespace;
         $this->clock = $clock ?? new SystemClock();
     }
+
+    /** Pure physical metadata: directory identity alone does not bind the store namespace. */
+    public function snapshotFile(string $key):string{Guard::label($key);return hash('sha256',$this->namespace."\0".$key).'.json';}
+    public function snapshotReference(string $key):array{return ['directory'=>$this->snapshotBinding(),'file'=>$this->snapshotFile($key)];}
+    public function snapshotBinding():string{return $this->snapshotBinding;}
 
     public function transact(string $key, callable $callback)
     {

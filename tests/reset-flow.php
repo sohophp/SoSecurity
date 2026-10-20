@@ -15,6 +15,13 @@ $tokens = new ResetTokens(new MemoryStore());
 $hasher = new PasswordHasher('bcrypt', ['cost' => 10]);
 $first = $tokens->issue('demo:1'); $second = $tokens->issue('demo:1');
 Check::same('password.invalid', resetPassword($pdo, $tokens, $hasher, 'demo', 1, $first, 'short'));
+Check::same('password.invalid', resetPassword($pdo, $tokens, $hasher, 'demo', 1, $first, 'passwordpassword'));
+Check::same('password.invalid', resetPassword($pdo, $tokens, $hasher, 'demo', 1, $first, 'Replacement-password-one', function () { return true; }));
+Check::throws(SoSecurity\Exception\DependencyException::class, function () use ($pdo, $tokens, $hasher, $first) {
+    resetPassword($pdo, $tokens, $hasher, 'demo', 1, $first, 'Replacement-password-one', function () { throw new RuntimeException('Test breach outage'); });
+});
+Check::same(1, (int) $pdo->query("SELECT version FROM accounts WHERE id='demo'")->fetchColumn());
+Check::same('OLD', $pdo->query("SELECT password_hash FROM accounts WHERE id='demo'")->fetchColumn());
 Check::same('reset.applied', resetPassword($pdo, $tokens, $hasher, 'demo', 1, $first, 'Replacement-password-one'));
 Check::same('reset.invalid', resetPassword($pdo, $tokens, $hasher, 'demo', 1, $first, 'Replacement-password-two'));
 Check::same('reset.invalid', resetPassword($pdo, $tokens, $hasher, 'demo', 1, $second, 'Replacement-password-two'));

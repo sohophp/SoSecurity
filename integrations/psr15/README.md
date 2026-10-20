@@ -1,0 +1,7 @@
+# SoSecurity PSR-15 request budget adapter
+
+This optional Composer package exposes `SoSecurity\Psr15\BudgetMiddleware`. It requires the core SoSecurity package and PSR HTTP interfaces; the core package does not depend on PSR-15.
+
+Construct the middleware with a `BudgetLimiter`, a fixed server-side scope, a subject resolver that reads a freshly verified host identity, and a host-created 4xx/5xx denial response. The middleware consumes the request budget before invoking the downstream handler. A denied request never invokes that handler; a positive retry delay is returned in `Retry-After`.
+
+Identity resolution and storage failures propagate to the host's outer error handler. The host remains responsible for authentication, CSRF checks, authorization, response generation, and the ordering of these checks around business work. Do not derive the budget subject from a client-supplied account header. The package is currently a local candidate, not a published release.

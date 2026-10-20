@@ -71,6 +71,8 @@ $public = [
 
 密钥只能来自可信服务端配置；以下变量由宿主注入，不使用请求参数决定secret、sitekey、hostname、action或阈值。客户端IP应来自已配置可信代理的 `ClientIp`，不能直接信任转发头。
 
+三个服务端适配对象持有私有密钥，不支持序列化到Session／缓存／队列；跨请求应从可信配置重建。当前对象的常见调试和导出形式不展示密钥；这不能追回旧版日志中的密钥，历史暴露及轮换见[迁移指南](migration.md#签名与验证码密钥对象导出)。
+
 ```php
 $turnstile = new SoSecurity\Captcha\Turnstile($secret, 'accounts.example.com', 'login');
 $hcaptcha = new SoSecurity\Captcha\HCaptcha($secret, $expectedSiteKey);

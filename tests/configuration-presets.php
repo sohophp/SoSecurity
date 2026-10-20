@@ -6,7 +6,7 @@ use SoSecurity\Exception\ConfigurationException;
 $loginPolicies='host-owned-value';
 $presets=require dirname(__DIR__).'/examples/configuration-presets.php';
 Check::same('host-owned-value',$loginPolicies);
-Check::same(7,count($presets));
+Check::same(8,count($presets));
 foreach ($presets as $name=>$configuration) {
     $security=Security::fromArray($configuration);
     Check::same('example-site',$security->config()->site());
@@ -42,5 +42,27 @@ Check::same(false,$signed->verify('form','other-login-binding',$token));
 Check::same(65536,Security::fromArray($presets['rich_text'])->config()->html()['maximum_input']);
 Check::same('security_redis',Security::fromArray($presets['login_redis'])->config()->storage()['connection']);
 Check::same('security_db',Security::fromArray($presets['login_mysql'])->config()->storage()['connection']);
+$upload=Security::fromArray($presets['upload_quarantine']);
+Check::same(true,$upload->config()->uploadQuarantine()['policy']['require_scan']);
+Check::same(64,$upload->config()->uploadQuarantine()['queue']['maximum_entries']);
+Check::throws(ConfigurationException::class,static function () use ($upload): void { $upload->quarantine(); });
+$spool=privateDirectory();$ledger=privateDirectory();$web=privateDirectory();
+try {
+    $configured=$presets['upload_quarantine'];
+    $configured['storage']['directory']=$ledger;
+    $configured['upload_quarantine']['directory']=$spool;
+    $configured['upload_quarantine']['document_root']=$web;
+    $scanner=new class implements SoSecurity\Upload\Scanner {
+        public $calls=0;
+        public function scan(SoSecurity\Upload\Candidate $candidate): bool { ++$this->calls; return true; }
+    };
+    $quarantine=Security::fromArray($configured,['upload_scanner'=>$scanner]);
+    Check::same([],array_values(array_diff(scandir($spool),['.','..'])));
+    Check::same([],array_values(array_diff(scandir($ledger),['.','..'])));
+    $quarantine->quarantine();
+    Check::same(0,$scanner->calls);
+    Check::same([],array_values(array_diff(scandir($spool),['.','..'])));
+    Check::same([],array_values(array_diff(scandir($ledger),['.','..'])));
+} finally { cleanDirectory($spool);cleanDirectory($ledger);cleanDirectory($web); }
 Check::same(PHP_SESSION_NONE,session_status());Check::same(false,headers_sent());
 echo 'PHP '.PHP_VERSION.': '.Check::$assertions." configuration preset workflow assertions passed\n";

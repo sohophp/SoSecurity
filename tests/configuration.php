@@ -61,4 +61,5 @@ try {
     Check::same(PHP_SESSION_NONE, session_status());
     Check::same(false, headers_sent());
 } finally { cleanDirectory($directory); }
+$private='Synthetic-provider-secret-for-debug-test';$captured=static function()use($private){return null;};$debug=SoSecurity\Security::fromArray(['site'=>'debug-probe'],['provider'=>$captured]);Check::same(false,strpos(print_r($debug,true),$private)!==false);ob_start();var_dump($debug);$dump=ob_get_clean();Check::same(false,strpos($dump,$private)!==false);Check::same('{}',json_encode($debug));
 echo 'PHP ' . PHP_VERSION . ': ' . Check::$assertions . " configuration/diagnostic assertions passed\n";

@@ -16,8 +16,8 @@ final class AuditLogger
         if (strlen($pseudonymKey) < 32) {
             throw new \SoSecurity\Exception\ConfigurationException('Use an independent audit pseudonym key of at least 32 bytes.');
         }
-        $this->sink = $sink;
-        $this->key = $pseudonymKey;
+        $this->sink = static function(array $record)use($sink):void{$sink($record);};
+        $this->key = static function()use($pseudonymKey):string{return $pseudonymKey;};
     }
 
     public function record(string $event, string $scope, ?string $subject = null, array $context = []): void
@@ -26,6 +26,9 @@ final class AuditLogger
             throw new \SoSecurity\Exception\ConfigurationException('Invalid event code.');
         }
         Guard::label($scope);
+        if ($subject !== null && strlen($subject) > 1024) {
+            throw new \SoSecurity\Exception\ConfigurationException('Audit subject exceeds 1024 bytes.', 'configuration.audit_subject');
+        }
         $safe = [];
         foreach (['allowed', 'retry_after', 'status'] as $field) {
             if (isset($context[$field])) {
@@ -36,7 +39,20 @@ final class AuditLogger
                 $safe[$field] = $context[$field];
             }
         }
+        if(!$this->sink instanceof \Closure){throw new \SoSecurity\Exception\ConfigurationException('Rebuild audit callbacks from trusted configuration.','configuration.audit_serialization');}
         ($this->sink)(['time' => time(), 'event' => $event, 'scope' => $scope,
-            'subject' => $subject === null ? null : hash_hmac('sha256', $subject, $this->key), 'context' => $safe]);
+            'subject' => $subject === null ? null : hash_hmac('sha256', $subject, $this->pseudonymKey()), 'context' => $safe]);
+    }
+
+    private function pseudonymKey():string
+    {
+        if(!$this->key instanceof \Closure){throw new \SoSecurity\Exception\ConfigurationException('Rebuild private audit configuration.','configuration.audit_serialization');}
+        return ($this->key)();
+    }
+
+    public function __debugInfo(): array { return ['audit' => '[redacted]']; }
+    public function __sleep(): array
+    {
+        throw new \SoSecurity\Exception\ConfigurationException('Rebuild audit loggers from trusted configuration.', 'configuration.audit_serialization');
     }
 }

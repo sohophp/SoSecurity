@@ -33,6 +33,10 @@ require __DIR__ . '/network.php';
 require __DIR__ . '/api.php';
 require __DIR__ . '/stateless.php';
 require __DIR__ . '/html.php';
+require __DIR__ . '/mfa.php';
+require __DIR__ . '/auth.php';
+require __DIR__ . '/budgets.php';
+require __DIR__ . '/leases.php';
 
 /** Only advances this visitor's demonstration time; never changes system time. */
 final class DemoClock implements Clock
@@ -49,9 +53,9 @@ final class DemoClock implements Clock
 final class DemoApp
 {
     private const MODULES = [
-        'home' => '功能总览', 'configuration' => '配置与诊断', 'captcha' => '验证码', 'csrf' => 'CSRF 防护', 'stateless'=>'无状态 CSRF', 'rate' => '限流与封禁',
+        'home' => '功能总览', 'configuration' => '配置与诊断', 'captcha' => '验证码', 'csrf' => 'CSRF 防护', 'stateless'=>'无状态 CSRF', 'rate' => '限流与封禁', 'budgets' => '加权请求预算', 'leases' => '并发租约',
         'upload' => '上传安全', 'validation' => '输入验证', 'password' => '密码安全', 'reset' => '重置令牌', 'session' => '会话安全',
-        'api' => 'API 凭据与签名', 'network' => '受限外部请求', 'http' => 'HTTP 与代理', 'html'=>'富文本 HTML 清理', 'output' => '输出编码', 'audit' => '审计日志', 'storage' => '存储与隔离',
+        'api' => 'API 凭据与签名', 'mfa' => 'TOTP 与恢复码', 'auth' => '认证与会话撤销', 'network' => '受限外部请求', 'http' => 'HTTP 与代理', 'html'=>'富文本 HTML 清理', 'output' => '输出编码', 'audit' => '审计日志', 'storage' => '存储与隔离',
     ];
     private const TEST_PASSWORD = 'Demo-only-7.2!';
     private $module;
@@ -104,7 +108,11 @@ final class DemoApp
                     'csrf' => ['issue', 'verify', 'tamper', 'cross_scope', 'once', 'replay', 'expire', 'revoke'],
                     'stateless'=>['issue','verify','reuse','tamper','cross_scope','cross_binding','double','cookie_mismatch','expire','rotate_keep','rotate_drop','binding_change','policy','bad_key'],
                     'html'=>['clean','links','normal','attack','size_limit','tree_limit','provider_failure'],
+                    'mfa'=>['begin','confirm','verify','recovery','regenerate','disable','rotate','clear','store_failure'],
+                    'auth'=>['login','reauthenticate','verify','revoke','revoke_all','password_change','roles_change','disable','enable','source_failure','idle','recent','absolute','clear'],
                     'rate' => ['consume', 'ban', 'permanent', 'reset'],
+                    'budgets' => ['light','batch','oversize','inspect','advance','reset','change_ip','change_account','store_failure'],
+                    'leases' => ['prepare','acquire','verify','renew','release','stale_release','switch_owner','advance','absolute','remove','step','store_failure'],
                     'password' => ['hash', 'verify', 'policy', 'legacy'],
                     'reset' => ['issue', 'consume', 'replay', 'change_version'],
                     'session' => ['touch', 'idle', 'absolute', 'rotate', 'invalidate'],
@@ -130,7 +138,9 @@ final class DemoApp
                         $this->status = in_array($module,['upload','html'],true) ? 422 : 400; $this->result = ['reason' => $e->reason(), 'message' => $module === 'upload' ? '上传被拒绝，请检查格式、大小或演示额度。' : '输入未通过验证，请检查字段。'];
                     }
                     catch (\SoSecurity\Exception\SecurityException $e) {
-                        $this->status = 503; $this->result = ['reason' => $e->reason(), 'message' => $module === 'upload' ? '处理依赖发生故障，上传没有放行。' : '处理依赖发生故障，本次操作已拒绝。'];
+                        $this->status = $e->reason() === 'auth.session_capacity' ? 409 : 503;
+                        $this->result = ['reason' => $e->reason(), 'message' => $e->reason() === 'auth.session_capacity' ? '会话记录已达上限，请先撤销不再使用的测试会话。'
+                            : ($module === 'upload' ? '处理依赖发生故障，上传没有放行。' : '处理依赖发生故障，本次操作已拒绝。')];
                     }
                     catch (\InvalidArgumentException $e) {
                         $this->status = 400; $this->result = ['message' => '输入格式或演示配置不正确，请检查字段。'];
@@ -245,6 +255,26 @@ final class DemoApp
     private function dispatch(string $action): void
     {
         switch ($this->module) {
+            case 'leases':
+                $this->result = (new LeaseSamples())->run($action);
+                if (!$this->result['valid']) { $this->status = 409; }
+                break;
+            case 'budgets':
+                $this->result = (new BudgetSamples())->run($action, $this->input('budget_algorithm', 32), $this->input('budget_mode', 16));
+                if (!$this->result['valid']) { $this->status = 429; if ($this->result['retry_after'] > 0) { header('Retry-After: ' . $this->result['retry_after']); } }
+                break;
+            case 'auth':
+                $budget = (new RateLimiter($this->store, new Policy(30, 60, [10], 120)))->consume('demo-auth-actions', $this->binding);
+                if (!$budget->allowed) { $this->status = 429; header('Retry-After: ' . $budget->retryAfter); $this->result = ['message' => '认证演示额度已用完，请稍后重试。']; break; }
+                $this->result = (new AuthSamples($this->store, $this->binding))->run($action, $this->input('auth_password', 72), $this->input('auth_session_id', 32));
+                if (!$this->result['valid']) { $this->status = 403; }
+                break;
+            case 'mfa':
+                $budget = (new RateLimiter($this->store, new Policy(30, 60, [10], 120)))->consume('demo-mfa-allocation', 'global');
+                if (!$budget->allowed) { $this->status = 429; header('Retry-After: ' . $budget->retryAfter); $this->result = ['message' => 'MFA 演示额度已用完，请稍后重试。']; break; }
+                $this->result = (new MfaSamples($this->store, $this->binding))->run($action, $this->input('mfa_code', 35));
+                if (!$this->result['valid']) { $this->status = 403; }
+                break;
             case 'configuration':
                 $config = ['site' => 'demo-factory', 'storage' => ['driver' => 'file', 'directory' => $this->directory]];
                 if ($action === 'bad_option') { $config['csrf'] = ['ttll' => 30]; }
@@ -396,7 +426,7 @@ final class DemoApp
                 } elseif ($action === 'verify') {
                     $this->checked($hasher->verify($password, $_SESSION['demo_hash'] ?? ''));
                 } elseif ($action === 'policy') {
-                    $errors = (new PasswordPolicy())->errors($password);
+                    $errors = PasswordPolicy::forHasher($hasher, 15, null, \SoSecurity\Password\PasswordBlocklist::baseline())->errors($password);
                     $this->status = $errors ? 400 : 200; $this->result = ['errors' => $errors, 'valid' => !$errors];
                 } else {
                     $upgrade = $hasher->verifyAndUpgrade($password, md5(self::TEST_PASSWORD), function ($plain, $stored) {
@@ -512,6 +542,10 @@ final class DemoApp
     private function state(): array
     {
         switch ($this->module) {
+            case 'leases': return (new LeaseSamples())->state();
+            case 'budgets': return (new BudgetSamples())->state();
+            case 'auth': return (new AuthSamples($this->store, $this->binding))->state();
+            case 'mfa': return (new MfaSamples($this->store, $this->binding))->state();
             case 'html': return HtmlSamples::state();
             case 'stateless': return (new SignedCsrfSamples($this->binding,$this->base,$this->secure))->state();
             case 'api': return (new ApiSamples($this->store,$this->binding))->state();
@@ -659,6 +693,7 @@ final class DemoApp
                 break;
             case 'password':
                 echo '<h2>原生哈希与验证</h2><p>仅输入测试密码，提交后不会回填明文。演示使用 bcrypt cost=10，组件默认 cost=12。</p>';
+                echo '<p class="note">策略检查包含本地基础弱密码表，不自动联网。完整泄露检查需显式配置；成本校准仅在命令行执行。</p>';
                 $this->form('<label>测试密码<input type="password" name="password" maxlength="72" autocomplete="off"></label>'
                     . $this->button('hash', '生成哈希') . $this->button('verify', '验证当前哈希') . $this->button('policy', '检查密码策略') . $this->button('legacy', '旧 MD5 哈希升级'));
                 echo '<p class="note">旧哈希升级仅演示已知格式的显式验证器。测试密码：<code>' . self::TEST_PASSWORD . '</code>。不建议新系统使用 MD5。</p>';
@@ -688,6 +723,42 @@ final class DemoApp
                 $this->form($this->button('sign','生成固定请求签名') . $this->button('tamper','篡改请求体') . $this->button('verify','验证并消费 Nonce') . $this->button('replay','再次验证同一签名')
                     . $this->button('expire','过期签名样例') . $this->button('store_failure','模拟 Nonce 存储故障'));
                 echo '<p class="note">请先生成签名，再测试篡改、验证及重放。测试存储故障前请重新生成尚未消费的签名。真实业务仍须检查资源归属、权限和 TLS/代理边界；演示操作共用每分钟 30 次分配/消费额度。</p>';
+                break;
+            case 'leases':
+                echo '<h2>持有者、期限与旧凭据</h2><p>先初始化测试账本，再获取名额。两位工作者各自持有独立凭据，单次期限 15 秒，总生命周期 45 秒；刷新网页不会续期，凭据仅保存在服务器。</p>';
+                $this->form($this->button('prepare','初始化测试账本') . $this->button('acquire','获取租约') . $this->button('verify','检查持有权') . $this->button('renew','续期')
+                    . $this->button('step','执行一个测试步骤') . $this->button('switch_owner','切换测试工作者') . $this->button('release','释放当前租约') . $this->button('stale_release','尝试旧凭据释放')
+                    . $this->button('advance','测试时间前进 16 秒') . $this->button('absolute','测试时间前进 46 秒') . $this->button('remove','排空后删除测试账本') . $this->button('store_failure','模拟存储故障'));
+                echo '<p class="note">此页仅操作当前访客的 Session 测试租约，不授予全局任务权限。过期恢复名额不代表旧进程已经停止；正式业务须检查数据库隔离序号、资源版本及数据库期限，示例见租约指南。</p>';
+                break;
+            case 'budgets':
+                echo '<h2>按工作量扣减预算</h2><p>轻请求消耗 1 单位，批量操作消耗 3 单位；只有预算通过才增加业务执行次数。可切换算法，查看原子组合和 IP／账号顺序组合的不同扣减结果。</p>';
+                $algorithms = ''; foreach (['token_bucket' => '令牌桶', 'fixed_window' => '固定窗口', 'sliding_window' => '精确秒级滑动窗口'] as $value => $label) { $algorithms .= '<option value="' . $value . '"' . ($state['algorithm'] === $value ? ' selected' : '') . '>' . $label . '</option>'; }
+                $modes = ''; foreach (['single' => '单项预算（5 单位／分钟）', 'atomic' => '同主体原子组合（2 次＋5 单位）', 'ordered' => 'IP／账号顺序组合（20 次＋5 单位）'] as $value => $label) { $modes .= '<option value="' . $value . '"' . ($state['mode'] === $value ? ' selected' : '') . '>' . $label . '</option>'; }
+                $this->form('<label>算法<select name="budget_algorithm">' . $algorithms . '</select></label><label>组合方式<select name="budget_mode">' . $modes . '</select></label>'
+                    . $this->button('light', '执行轻请求') . $this->button('batch', '执行批量操作') . $this->button('oversize', '尝试超额操作') . $this->button('inspect', '只检查余额')
+                    . $this->button('change_ip', '切换测试 IP') . $this->button('change_account', '切换测试账号') . $this->button('advance', '测试时间前进 61 秒')
+                    . $this->button('store_failure', '模拟存储故障') . $this->button('reset', '清除当前测试预算'));
+                echo '<p class="note">此页预算只属于当前访客 Session；共享限流须使用 File／Redis／MySQL。顺序组合在后项拒绝时保留前项扣减。固定窗口以首次通过的请求为起点；滑动窗口记录最多 4 个不同秒的测试请求，达到容量即拒绝。</p>';
+                break;
+            case 'auth':
+                echo '<h2>访客隔离的测试账号</h2><p>测试账号 demo，初始密码 Demo-only-7.2!。改密按钮将其改为 Changed-demo-7.2!。这些公开测试凭据只操作当前访客的假账号，不授予网站或其他访客权限。</p>';
+                $this->form('<label>测试密码<input type="password" name="auth_password" autocomplete="off" maxlength="72"></label>' . $this->button('login', '登录测试账号') . $this->button('reauthenticate', '重新认证当前会话'));
+                $this->form('<label>会话管理编号<input name="auth_session_id" maxlength="32" autocomplete="off"></label>' . $this->button('verify', '检查当前身份') . $this->button('revoke', '撤销指定测试会话') . $this->button('revoke_all', '撤销全部测试会话'));
+                $this->form($this->button('recent', '推进六秒检查近期认证') . $this->button('idle', '触发空闲到期') . $this->button('absolute', '触发绝对到期')
+                    . $this->button('password_change', '更换测试密码') . $this->button('roles_change', '更换测试角色') . $this->button('disable', '禁用测试账号') . $this->button('enable', '重新启用测试账号')
+                    . $this->button('source_failure', '模拟身份源故障') . $this->button('clear', '清除并重置演示'));
+                echo '<p class="note">每次请求重新检查当前身份。重复登录可生成最多四个会话记录；这些记录由同一访客创建。真实多浏览器账号、TOTP 与恢复码流程见独立认证接入示例。</p>';
+                break;
+            case 'mfa':
+                echo '<h2>TOTP 绑定与恢复码</h2><p>使用测试验证器设置返回的 URI，再输入设备验证码确认。确认会消费当前时间步，后续验证请等待下一组验证码。此演示只管理当前访客的测试因子，所有写操作验证 CSRF。</p>';
+                if (!$state['available']) { echo '<p class="note">缺少 sodium 扩展，MFA 加密演示未执行；操作会明确拒绝。</p>'; }
+                $this->form($this->button('begin', '生成测试绑定'));
+                $this->form('<label>验证码或恢复码<input name="mfa_code" autocomplete="off" spellcheck="false" maxlength="35"></label>'
+                    . $this->button('confirm', '确认绑定') . $this->button('verify', '验证 TOTP') . $this->button('recovery', '消费恢复码')
+                    . $this->button('regenerate', '重新生成恢复码') . $this->button('disable', '验证后关闭'));
+                $this->form($this->button('rotate', '重加密并移除旧演示密钥') . $this->button('store_failure', '模拟存储故障') . $this->button('clear', '清除当前测试因子'));
+                echo '<p class="note">设置 URI 和恢复码仅在生成结果展示。演示状态闲置 10 分钟后过期。正式业务的绑定、恢复与关闭还须账号授权、近期重新认证、会话失效及通知。</p>';
                 break;
             case 'http':
                 echo '<h2>可信代理解析</h2><p>默认不信任转发头；下面的输入仅用于隔离模拟，不会配置网站的真实代理。</p>';

@@ -13,10 +13,10 @@ use SoSecurity\Password\ResetTokens;
  * Token consumption and host SQL are separate resources: on SQL failure issue a fresh token.
  */
 function resetPassword(\PDO $pdo, ResetTokens $tokens, PasswordHasher $hasher, string $account,
-    int $expectedVersion, $token, string $newPassword): string
+    int $expectedVersion, $token, string $newPassword, ?callable $breachChecker = null): string
 {
     if ($expectedVersion < 1 || $account === '' || strlen($account) > 128) { return 'reset.invalid'; }
-    if ((new PasswordPolicy())->errors($newPassword)) { return 'password.invalid'; }
+    if (PasswordPolicy::forHasher($hasher, 15, null, \SoSecurity\Password\PasswordBlocklist::baseline(), $breachChecker)->errors($newPassword)) { return 'password.invalid'; }
     // Do expensive hashing before burning a valid token; the HTTP host must limit requests first.
     $hash = $hasher->hash($newPassword);
     if (!$tokens->consume($account . ':' . $expectedVersion, $token)) { return 'reset.invalid'; }

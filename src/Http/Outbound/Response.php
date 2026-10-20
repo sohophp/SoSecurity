@@ -7,8 +7,7 @@ use SoSecurity\Exception\ConfigurationException;
 final class Response
 {
     private $status;
-    private $headers;
-    private $body;
+    private $read;
     private $peer;
     private $headerBytes;
     public function __construct(int $status, array $headers, string $body, string $peer, ?int $wireHeaderBytes = null)
@@ -23,12 +22,21 @@ final class Response
             }
         }
         if ($wireHeaderBytes !== null && $wireHeaderBytes < 0) { throw new ConfigurationException('Invalid wire header count.'); }
-        $this->status = $status; $this->headers = $copy; $this->body = $body; $this->peer = $peer; $this->headerBytes = max($bytes, $wireHeaderBytes ?? 0);
+        $this->status = $status; $this->read = static function () use ($copy, $body): array { return [$copy, $body]; };
+        $this->peer = $peer; $this->headerBytes = max($bytes, $wireHeaderBytes ?? 0);
+    }
+    private function data(): array
+    {
+        if (!($this->read instanceof \Closure)) { throw new ConfigurationException('Reload external HTTP responses.', 'configuration.outbound_serialization'); }
+        return ($this->read)();
     }
     public function status(): int { return $this->status; }
-    public function headers(): array { return $this->headers; }
-    public function values(string $name): array { return $this->headers[strtolower($name)] ?? []; }
-    public function body(): string { return $this->body; }
+    public function headers(): array { return $this->data()[0]; }
+    public function values(string $name): array { return $this->headers()[strtolower($name)] ?? []; }
+    public function body(): string { return $this->data()[1]; }
     public function peer(): string { return $this->peer; }
     public function headerBytes(): int { return $this->headerBytes; }
+    public function __debugInfo(): array { return ['status'=>$this->status, 'headers'=>'[redacted]', 'body'=>'[redacted]', 'peer'=>$this->peer]; }
+    public function __sleep(): array { throw new ConfigurationException('Do not cache external HTTP responses.', 'configuration.outbound_serialization'); }
+    public function __wakeup(): void { throw new ConfigurationException('Reload external HTTP responses.', 'configuration.outbound_serialization'); }
 }

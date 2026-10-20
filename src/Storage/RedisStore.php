@@ -81,7 +81,7 @@ LUA;
             $this->prepare($deadline, $originalTimeout);
             $server = $this->serverId();
             $this->prepare($deadline, $originalTimeout);
-            $readyRaw = $this->redis->get($this->readyKey());
+            $readyRaw = RedisRead::value($this->redis, $this->readyKey(), 512);
             $this->checkProtocol();
             if ($readyRaw === false) { throw new StorageException('Initialize Redis security storage explicitly before use.', 'storage.uninitialized'); }
             $ready = $this->decodeReady($readyRaw);
@@ -91,11 +91,8 @@ LUA;
             $key = 'sosecurity:' . $this->namespace . ':' . $ready['epoch'] . ':' . hash('sha256', $logicalKey);
             for ($attempt = 0; $attempt < $this->attempts; ++$attempt) {
                 $this->prepare($deadline, $originalTimeout);
-                $raw = $this->redis->get($key);
+                $raw = RedisRead::value($this->redis, $key, 65536);
                 $this->checkProtocol();
-                if ($raw !== false && !is_string($raw)) {
-                    throw new StorageException('Unexpected Redis response or active host transaction.', 'storage.protocol');
-                }
                 if ($raw === false) {
                     $this->prepare($deadline, $originalTimeout);
                     if (!$this->redis->ping()) { throw new StorageException('Redis unavailable.', 'storage.connection'); }
@@ -137,7 +134,7 @@ LUA;
         $original = $original > 0 ? $original : max($this->budgetMs / 1000, (float) ini_get('default_socket_timeout'));
         try {
             $this->prepare($deadline, $original); $server = $this->serverId();
-            $this->prepare($deadline, $original); $raw = $this->redis->get($this->readyKey()); $this->checkProtocol();
+            $this->prepare($deadline, $original); $raw = RedisRead::value($this->redis, $this->readyKey(), 512); $this->checkProtocol();
             if ($raw !== false) {
                 $ready = $this->decodeReady($raw);
                 if ($ready['server'] === $server) { return false; }

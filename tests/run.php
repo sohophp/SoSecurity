@@ -256,8 +256,20 @@ $tests['audit drops secrets and rejects log injection'] = function () {
     Check::same(false, strpos(json_encode($events), 'TOKEN') !== false);
     Check::same(false, strpos(json_encode($events), 'user@example.com') !== false);
     Check::same(['allowed' => false, 'status' => 401], $events[0]['context']);
+    Check::same(hash_hmac('sha256', 'user@example.com', str_repeat('k', 32)), $events[0]['subject']);
     Check::throws(InvalidArgumentException::class, function () use ($logger) { $logger->record("login\nforged", 'login'); });
     Check::throws(InvalidArgumentException::class, function () use ($logger) { $logger->record('login.failed', "scope\r\n"); });
+    $key = str_repeat('SYNTHETIC-AUDIT-PRIVATE-KEY-', 2); $captured = 'SYNTHETIC-AUDIT-SINK-CREDENTIAL';
+    $sensitive = new AuditLogger(static function (array $event) use ($captured): void {}, $key);
+    ob_start(); var_dump($sensitive); $dump = ob_get_clean();
+    foreach ([print_r($sensitive, true), $dump, json_encode($sensitive)] as $output) {
+        Check::same(false, strpos($output, $key) !== false);
+        Check::same(false, strpos($output, $captured) !== false);
+    }
+    // A serializable function sink used to let serialize() export the private pseudonym key.
+    foreach ([$sensitive, new AuditLogger('count', $key)] as $privateLogger) {
+        Check::throws(SoSecurity\Exception\ConfigurationException::class, static function () use ($privateLogger) { serialize($privateLogger); });
+    }
 };
 
 $failed = 0;

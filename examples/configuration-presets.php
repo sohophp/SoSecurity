@@ -28,5 +28,16 @@ return (static function (): array {
         'api_signing' => ['site' => 'example-site', 'api' => ['origin' => 'https://api.example.com']],
         'signed_form' => ['site' => 'example-site', 'stateless_csrf' => ['keys' => 'csrf_keys']],
         'rich_text' => ['site' => 'example-site', 'html' => []],
+        'upload_quarantine' => [
+            'site' => 'example-site',
+            'storage' => ['driver' => 'file', 'directory' => '/srv/example/private/security-state'],
+            'upload_quarantine' => [
+                'directory' => '/srv/example/private/upload-spool',
+                'document_root' => '/srv/example/public',
+                'scanner' => 'upload_scanner',
+                'policy' => ['extensions' => ['jpg', 'jpeg', 'png'], 'maximum_bytes' => 5242880],
+                'queue' => ['maximum_entries' => 64, 'maximum_total_bytes' => 67108864],
+            ],
+        ],
     ];
 })();

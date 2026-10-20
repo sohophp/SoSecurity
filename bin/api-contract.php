@@ -13,6 +13,16 @@ function apiType(?ReflectionType $type,ReflectionClass $declaring): ?array
     return ['name'=>$name,'nullable'=>$type->allowsNull()];
 }
 $root=dirname(__DIR__);$classes=json_decode(file_get_contents($root.'/resources/api/classes.json'),true);
+$internal=json_decode(file_get_contents($root.'/resources/api/internal.json'),true);
+$declared=array_merge($classes,$internal);$discovered=[];
+foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator($root.'/src')) as $file) {
+    if ($file->isFile() && $file->getExtension()==='php') {
+        $relative=substr(str_replace('\\','/',$file->getPathname()),strlen(str_replace('\\','/',$root).'/src/'),-4);
+        $discovered[]='SoSecurity\\'.str_replace('/','\\',$relative);
+    }
+}
+sort($declared);sort($discovered);
+if ($declared!==$discovered) { fwrite(STDERR,"FAIL every source class must be explicitly classified as public or internal; inspect API manifests\n");exit(1); }
 $sourcePrefix=str_replace('\\','/',$root).'/src/';
 $contract=['schema'=>2,'classes'=>[]];
 foreach ($classes as $name) {

@@ -1,0 +1,14 @@
+<?php
+declare(strict_types=1);
+require __DIR__.'/revocation-process-support.php';
+managedCase(static function(ManagedEnvironment $e):void{
+    $f=revocationSetup($e);$service=revocationService($e,$f);$v=$service->review('user','owned-before-worker');$worker=resolutionSpawn($e,'hold',$v['context']);
+    try{resolutionStopped($worker);migrationReason('factor.fence_timeout',static function()use($service,$v):void{$service->execute($v['context'],'owned-no-forced-drain',normalProof());});Check::same(true,$f->work(static function():bool{return true;}));Check::same(0,(int)$e->observer->query('SELECT COUNT(*) FROM factor_privileged_audit')->fetchColumn());Check::same(true,posix_kill($worker['pid'],SIGCONT));Check::same(0,resolutionJoin($worker)['exit']);$fresh=$service->review('user','owned-after-worker');Check::same(true,$service->execute($fresh['context'],'owned-explicit-revoke',normalProof())['revoked']);}finally{if(is_resource($worker['process'])){resolutionJoin($worker,true);}}
+});
+foreach(['before_commit','after_commit'] as $mode){managedCase(static function(ManagedEnvironment $e)use($mode):void{
+    $f=revocationSetup($e);$service=revocationService($e,$f);$v=$service->review('user','owned-process-review');$before=$e->row();$physical=modeSnapshot($e);$worker=resolutionSpawn($e,$mode,$v['context']);
+    try{resolutionStopped($worker);$result=resolutionJoin($worker,true);Check::same(true,$result['signaled']);Check::same(SIGKILL,$result['signal']);}finally{if(is_resource($worker['process'])){resolutionJoin($worker,true);}}
+    $committed=$mode==='after_commit';Check::same($committed?1:0,(int)$e->observer->query('SELECT COUNT(*) FROM factor_privileged_audit')->fetchColumn());Check::same($physical,modeSnapshot($e));if(!$committed){Check::same($before,$e->row());}else{Check::same(false,$before['credential_version']===$e->row()['credential_version']);}
+    $inspect=$f->drain(static function()use($service):array{return $service->inspectClosed('user','owned-after-kill');},static function():bool{return true;});Check::same($committed,$inspect['revoked']);$fresh=$f->drain(static function()use($service,$committed):array{return $service->reviewClosed('user','owned-fresh-after-kill',$committed);},static function():bool{return true;});$result=$f->drain(static function()use($service,$fresh):array{return $service->executeClosed($fresh['context'],'owned-explicit-kill-recovery',normalProof());},static function():bool{return true;});Check::same(true,$result['revoked']);Check::same(true,$result['factor_removed']);Check::same(1,(int)$e->observer->query('SELECT COUNT(*) FROM factor_privileged_audit')->fetchColumn());
+});}
+echo 'PASS privileged revocation processes: '.Check::$assertions.' assertions PHP '.PHP_VERSION."; 3 owned workers, kernel-confirmed SIGSTOP, SH refusal, SIGCONT and SIGKILL around logical COMMIT, independent exact cleanup and no duplicate audit\n";

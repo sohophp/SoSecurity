@@ -1,8 +1,20 @@
 # 简单配置与只读诊断
 
+可选`upload_quarantine`提供持久隔离工厂`quarantine()`，显式注入扫描器并要求共享持久状态，和原`upload`同步保存配置独立。配置／构造不扫描或写入任务，诊断不把配置有效当作实际扫描通过；字段与迁移边界见[隔离指南](upload-quarantine.md#工厂配置与诊断)。
+
+可选 `authentication` 配置连接身份提供器与请求保护服务，提供 `authentication()` 和 `sessions()`；同时配置 MFA 时默认连接 TOTP。迁移到受管理因子目录后可显式设置 `managed_factors=true`，要求 `account_factors` 配置并与 `second_factor`、顶层 `mfa` 互斥；两种工厂都使用当前受管理目录，不回退到原始 TOTP。它们保留现有 `session()` 原生辅助；字段、顺序和撤销边界见[认证指南](authentication.md)。
+
+可选 `remember` 需先配置 `authentication`，另注入独立 `keys` 服务；默认30天固定期限、最多8个授权、5秒并发重试窗口和 `__Host-` Secure Cookie。可选 `risk_guard` 指定可信设备风险决策服务；宿主必须提供服务端已核实的信号，返回固定决策，异常时拒绝恢复。显式主动选择、恢复／忘记／撤销及全部字段见[记住登录指南](remembered-login.md)。恢复会话的 `recent()` 拒绝敏感操作，不自动启用持久登录。
+
+可选 `authorization` 注入 `identity_provider`、可选 `policy`／`audit` 服务，不依赖共享存储；身份服务名可沿用已配置的authentication。无策略默认拒绝，不能用身份查询代替宿主登录验证。字段白名单／批量全量预检及配置边界见[授权指南](authorization.md)。
+
+本轮新增可选 `mfa` 配置和 `Security::mfa()`，使用独立注入的加密服务及共享存储，详见 [MFA 与密钥加密](mfa.md)。旧配置不启用 MFA，工厂不会自动生成密钥。
+
 `SoSecurity\Security::fromArray()` 是可选工厂。所有原有组件仍能独立实例化，不依赖框架、容器、YAML或环境变量加载库。工厂创建时只校验配置；不启动Session，不发送响应头，不建立网络连接，也不创建存储目录。
 
 ## 最小接入
+
+可选 `budgets` 保存最多64个命名的加权策略，工厂提供 `budgetLimiter(name)`、`budgetGroup(names)` 与 `budgetComposite(names)`，均要求共享storage。默认令牌桶10单位／60秒；算法、字段、原子范围及策略迁移见[请求预算](request-budgets.md)。它不改变既有rate_limits和封禁行为。
 
 ```php
 require 'vendor/autoload.php';
@@ -23,7 +35,7 @@ $hasher = $security->passwordHasher();
 
 ## 按场景选择最小配置
 
-[configuration-presets.php](../examples/configuration-presets.php)返回七种独立PHP配置，不读取环境/请求、写目录或初始化服务。选择一份并改为自己的固定site；不要把所有预设一起启用。
+[configuration-presets.php](../examples/configuration-presets.php)返回八种独立PHP配置，覆盖六类场景；不读取环境/请求、写目录或初始化服务。选择一份并改为自己的固定site；不要把所有预设一起启用。
 
 ```php
 $presets = require 'vendor/sohophp/sosecurity/examples/configuration-presets.php';
@@ -42,6 +54,7 @@ $security = SoSecurity\Security::fromArray($config);
 | api_signing | 真实固定HTTPS origin；私有SigningKey | 仅签名，不自动接入认证/验证端 |
 | signed_form | services.csrf_keys的HmacKeys；已验证的当前登录绑定 | 无状态CSRF |
 | rich_text | 明确安装可选HTML Purifier及DOM/ctype | 基础正文HTML清理 |
+| upload_quarantine | Web根外的0700隔离目录与状态目录、实际Web根、宿主注入的Scanner、部署初始化的共享状态 | 强制扫描后才允许读取的上传隔离；配置解析不运行扫描器或创建任务 |
 
 login预设保留独立的ip和login策略；调用方先消费IP总量，再按规范化IP+账号消费login预算，认证/验证码与业务仍由宿主控制。API验证端另配置共享storage和key_provider，不能把仅签名的预设误当完整API认证入口。
 
@@ -55,10 +68,20 @@ login预设保留独立的ip和login策略；调用方先消费IP总量，再按
 | csrf | ttl=7200，capacity=16，exemptions=[] | 秒；容量1–64；精确method/path豁免最多32项 |
 | stateless_csrf | 未配置 | keys服务必填；ttl=7200秒，1–86400；不会生成默认密钥 |
 | api | 未配置 | origin必填；默认HTTPS、maximum_lifetime=300秒、clock_skew=30秒、maximum_body=1048576字节；验证端需key_provider |
+| api_credentials | 未配置，不启用 | 需要authentication、共享storage及独立keys／request_guard／scope_provider；可选management_subject与management_authorization必须成对；范围默认空、ttl=86400、capacity=16、fresh_age=300、minimum_strength=1、delegated_minimum_strength=2；见[账号凭据](api-credentials.md) |
+| webhooks | 空端点列表，不启用 | 最多32个命名端点，scope／account／url／protocol必需；接收侧key_provider／request_guard成对配置，inbox显式提供connection／integrity_keys／association_guard；processing显式提供connection／integrity_keys／mapper／association_guard／worker_guard，可选management_guard及policy；仅历史处理可省略接收服务与inbox，见[接收](webhooks.md)与[处理](webhook-processing.md)；不要求authentication或通用storage |
+| idempotency | 不启用 | 显式connection／64字符十六进制外部epoch／integrity_keys／authority服务及可选management_guard／policy；工厂idempotency()，不依赖authentication或通用storage，不自动建表或初始化命名空间，见[SQL幂等](idempotency.md) |
+| outbox | 不启用 | 显式connection／64字符十六进制外部epoch／integrity_keys／authority服务及可选management_guard／policy；工厂outbox()，入队与显式对账只加入同一PDO的宿主事务，其他操作独立拥有短事务；对账另需每次传入当前决策guard与实际审计依据，不自动建表／初始化／发送，见[事务发件箱](outbox.md)及[超期对账](outbox-reconciliation.md) |
+| accounts | 不启用 | 显式同PDO账号库、作用域／epoch、当前账号适配、独立密钥、通知及共享请求预算；registration_authority／request_guard／recovery_authority分别启用注册／地址变更／密码恢复，后者可配置recovery_factor／strong_recovery；管理／通知读取省略拒绝，不建表或发信，见[账号生命周期](account-lifecycle.md)和[密码恢复](account-recovery.md) |
 | html | 未配置 | 显式启用；输入65536/输出131072字节、2048节点、64深度、2048属性字节、allow_links=true；自定义sanitizer需审查 |
 | captcha | ttl=300，attempts=3，capacity=4 | 秒；错误预算1–10，并存1–16 |
 | rate_limits | default策略 | 命名策略，每个limit/window/bans/history_ttl；默认5/300/[60,300,900]/86400 |
-| password | bcrypt，cost=12，minimum=15，maximum_bytes=72 | 明确可用时选argon2id；不会静默降级；最小长度为Unicode码点，最大为字节 |
+| budgets | 空，不启用 | 最多64个命名策略；algorithm=token_bucket、limit=10、window=60、burst=null、maximum_entries=512；组合最多8项，详见[预算指南](request-budgets.md) |
+| leases | 未配置，不启用 | maximum=1、ttl=30、maximum_lifetime=300；共享storage，显式资源初始化与业务隔离，详见[租约指南](leases.md) |
+| operations | 未配置，不启用 | 依赖authentication／authorization及请求保护；ttl=120、capacity=8、maximum_age=300、minimum_strength=2、methods=[totp,webauthn]；默认不接受密码／恢复码，详见[操作授权](operations.md) |
+| signed_links | 未配置，不启用 | 显式origin／keys／request_guard；ttl=300、maximum_ttl=86400、capacity=32、allow_http=false；共享状态撤销／消费及严格URL，见[签名链接](signed-links.md) |
+| downloads | 未配置，不启用 | 显式directory／temporary_directory／document_root；policy默认20MiB完整核验／响应、3秒I/O、30秒传输、64KiB分块；授权／权威索引显式注入，见[下载指南](downloads.md) |
+| password | bcrypt，cost=12，minimum=15，maximum_bytes=72；blocklist=builtin、breach_checker=null | Argon2id默认上限4096字节，不会静默降级；本地表／泄露服务名和故障边界见[密码指南](passwords.md) |
 | outbound | 未配置 | hosts必填；默认有界DoH+cURL，预算/白名单及可选resolver/transport服务见[outbound.md](outbound.md) |
 | upload | 未配置 | directory/document_root必填；按需的类型/图片预算与scanner；见[upload.md](upload.md) |
 | session | idle=1800，absolute=28800，secure=true，same_site=Lax | 不自动应用；调用configureSession才生效；path/domain/lifetime未指定时保留宿主已有值 |
@@ -75,7 +98,7 @@ $security = SoSecurity\Security::fromArray([
 $decision = $security->rateLimiter('login')->consume('login', $ipAccountKey);
 ```
 
-连接对象由宿主显式注入。Redis必须是独立、已连接的phpredis客户端，无prefix/serializer；工厂不获取、打印或保存密码。Redis提交使用原子CAS Lua，需要EVAL权限；网络等待按总预算限制。文件配置支持lock_timeout_ms（默认1000，1–30000）。Redis首次部署/重启后需[显式初始化或审核恢复](redis-recovery.md)，新格式会隔离旧状态，不能在请求里自动清空封禁。
+连接对象由宿主显式注入。Redis必须是独立、已连接的phpredis客户端，无prefix/serializer；工厂不获取、打印或保存密码。Redis提交使用原子CAS Lua，需要EVAL权限；读取先在同一个原子脚本内执行STRLEN与GET，Redis账号还需STRLEN和GET权限。普通状态值超过65536字节、ready标记超过512字节时，客户端不接收原值并拒绝操作；缺少命令权限同样拒绝。网络等待按总预算限制。文件配置支持lock_timeout_ms（默认1000，1–30000）。Redis首次部署/重启后需[显式初始化或审核恢复](redis-recovery.md)，新格式会隔离旧状态，不能在请求里自动清空封禁。
 
 `driver=mysql, connection=security_db, lock_wait_seconds=1` 接收独立PDO MySQL连接；1–30秒行锁等待，部署阶段显式建独立InnoDB表，不触碰宿主事务。网络/查询超时与客户端认证需宿主确认，见[mysql.md](mysql.md)。
 
@@ -108,7 +131,7 @@ $checks = $security->diagnose($knownDocumentRoot);
 
 结果包含pass/fail/manual/not_configured/optional和稳定reason，不包含密码、令牌、连接对象、真实目录路径或异常完整文本。检查可选扩展、目录权限及Web根位置、存储选择和Session状态。未启动Session不是自动帮你启动；第三方驱动互斥锁、自定义后端原子性不能自动证明。
 
-Redis默认不进行网络探测，显示manual。显式 `diagnose($root, true)` 才执行有界PING、CONFIG GET maxmemory-policy和无写入的`EVAL return 1`权限检查，并通过INFO与ready检查初始化状态；不修改服务器配置、业务键或持久化设置。CONFIG GET因权限不可读时，淘汰策略显示人工确认，不假装通过。使用独立诊断连接，禁止混入宿主事务。
+Redis默认不进行网络探测，显示manual。显式 `diagnose($root, true)` 才执行有界PING、CONFIG GET maxmemory-policy和无写入的`EVAL return 1`权限检查，再以原子STRLEN/GET限量读取ready标记，并通过INFO核对初始化状态；`bounded_read_permission`单独报告限量读取是否可用，不修改服务器配置、业务键或持久化设置。CONFIG GET因权限不可读时，淘汰策略显示人工确认，不假装通过。使用独立诊断连接，禁止混入宿主事务。
 
 CLI配置文件是运营者信任的PHP文件，位于私有目录，返回：
 
@@ -153,3 +176,13 @@ api 的固定配置档、默认值与完整示例见 [api.md](api.md)。诊断 `
 ## 可选富文本清理
 
 显式 `html => []` 启用默认受限HTML Purifier适配，`htmlCleaner()` 要求宿主安装可选包及DOM/ctype。输入/输出/节点/深度/属性预算、allow_links默认值和限制见 [html-cleaning.md](html-cleaning.md)。自定义html.sanitizer需注入经过审查的HtmlSanitizer；诊断只读，不构造或调用它，安全策略/渲染上下文标记manual。没有原文返回、strip_tags或正则“清理”的降级方案。
+
+
+邮箱丢失恢复使用 `accounts.mailbox_authority` 和 `accounts.mailbox_approval` 两个显式服务名称，调用 `Security::mailboxRecovery()`；启用请求权限而未配置强审批会拒绝配置。原有恢复参数与行为保持。MFA账号还需当前 `recovery_factor`，独立管理／投递服务沿用 `management_guard`／`delivery_guard`；模板明确增加 `recover_address` HTTPS地址。真实审批人、消费凭据保留、因子绑定和备份代际均属于宿主必须验证的契约，详见[邮箱恢复指南](account-mailbox-recovery.md)。
+
+
+## 显式受管理 MFA 目录
+
+可选 `account_factors` 与 `accounts` 分别配置。必须显式给出 `connection`、`scope`、`epoch`、`repository`、`integrity_keys`、`totp`、`fence`、`worker_guard`、`read_guard`、`management_guard`，另可指定完整账号 `policy`。除scope／epoch／policy外均为服务名称；没有默认放行权限。`repository` 必须实现 `Account\FactorRepository` 并使用同一个PDO，`totp` 必须为未受管理的 `Mfa\TotpFactors`，`fence` 必须匹配site／scope／epoch。
+
+`Security::accountFactors()` 建立强类型 `FactorWorkerAuthority`，保持其SQL预算，并返回 `FactorRegistry`；不自动建表、创建栅栏、登记根、迁移因子、发送通知或改变账号。诊断仅检查能力／上下文并将当前注册权威、同PDO、迁移审批及备份代际标为待人工验收，不调用权限回调证明通过。完整步骤和示例见[受管理因子接入](account-factors.md)。

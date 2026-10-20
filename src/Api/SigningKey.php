@@ -11,11 +11,18 @@ final class SigningKey
     public function __construct(string $id,string $secret,string $subject,array $scopes=[])
     {
         if (!preg_match('/\A[A-Za-z0-9._:-]{1,64}\z/D',$id) || strlen($secret)<32 || strlen($secret)>128) { throw new ConfigurationException('HMAC needs a bounded key ID and 32-128 byte secret.'); }
-        $this->identity=new Identity($id,$subject,$scopes); $this->secret=$secret;
+        $this->identity=new Identity($id,$subject,$scopes);
+        $this->secret=static function()use($secret):string{return $secret;};
     }
     public static function generate(string $subject,array $scopes=[]): self { return new self(bin2hex(random_bytes(16)),random_bytes(32),$subject,$scopes); }
-    public function secret(): string { return $this->secret; }
+    public function secret(): string
+    {
+        if(!$this->secret instanceof \Closure){throw new ConfigurationException('Reload private signing key configuration.','configuration.api_key');}
+        return ($this->secret)();
+    }
     public function identity(): Identity { return $this->identity; }
     public function __debugInfo(): array { return ['identity'=>$this->identity,'secret'=>'[redacted]']; }
+    public function __sleep(): array { throw new ConfigurationException('Do not serialize signing keys.','configuration.keys_serialization'); }
+    public function __wakeup(): void { throw new ConfigurationException('Rebuild signing keys from trusted configuration.','configuration.keys_serialization'); }
     public function __set(string $name,$value): void { throw new ConfigurationException('Signing keys are immutable.','configuration.immutable'); }
 }

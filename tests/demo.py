@@ -125,6 +125,9 @@ def acceptance(base):
     check(200, call('password', 'verify', {'password': 'Demo-test-password'})[0])
     check(403, call('password', 'verify', {'password': 'incorrect'})[0])
     check(400, call('password', 'policy', {'password': 'short'})[0])
+    status, body, _ = call('password', 'policy', {'password': 'passwordpassword'})
+    check(400, status); check(['password.weak'], body['result']['errors'])
+    check(200, call('password', 'policy', {'password': 'Unique demo phrase 59!'})[0])
     check(200, call('password', 'legacy', {'password': 'Demo-only-7.2!'})[0])
     _, body, _ = call('reset', 'issue')
     token = body['state']['token']

@@ -21,11 +21,11 @@ $security = SoSecurity\Security::fromArray($config, ['security_redis' => $redis]
 $security->initializeStorage();
 ```
 
-也可以执行 `php bin/initialize-storage.php /private/config.php`；私有PHP文件返回config和services，连接认证/TLS由文件中的宿主代码建立。CLI不打印秘密、路径或底层异常全文。Redis账号需要读取INFO server与ready键、执行EVAL以及操作该namespace的数据键；Lua内部也检查INFO server。缺权限会拒绝，不降级为不检查。
+也可以执行 `php bin/initialize-storage.php /private/config.php`；私有PHP文件返回config和services，连接认证/TLS由文件中的宿主代码建立。CLI不打印秘密、路径或底层异常全文。Redis账号需要读取INFO server、执行EVAL，并允许脚本内对ready键及该namespace的数据键执行STRLEN、GET和原有写命令；Lua内部也检查INFO server。缺权限会拒绝，不降级为不检查。已有仅允许GET/EVAL的账号需在部署新版前加入STRLEN权限。
 
 ## 检测与恢复
 
-ready记录绑定Redis进程run_id及随机epoch。每次操作先校验标记，原子Lua提交时再次核对进程身份、ready和旧状态。进程重启即使载入旧RDB/AOF，也不允许旧的一次性令牌直接复活；标记删除、损坏或epoch被其他维护任务更换时拒绝操作。
+ready记录绑定Redis进程run_id及随机epoch。每次操作先校验标记，原子Lua提交时再次核对进程身份、ready和旧状态。读取先在同一个原子Lua脚本中核对STRLEN，再执行GET；ready超过512字节、普通状态值超过65536字节时只返回拒绝标记，异常原值不进入PHP进程。包含NUL的合法状态值仍按完整字节处理，不截断。进程重启即使载入旧RDB/AOF，也不允许旧的一次性令牌直接复活；标记删除、损坏或epoch被其他维护任务更换时拒绝操作。
 
 1. 停止使用相关敏感操作，确认服务端故障、持久化恢复点和记录丢失范围。
 2. 决定账号会话/重置令牌失效策略，并恢复必要的永久封禁、计数或其他人工保护。库无法从旧快照还原真实最新状态。

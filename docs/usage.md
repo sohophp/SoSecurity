@@ -89,7 +89,7 @@ $limiter->ban('login.ip-account', $subject);      // 手动永久封禁
 $limiter->reset('login.ip-account', $subject);    // 管理员明确解封/重置
 ```
 
-这些管理方法必须在宿主授权后调用；不是可直接暴露的公共接口。inspect 不占额度、创建记录或延长历史；达到额度但未触发自动封禁时 retryAfter 是剩余窗口。consume 第limit+1次触发封禁，封禁结束重开窗口，下一次越限提高阶梯；历史TTL过后从第一阶开始。historyTtl必须覆盖窗口和最长封禁。固定窗口可能在边缘形成突发流量；要更精确的滑动窗口属于后续策略。
+这些管理方法必须在宿主授权后调用；不是可直接暴露的公共接口。inspect 不占额度、创建记录或延长历史；达到额度但未触发自动封禁时 retryAfter 是剩余窗口。consume 第limit+1次触发封禁，封禁结束重开窗口，下一次越限提高阶梯；历史TTL过后从第一阶开始。historyTtl必须覆盖窗口和最长封禁。固定窗口可能在边缘形成突发流量；加权成本、令牌桶、精确秒级滑动窗口和多维组合使用独立的[请求预算组件](request-budgets.md)，不自动启用封禁。
 
 策略一旦使用，不要在不同进程对同一 scope 设置不同的额度、时间或阶梯；变更使用新scope，已存在状态保留其有效期。同一namespace可以用不同scope区分站点业务。Policy不可变；读取使用limit()/window()/banDurations()/historyTtl()，变更时创建新策略并安排scope迁移。IP总量桶配宽松阈值，不自动永久封禁共享IP；单账号桶用于风险观察应慎用硬封禁，避免恶意锁死用户。
 
@@ -102,7 +102,7 @@ $hash = $hasher->hash($password);
 $valid = $hasher->verify($password, $hash);
 $upgrade = $hasher->verifyAndUpgrade($password, $storedHash, $knownLegacyVerifier);
 // valid 后，如果 replacementHash 非null，宿主以 WHERE password_hash = :old CAS 更新。
-$policy = new SoSecurity\Password\PasswordPolicy(15, 72);
+$policy = SoSecurity\Password\PasswordPolicy::forHasher($hasher, 15, null, SoSecurity\Password\PasswordBlocklist::baseline());
 $errors = $policy->errors($password); // 机器可读代码，宿主翻译
 $reset = new SoSecurity\Password\ResetTokens($redisStore, 1800, $clock);
 $binding = $accountId . ':' . $currentPasswordVersion;
@@ -113,7 +113,7 @@ $reset->revoke($binding);
 
 bcrypt 上限72**字节**；不预哈希、不截断；Argon2id允许到4096字节。NUL和空密码拒绝。bcrypt cost配置10–16；Argon2id默认 memory_cost=19456 KiB/time_cost=2/threads=1，不可用抛错。已经更高cost的bcrypt或Argon2不会自动降级到低cost bcrypt。
 
-策略默认15个Unicode码点（不是字节/视觉字形），最大72字节；不强制字符类别组合；可注入 breachChecker，返回true表示已泄露，非bool或服务错误抛异常。该回调不是内置泄露库，不应把明文密码发给不可信服务。
+策略默认15个Unicode码点（不是字节/视觉字形），最大字节数与哈希算法匹配；不强制字符类别组合。工厂默认基础弱密码表，直接构造旧长度策略保持兼容。可注入本地快照与可选HIBP范围检查；服务故障单独拒绝，不把明文发给外部服务。成本校准、原生验证资源限制和迁移边界见[密码指南](passwords.md)。
 
 旧哈希迁移不自动识别算法；只能注入已知格式的精确验证器。现代哈希错误时不会调用 legacyVerifier。重置绑定须含每次密码变更后的版本，保存密码成功后撤销/更新版本。token消费与数据库写入之间没有分布式事务，失败后重新发令牌；同一账号并行重置需数据库版本比较确保仅一个写入生效。找回密码入口需统一公开响应和限流。
 
@@ -158,11 +158,15 @@ $logger = new SoSecurity\Audit\AuditLogger($structuredSink, $independentAuditKey
 $logger->record('login.failed', 'login', $accountId, ['status' => 401]);
 ```
 
-代理只支持明确的X-Forwarded-For部署；默认不信任何代理，从右侧移除可信跳数，格式异常拒绝，IP规范化。CIDR支持IPv4/IPv6，同族匹配，不将IPv4映射IPv6自动混同。Apache/Nginx可配置相同响应头，宿主决定由哪层发出，避免冲突。CSP需要逐步收集违规并验证静态/第三方资源；Permissions-Policy/CORS尚未实现。
+`Cookie::header()`以最终URL编码后的Cookie名称、等号和值合计最多4096字节；原始值若已超限会在编码前拒绝，避免为巨大输入额外分配内存。恰好处于边界的ASCII值及包含NUL的值仍可使用，后者会编码为`%00`。此前允许生成的超长Cookie现在抛`ConfigurationException`，宿主应缩短值或把状态放回服务端，不应截断认证凭据。
+
+代理只支持明确的X-Forwarded-For部署；默认不信任何代理，从右侧移除可信跳数，格式异常拒绝，IP规范化。CIDR支持IPv4/IPv6，同族匹配，不将IPv4映射IPv6自动混同。完整部署顺序与WAF职责见[代理与WAF指南](reverse-proxy-waf.md)。Apache/Nginx可配置相同响应头，宿主决定由哪层发出，避免冲突。CSP需要逐步收集违规并验证静态／第三方资源；Permissions-Policy与精确来源CORS已经实现，调用与边界见[HTTP策略](http-policy.md)。CORS不替代CSRF或业务授权。
 
 HTML编码适用于HTML文本和加引号的普通属性，不适用于事件、style或srcdoc；JSON不是任意JavaScript模板清洗器；URL组件编码不检查scheme，不是SSRF/开放跳转防护。不要对Twig已自动编码的变量重复编码，不使用raw；富文本需要经审查HTML清理器。
 
-AuditLogger只保留allowed/retry_after/status的bool/非负int字段；其他上下文丢弃。event为规范常量代码，scope为受控常量；subject使用独立密钥HMAC假名化（密钥至少32字节），不能传密码/令牌/Session ID。sink故障抛给宿主，由宿主事先决定审计失败是否阻止业务，不能在动作完成后隐瞒业务结果。库没有内置日志文件、查询、日志保留期或自动事件订阅。
+AuditLogger只保留allowed/retry_after/status的bool/非负int字段；其他上下文丢弃。event为规范常量代码，scope为受控常量；subject最多1024字节，包含NUL时按完整字节使用独立密钥HMAC假名化（密钥至少32字节），超限在调用sink前拒绝。不能传密码/令牌/Session ID。sink故障抛给宿主，由宿主事先决定审计失败是否阻止业务，不能在动作完成后隐瞒业务结果。库没有内置日志文件、查询、日志保留期或自动事件订阅；不启用有界接收器时总体事件频率由宿主限制，长期主体基数始终由宿主管理，不能把单条长度上限当作总量预算。
+
+需要跨进程固定窗口总量限制时，可显式接入[有界审计接收器](audit-budget.md)。它复用共享原子预算，容量耗尽与存储／日志故障均向外抛出；宿主仍负责日志持久化、指标、告警及业务事务边界。
 
 可选配置工厂、完整配置参考、只读诊断和开发候选API迁移见 [configuration.md](configuration.md)。
 

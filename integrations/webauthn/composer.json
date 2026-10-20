@@ -1,0 +1,17 @@
+{
+    "name": "sohophp/sosecurity-webauthn",
+    "description": "Optional WebAuthn ceremony adapter for SoSecurity",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "php": ">=8.2 <8.6",
+        "sohophp/sosecurity": "^0.1 || dev-main",
+        "web-auth/webauthn-lib": "~5.3.9"
+    },
+    "autoload": {"psr-4": {"SoSecurity\\WebAuthn\\": "src/"}},
+    "archive": {"exclude": ["/tests/"]},
+    "suggest": {
+        "ext-pdo_sqlite": "Optional SQLite credential repository",
+        "ext-pdo_mysql": "Optional MySQL credential repository"
+    }
+}

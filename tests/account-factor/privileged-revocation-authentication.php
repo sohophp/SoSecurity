@@ -1,0 +1,13 @@
+<?php
+declare(strict_types=1);
+require __DIR__.'/revocation-support.php';
+managedCase(static function(ManagedEnvironment $e):void{
+    $f=revocationSetup($e);$hasher=new SoSecurity\Password\PasswordHasher('bcrypt',['cost'=>10]);
+    $provider=new SoSecurity\Auth\PasswordIdentityProvider(function(string $scope,string $address)use($e){$r=$e->accounts->findAddress($scope,new SoSecurity\Account\Address($address));return $r===null?null:$e->accounts->passwordRecord($r);},function(string $scope,string $subject)use($e){$r=$e->accounts->find($scope,$subject);return $r===null?null:$e->accounts->passwordRecord($r);},$hasher,$hasher->hash('Owned revocation dummy password 49!'));
+    $store=new SoSecurity\Storage\FileStore($e->directory.'/factors','owned-revocation-sessions',$e->clock,5000);$second=$e->registry->secondFactor();$sessions=new SoSecurity\Auth\SessionRegistry($store,$provider,$second,$e->clock);$auth=new SoSecurity\Auth\AuthenticationFlow($store,$provider,$sessions,static function():bool{return true;},$second,$e->clock);
+    $login=$auth->password('tenant','owned-user-browser','owned@example.test',$e->password,'Owned revocation user');Check::same('mfa_required',$login->status());$proof=normalFactor($e);$login=$auth->secondFactor('tenant','owned-user-browser',$login->challenge(),$proof);Check::same('authenticated',$login->status());$token=$login->credential()->token();Check::same(true,$sessions->verify('tenant','user',$token,2)!==null);
+    $service=revocationService($e,$f);$v=$service->review('user','owned-auth-revocation');Check::same(true,$service->execute($v['context'],'owned-revoke',normalProof())['revoked']);migrationReason('factor.fence_closed',static function()use($sessions,$token):void{$sessions->verify('tenant','user',$token,2);});
+    $next=migrationHistoryRotate($e,$f);lifecycleRebind($e,$next,lifecycleRaw($e));$second=$e->registry->secondFactor();$sessions=new SoSecurity\Auth\SessionRegistry($store,$provider,$second,$e->clock);$auth=new SoSecurity\Auth\AuthenticationFlow($store,$provider,$sessions,static function():bool{return true;},$second,$e->clock);
+    migrationReason('account.factor_retired',static function()use($sessions,$token):void{$sessions->verify('tenant','user',$token,2);});migrationReason('account.factor_retired',static function()use($auth,$e):void{$auth->password('tenant','owned-new-browser','owned@example.test',$e->password,'Owned denied login');});Check::same(true,$e->accounts->find('tenant','user')->account()->mfaRequired());
+});
+echo 'PASS privileged revocation authentication: '.Check::$assertions.' assertions PHP '.PHP_VERSION."; actual password/TOTP login before revocation, old session and password login refused before/after worker-authority handoff, no password-only downgrade\n";

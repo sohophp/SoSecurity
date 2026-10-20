@@ -21,18 +21,28 @@ final class Recaptcha
             || !is_finite($minimumScore) || $minimumScore < 0 || $minimumScore > 1) {
             throw new \SoSecurity\Exception\ConfigurationException('Invalid reCAPTCHA hostname, action or score threshold.');
         }
-        $this->secret = $secret; $this->hostname = $hostname; $this->action = $action;
+        $this->secret = static function () use ($secret): string { return $secret; }; $this->hostname = $hostname; $this->action = $action;
         $this->minimumScore = $minimumScore; $this->transport = $transport;
     }
 
     public function verify($token, ?string $clientIp = null): bool
     {
         if (!SiteVerify::token($token)) { return false; }
-        $data = SiteVerify::verify('recaptcha', ['secret' => $this->secret, 'response' => $token], $clientIp, $this->transport);
+        $data = SiteVerify::verify('recaptcha', ['secret' => $this->secret(), 'response' => $token], $clientIp, $this->transport);
         if (!$data['success'] || ($data['hostname'] ?? null) !== $this->hostname) { return false; }
         if ($this->action === null) { return !array_key_exists('score', $data) && !array_key_exists('action', $data); }
         $score = $data['score'] ?? null;
         return ($data['action'] ?? null) === $this->action && (is_int($score) || is_float($score))
             && is_finite((float) $score) && $score >= $this->minimumScore && $score <= 1;
     }
+
+    private function secret(): string
+    {
+        if (!$this->secret instanceof \Closure) { throw new \SoSecurity\Exception\ConfigurationException('Reload private CAPTCHA configuration.', 'configuration.captcha_secret'); }
+        return ($this->secret)();
+    }
+
+    public function __debugInfo(): array { return ['provider' => 'recaptcha', 'secret' => '[redacted]']; }
+    public function __sleep(): array { throw new \SoSecurity\Exception\ConfigurationException('Do not serialize CAPTCHA configuration.', 'configuration.captcha_serialization'); }
+    public function __wakeup(): void { throw new \SoSecurity\Exception\ConfigurationException('Rebuild CAPTCHA configuration from trusted input.', 'configuration.captcha_serialization'); }
 }

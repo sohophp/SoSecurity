@@ -1,0 +1,14 @@
+{
+    "name": "sohophp/sosecurity-oidc",
+    "description": "Optional OpenID Connect relying-party adapter for SoSecurity",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "php": ">=7.2 <8.4",
+        "ext-curl": "*",
+        "sohophp/sosecurity": "^0.1 || dev-main",
+        "jumbojett/openid-connect-php": "1.0.2"
+    },
+    "autoload": {"psr-4": {"SoSecurity\\Oidc\\": "src/"}},
+    "archive": {"exclude": ["/tests/", "/phpstan.neon"]}
+}

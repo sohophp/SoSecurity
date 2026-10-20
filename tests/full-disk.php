@@ -38,6 +38,14 @@ if ($uploader !== null) {
 }
 Check::same(['original' => true], $store->transact('key', function ($value) { return new Change(null, 0, $value); }));
 Check::same([], glob($directory . '/.write-*'));
+$downloadBytes=str_repeat('D',131072);$downloadPath=$source.'/download.bin';file_put_contents($downloadPath,$downloadBytes);chmod($downloadPath,0600);
+$downloadFile=new SoSecurity\Download\File(new SoSecurity\Authorization\Resource('disk-test','file','a','1'),'download.bin','download.bin',strlen($downloadBytes),hash('sha256',$downloadBytes));
+$downloadAccess=new class implements SoSecurity\Download\Access {
+    public function authorize(SoSecurity\Download\File $file,SoSecurity\Download\Request $request):?SoSecurity\Download\Grant {return new SoSecurity\Download\Grant($file->fingerprint(),time()+60,static function(){return true;});}
+};
+$downloads=new SoSecurity\Download\Downloads($source,$directory,$web);$freeBefore=disk_free_space($directory);
+Check::throws(StorageException::class,static function()use($downloads,$downloadFile,$downloadAccess){$downloads->prepare($downloadFile,new SoSecurity\Download\Request(),$downloadAccess,static function()use($downloadFile){return $downloadFile;});});
+Check::same([],glob($directory.'/.download-*'));Check::same($freeBefore,disk_free_space($directory));Check::same($downloadFile->sha256(),hash_file('sha256',$downloadPath));
 echo 'PHP ' . PHP_VERSION . ': ' . Check::$assertions . " real ENOSPC assertions passed\n";
 
 } finally { cleanDirectory($source); cleanDirectory($web); }

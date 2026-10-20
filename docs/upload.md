@@ -67,6 +67,9 @@ PDF仅检查MIME及1.0–1.7/2.0头与EOF边界，不是PDF语义解析、内容
 
 ## 扫描适配与文件管理器
 
+已提供本地Unix socket的`ClamAvScanner`，使用不可变内容和有界INSTREAM协议；接入、服务端限额、同步可用状态及本地真实引擎测试见[扫描指南](upload-scanning.md)。持久隔离工作流继续R4.4。
+
+
 ```php
 final class HostScanner implements SoSecurity\Upload\Scanner
 {
@@ -93,3 +96,12 @@ $saver = new SoSecurity\Upload\Saver(new SoSecurity\Upload\Validator($policy), $
 库负责单文件预算，宿主负责请求体、总容量/数量、租户配额、并发、保留时间及过期清理。示例演示额外使用全局短等待锁，限制总32文件/16MiB，每访客3文件、单文件1MiB/百万像素、10分钟保留；过期由后续操作或CLI清理。公开目录声明Apache LimitRequestBody为2MiB；本机旧版FPM代理没有执行该普通限制，演示额外通过请求头阶段的mod_rewrite拒绝超长、chunked或未知长度POST，已验证在读取请求体前返回413/411。此策略只用于固定表单演示，流式API需要宿主配置并验收适合的前置请求体限制。没有下载/执行路由，只显示结果元数据。
 
 [可操作上传演示](http://72.rocky.wsl/SoSecurity/?module=upload)包含真实文件选择/传统表单/AJAX，以及固定正常、伪装、超限、路径、图片尺寸和隔离扫描/存储故障样例。故障按钮不连接真实AV，不破坏共享存储。测试见upload.php、upload_http.py、upload_demo.py、concurrency.php、storage-failure.php和full-disk.php。
+
+
+## 私有内容、路径与对象导出
+
+`Candidate::contents()` 与 `StoredFile::path()` 仅供已授权的服务器端流程显式使用。普通 `var_export`、`print_r`、`var_dump`、JSON及嵌套对象导出不包含正文或私有完整路径；`StoredFile` 调试结果只包含其公开元数据。对象禁止序列化及反序列化。需要队列或持久记录时，保存可信资源标识、摘要和允许的元数据，在当前对象授权下重新验证内容来源，不保存PHP对象快照。既有依赖serialize传递这两类对象的代码需要迁移，显式访问器返回值保持。
+
+`tests/upload-export.php` 不读取真实上传，使用含NUL／非UTF-8字节的合成正文及虚构路径核对普通／嵌套导出、对象克隆、显式访问器和序列化拒绝。扫描通过只表示配置的扫描器接受该内容，真实扫描服务、隔离工作流及文件可用状态仍按R4.4继续验收。
+
+异步场景可另行使用[持久隔离工作流](upload-quarantine.md)：验证后先私有隔离，后台扫描通过后才允许读取；原同步Saver接口保持。

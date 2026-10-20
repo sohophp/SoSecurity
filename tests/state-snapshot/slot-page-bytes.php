@@ -1,0 +1,13 @@
+<?php
+declare(strict_types=1);
+require __DIR__.'/support.php';
+$mysql=($argv[1]??'')==='mysql';
+snapshotCase($mysql,static function(InboxTestConnection $pdo,PDO $observer,string $dir)use($mysql):void{
+    $body="\0".str_repeat('x',32766)."\xff";for($id=1;$id<=7;++$id){snapshotInsert($pdo,'tenant',$id,$body,null,'owned');}$source=snapshotSource($pdo,32768);$selector=['table'=>'snapshot_test','key'=>['scope'=>'tenant'],'columns'=>['body'],'page'=>true,'maximum'=>7,'after'=>null];$page=$source->capture(['slots'=>$selector])->page('slots');Check::same(7,$page['total']);Check::same(7,count($page['rows']));foreach($page['rows'] as $row){Check::same(32768,strlen($row['body']));Check::same(hash('sha256',$body),hash('sha256',$row['body']));}
+    $queries=$pdo->queries;$selector['maximum']=8;Check::throws(SoSecurity\Exception\ConfigurationException::class,static function()use($source,$selector):void{$source->capture(['slots'=>$selector]);});Check::same($queries,$pdo->queries);
+    $pdo->exec('UPDATE snapshot_test SET body='.($mysql?'REPEAT(CHAR(0),2097152)':'zeroblob(16777216)').' WHERE id=1');$selector['maximum']=1;$selector['columns']=['id'];snapshotReason('account.snapshot_corrupt',static function()use($source,$selector):void{$source->capture(['slots'=>$selector]);});Check::same('8M',ini_get('memory_limit'));Check::same(true,memory_get_peak_usage(false)<8388608);Check::same($mysql?2097152:16777216,(int)$observer->query('SELECT length(body) FROM snapshot_test WHERE id=1')->fetchColumn());
+});
+snapshotCase($mysql,static function(InboxTestConnection $pdo,PDO $observer,string $dir):void{
+    for($id=1;$id<=130;++$id){snapshotInsert($pdo,"tenant\0a",$id,$id===1?"a\0b":($id===2?"c\0d":'value'));}snapshotInsert($pdo,"tenant\0b",1,'foreign');$source=snapshotSource($pdo);$request=['table'=>'snapshot_test','key'=>['scope'=>"tenant\0a"],'columns'=>['id','body'],'page'=>true,'maximum'=>1,'after'=>null];$first=$source->capture(['slots'=>$request])->page('slots');Check::same(130,$first['total']);Check::same("tenant\0a",$first['cursor']['scope']);Check::same("a\0b",$first['rows'][0]['body']);$request['after']=$first['cursor'];$second=$source->capture(['slots'=>$request])->page('slots');Check::same(2,$second['rows'][0]['id']);Check::same("c\0d",$second['rows'][0]['body']);Check::same(true,$second['more']);$request['after']=['scope'=>"tenant\0a",'id'=>129];$last=$source->capture(['slots'=>$request])->page('slots');Check::same(130,$last['rows'][0]['id']);Check::same(false,$last['more']);
+});
+echo 'PASS bounded slot-page bytes and binary cursors: '.Check::$assertions.' assertions PHP '.PHP_VERSION."\n";

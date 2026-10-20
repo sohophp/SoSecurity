@@ -15,7 +15,7 @@ final class HmacKeys
             if (!is_string($id) || !preg_match('/\A[A-Za-z][A-Za-z0-9_-]{0,31}\z/D',$id) || !is_string($secret) || strlen($secret)<32 || strlen($secret)>128) {
                 throw new ConfigurationException('HMAC key IDs and 32-128 byte secrets are required.','configuration.keys');
             }
-            $this->keys[$id]=$secret;
+            $this->keys[$id]=static function()use($secret):string{return $secret;};
         }
         if (!isset($this->keys[$current])) { throw new ConfigurationException('Current HMAC key is missing.','configuration.keys'); }
         $this->current=$current;
@@ -23,17 +23,25 @@ final class HmacKeys
     public function currentId(): string { return $this->current; }
     public function sign(string $message): string
     {
-        $this->message($message); return hash_hmac('sha256',$message,$this->keys[$this->current],true);
+        $this->message($message); return hash_hmac('sha256',$message,$this->secret($this->current),true);
     }
     public function verify(string $id,string $message,string $mac): bool
     {
         $this->message($message);
-        return isset($this->keys[$id]) && strlen($mac)===32 && hash_equals(hash_hmac('sha256',$message,$this->keys[$id],true),$mac);
+        return isset($this->keys[$id]) && strlen($mac)===32 && hash_equals(hash_hmac('sha256',$message,$this->secret($id),true),$mac);
     }
     private function message(string $message): void
     {
         if (strlen($message)>16384) { throw new ConfigurationException('HMAC message exceeds 16 KiB.','configuration.hmac_message'); }
     }
+    /** Keep raw key bytes out of var_export; reject unsupported reconstructed object state. */
+    private function secret(string $id):string
+    {
+        $value=$this->keys[$id] ?? null;
+        if(!$value instanceof \Closure){throw new ConfigurationException('Reload private key configuration.','configuration.keys');}
+        return $value();
+    }
+
     public function __debugInfo(): array { return ['current'=>$this->current,'key_ids'=>array_keys($this->keys),'secrets'=>'[redacted]']; }
     public function __sleep(): array { throw new ConfigurationException('Do not serialize private signing keys.','configuration.keys_serialization'); }
     public function __set(string $name,$value): void { throw new ConfigurationException('HMAC keys are immutable.','configuration.immutable'); }

@@ -25,7 +25,15 @@ final class Cookie
             || (strpos($name, '__Host-') === 0 && (!$secure || $path !== '/' || $domain !== null))) {
             throw new \SoSecurity\Exception\ConfigurationException('Cookie prefix requirements are not met.');
         }
-        $header = $name . '=' . rawurlencode($value) . '; Path=' . $path . '; SameSite=' . $sameSite;
+        // Refuse raw oversized input before rawurlencode can allocate up to three times its size.
+        if (strlen($value) > 4095 - strlen($name)) {
+            throw new \SoSecurity\Exception\ConfigurationException('Cookie name and value exceed browser limits.');
+        }
+        $encoded = rawurlencode($value);
+        if (strlen($name) + 1 + strlen($encoded) > 4096) {
+            throw new \SoSecurity\Exception\ConfigurationException('Encoded cookie name and value exceed browser limits.');
+        }
+        $header = $name . '=' . $encoded . '; Path=' . $path . '; SameSite=' . $sameSite;
         if ($domain !== null) { $header .= '; Domain=' . $domain; }
         if ($maxAge !== null) {
             $header .= '; Max-Age=' . $maxAge;

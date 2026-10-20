@@ -1,0 +1,27 @@
+<?php
+declare(strict_types=1);
+require __DIR__.'/mailbox-recovery-support.php';
+mailboxCase(static function(MailboxEnvironment $m):void{
+    $d=$m->begin();$before=$m->e->account();$queries=$m->e->pdo->queries;$m->onManager=static function():bool{return false;};Check::throws(SoSecurity\Exception\SecurityException::class,static function()use($m,$d):void{$m->service->approvalRequest($d->selector(),'operator-source');});Check::same($before,$m->e->account());$m->onManager=null;
+    $request=$m->service->approvalRequest($d->selector(),'operator-source');Check::same('rescued@example.com',$request->target()->value());Check::same('owner@example.com',$request->record()->address()->value());Check::same([],$m->phases);Check::same(2,count($m->ids()));
+    $m->onApproval=static function(string $phase,SoSecurity\Account\RecoveryApproval $actual)use($request):bool{Check::same($request->context(),$actual->context());return true;};Check::same(true,$m->confirm($d));
+});
+// Real TOTP operation authorization for an independent recovery operator, plus a private consumed-grant receipt.
+mailboxCase(static function(MailboxEnvironment $m):void{
+    $e=$m->e;$d=$m->begin();$review=$m->service->approvalRequest($d->selector(),'operator-source');$operator=new SoSecurity\Auth\Account('tenant','recovery-operator','operator-v1',true,['operator'],true);$password='Operator test password 49!';$hash=$e->hasher->hash($password);
+    $provider=new SoSecurity\Auth\PasswordIdentityProvider(static function()use(&$operator,$hash){return new SoSecurity\Auth\PasswordRecord($operator,$hash);},static function()use(&$operator,$hash){return new SoSecurity\Auth\PasswordRecord($operator,$hash);},$e->hasher,$hash);
+    $store=new SoSecurity\Storage\FileStore($e->directory.'/budgets','mailbox-operator',$e->clock,5000);$factors=new SoSecurity\Mfa\TotpFactors($store,new SoSecurity\Crypto\Cipher('operator',['operator'=>str_repeat('f',32)],'mailbox-operator',256),'Owned operator',$e->clock);
+    $enrollment=$factors->begin('tenant','recovery-operator','Owned operator');parse_str(parse_url($enrollment->provisioningUri(),PHP_URL_QUERY),$parts);$secret=$parts['secret'];Check::same(true,$factors->confirm('tenant','recovery-operator',$enrollment->id(),(new SoSecurity\Mfa\Totp())->codeAt($secret,$e->clock->time))!==null);
+    $factor=new SoSecurity\Auth\TotpSecondFactor($factors);$sessions=new SoSecurity\Auth\SessionRegistry($store,$provider,$factor,$e->clock);$auth=new SoSecurity\Auth\AuthenticationFlow($store,$provider,$sessions,static function():bool{return true;},$factor,$e->clock);
+    $login=static function(?string $previous=null)use($auth,$e,$password,$secret){$r=$auth->password('tenant','operator-browser','operator',$password,'Owned operator',$previous);if($r->status()==='mfa_required'){$e->clock->time=(intdiv($e->clock->time,30)+1)*30;$r=$auth->secondFactor('tenant','operator-browser',$r->challenge(),['type'=>'totp','code'=>(new SoSecurity\Mfa\Totp())->codeAt($secret,$e->clock->time)]);}if($r->status()!=='authenticated'){throw new RuntimeException('Owned operator authentication failed.');}return $r->credential();};
+    $credential=$login();$fields=['purpose','context','target'];$policy=new SoSecurity\Authorization\RolePolicy(['account.mailbox.recover'=>['type'=>'account','roles'=>['operator'],'fields'=>$fields]]);$authority=new SoSecurity\Authorization\Authorizer($provider,$policy);$grants=new SoSecurity\Operation\Grants($store,$sessions,$authority,static function():bool{return true;},new SoSecurity\Operation\Policy(120,8,300,2,['totp']),$e->clock);
+    $intent=static function(SoSecurity\Account\RecoveryApproval $r)use($fields):SoSecurity\Operation\Intent{return new SoSecurity\Operation\Intent('account.mailbox.recover',new SoSecurity\Authorization\Resource('tenant','account',$r->record()->account()->subject(),$r->identity()->fingerprint()),['purpose'=>$r->purpose(),'context'=>$r->context(),'target'=>$r->target()->value()],$fields);};
+    $proposal=$intent($review);$pending=$grants->begin('tenant','recovery-operator',$credential->token(),$proposal);++$e->clock->time;$credential=$login($credential->token());$grant=$grants->confirm('tenant','recovery-operator',$credential->token(),$proposal,$pending->token());Check::same(true,$grant!==null);
+    $receipts=[];$m->onApproval=static function(string $phase,SoSecurity\Account\RecoveryApproval $request,array $proof)use($grants,$sessions,&$credential,$intent,&$receipts,$grant):bool{
+        if($proof['code']!==$grant->token()){return false;}$current=$sessions->verify('tenant','recovery-operator',$credential->token());if($current===null||$current->method()!=='totp'){return false;}
+        if($phase==='verify'){$spent=$grants->consume('tenant','recovery-operator',$credential->token(),$intent($request),$proof['code']);if($spent===null){return false;}$receipts[$request->context()]=true;}
+        return isset($receipts[$request->context()]);
+    };
+    Check::same(true,$m->service->confirm($d->selector(),$d->notice()->token(),'owned-source',['type'=>'approved','code'=>$grant->token()]));Check::same('rescued@example.com',$e->account()['address']);Check::same(false,$m->service->confirm($d->selector(),$d->notice()->token(),'owned-source',['type'=>'approved','code'=>$grant->token()]));Check::same(1,count($receipts));
+},true);
+echo 'PASS mailbox recovery approvals: '.Check::$assertions.' assertions PHP '.PHP_VERSION."; guarded review and actual independent password/TOTP/operator grant composition, not production approval service\n";

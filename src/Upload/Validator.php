@@ -111,10 +111,10 @@ final class Validator
         if ($handle === false) { throw new StorageException('Cannot read upload source.', 'upload.io'); }
         try {
             $opened = fstat($handle);
-            if (!is_array($opened) || ($opened['mode'] & 0170000) !== 0100000 || $opened['ino'] !== $before['ino'] || $opened['dev'] !== $before['dev']) {
+            if (!is_array($opened) || ($opened['mode'] & 0170000) !== 0100000 || $opened['ino'] !== $before['ino'] || $opened['dev'] !== $before['dev'] || $opened['size'] !== $before['size']) {
                 throw new ValidationException('Source changed while opening.', 'upload.source');
             }
-            $contents = @stream_get_contents($handle, $this->policy->maximumBytes() + 1);
+            $contents = @stream_get_contents($handle, min($this->policy->maximumBytes() + 1, $opened['size'] + 1));
             if ($contents === false) { throw new StorageException('Cannot read upload source.', 'upload.io'); }
             $after = fstat($handle);
             if (strlen($contents) > $this->policy->maximumBytes()) { throw new ValidationException('Upload exceeds byte limit.', 'upload.too_large'); }

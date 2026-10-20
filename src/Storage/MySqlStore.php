@@ -37,6 +37,7 @@ final class MySqlStore implements AtomicStore
         if ($pdo->getAttribute(\PDO::ATTR_DRIVER_NAME) !== 'mysql' || $pdo->inTransaction()) {
             throw new ConfigurationException('Install MySQL schema outside a host transaction.', 'configuration.transaction');
         }
+        \SoSecurity\Support\SqlTransactionGuard::assertIdle($pdo,'mysql');
         try {
             if ($pdo->exec(self::schema()) === false) { throw new StorageException('Cannot install schema.', 'storage.schema'); }
         } catch (\PDOException $e) { throw new StorageException('Cannot install schema.', 'storage.schema', $e); }
@@ -106,10 +107,12 @@ final class MySqlStore implements AtomicStore
         $owned = false;
         $original = null;
         try {
+            \SoSecurity\Support\SqlTransactionGuard::assertIdle($this->pdo,'mysql');
             $original = (int) $this->statement('SELECT @@SESSION.innodb_lock_wait_timeout')->fetchColumn();
             $this->execute('SET SESSION innodb_lock_wait_timeout = ' . $this->lockWait);
             if (!$this->pdo->beginTransaction()) { throw new StorageException('Cannot start database transaction.', 'storage.transaction'); }
             $owned = true;
+            $this->verifyDependencies();
             $result = $operation();
             if (!$this->pdo->commit()) { throw new StorageException('Database commit was not confirmed.', 'storage.commit'); }
             $owned = false;
@@ -128,9 +131,14 @@ final class MySqlStore implements AtomicStore
             if ($this->failed) { throw new StorageException('Database cleanup could not restore the connection; rebuild it.', 'storage.cleanup'); }
         }
     }
+    private function verifyDependencies(): void
+    {
+        foreach(\SoSecurity\Support\SqlSchema::foreignKeyChecks('mysql','sosecurity_state') as $check){$q=$this->statement($check['sql'],$check['parameters']);$related=$q->fetchColumn()!==false;$q->closeCursor();if($related){throw new ConfigurationException('Private security tables must not have foreign-key dependencies.','configuration.schema');}}
+    }
     private function verifySchema(): void
     {
         try {
+            $this->verifyDependencies();
             $engine = $this->statement("SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='sosecurity_state'")->fetchColumn();
             if (!is_string($engine) || strtolower($engine) !== 'innodb') {
                 throw new ConfigurationException('Install the dedicated InnoDB schema before use.', 'configuration.schema');

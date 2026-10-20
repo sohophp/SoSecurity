@@ -50,6 +50,7 @@ $checks = array_column($diagnostic->diagnose(null, true), null, 'check');
 Check::same('pass', $checks['storage.shared.connection']['status']);
 Check::same('pass', $checks['storage.shared.eviction']['status']);
 Check::same('pass', $checks['storage.shared.cas_permission']['status']);
+Check::same('pass', $checks['storage.shared.bounded_read_permission']['status']);
 $redis->setOption(Redis::OPT_PREFIX, 'wrong-prefix:');
 try {
     $store->transact('key', function () { return new Change(['n' => 1], 0, true); });

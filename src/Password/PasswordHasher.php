@@ -52,6 +52,7 @@ final class PasswordHasher
         if (substr($hash, 0, 2) === '$2' && strlen($password) > 72) {
             return false;
         }
+        if (!HashBudget::allows($hash)) { return false; }
         return password_verify($password, $hash);
     }
 
@@ -62,12 +63,22 @@ final class PasswordHasher
             return false;
         }
         $info = password_get_info($hash);
+        if ($this->profile() === 'argon2id' && in_array($info['algoName'], ['argon2i', 'argon2id'], true)) {
+            foreach (['memory_cost', 'time_cost', 'threads'] as $dimension) {
+                // Mixed/higher existing settings require an explicit migration policy, never lower a dimension silently.
+                if (($info['options'][$dimension] ?? 0) > $this->options[$dimension]) { return false; }
+            }
+        }
         if ($this->algorithm === PASSWORD_BCRYPT && $info['algoName'] === 'bcrypt'
             && ($info['options']['cost'] ?? 0) >= $this->options['cost']) {
             return false;
         }
         return password_needs_rehash($hash, $this->algorithm, $this->options);
     }
+
+    public function profile(): string { return $this->algorithm === PASSWORD_BCRYPT ? 'bcrypt' : 'argon2id'; }
+    public function parameters(): array { return $this->options; }
+    public function maximumBytes(): int { return $this->algorithm === PASSWORD_BCRYPT ? 72 : 4096; }
 
     /** Host supplies an exact legacy verifier. Save replacement with compare-and-swap against old hash. */
     public function verifyAndUpgrade(string $password, string $hash, ?callable $legacyVerifier = null): Verification
@@ -88,7 +99,7 @@ final class PasswordHasher
 
     private function validate(string $password): void
     {
-        $max = $this->algorithm === PASSWORD_BCRYPT ? 72 : 4096;
+        $max = $this->maximumBytes();
         if ($password === '' || strlen($password) > $max || strpos($password, "\0") !== false) {
             throw new \SoSecurity\Exception\ValidationException('Password contains NUL, is empty or exceeds the profile byte limit.', 'password.input');
         }

@@ -1,0 +1,12 @@
+<?php
+declare(strict_types=1);
+require __DIR__.'/restoration-support.php';
+foreach([false,true] as $partial){managedCase(static function(ManagedEnvironment $e)use($partial):void{
+    $f=restorationSetup($e);$r=restorationService($e,$f);list($v,$en,$secret)=restorationPrepared($e,$r);$rows=purgeLedger($e,$f,static function($l):array{return $l->bodyPage(20);});$owned=[];$foreign=[];foreach($rows as $row){$body=json_decode($row['payload'],true);if(in_array($body['purpose'],['factor_restoration','factor_restoration_cursor'],true)){$owned[$row['record_id']]=$row;}else{$foreign[$row['record_id']]=$row;}}Check::same(2,count($owned));$before=$e->row();$physical=restorationPhysical($e,$v);
+    $e->keys=new SoSecurity\Support\HmacKeys('next',['next'=>str_repeat('n',32),'test'=>str_repeat('s',32)]);$raw=lifecycleRaw($e);$e->factors=$raw->managedRegistered('managed-test','tenant',str_repeat('e',64),$e->keys,$f,registeredProvider($e,$f));$e->registry=new SoSecurity\Account\FactorRegistry($e->pdo,'managed-test','tenant',str_repeat('e',64),$e->keys,$e->accounts,$e->factors,static function():bool{return true;},static function():bool{return true;},null,$e->clock,$f);$new=restorationService($e,$f,null,null,null,null,null,false);
+    if($partial){purgeLedger($e,$f,static function($l)use($owned,$v):void{$l->reseal([$v['operation']=>$owned[$v['operation']]['revision']]);});}
+    $h=restorationHistory($e,$new);$view=$h->review('rekey','owned-rekey-linked-cursor');Check::same($partial?1:2,$view['counts']['eligible']);$done=$h->maintain($view['context'],'owned-rekey-restoration-history',normalProof());Check::same($partial?1:2,$done['resealed']);$after=purgeLedger($e,$f,static function($l):array{return $l->bodyPage(20);});
+    foreach($after as $row){$id=$row['record_id'];if(isset($owned[$id])){Check::same('next',$row['seal_key']);foreach(['payload','created_at','updated_at','retire_at','owner','kind'] as $key){Check::same($owned[$id][$key],$row[$key]);}}else{Check::same($foreign[$id],$row);}}
+    Check::same($before,$e->row());Check::same($physical,restorationPhysical($e,$v));$noop=$h->review('rekey','owned-current-history');Check::same(0,$noop['counts']['eligible']);Check::same('pending',$new->inspect($v['operation'],'owned-after-key-rotation')['state']);
+});}
+echo 'PASS restoration linked-cursor rekey: '.Check::$assertions.' assertions PHP '.PHP_VERSION."; full and partial flow/cursor key rotation, foreign purposes preserved, no payload/lifetime/physical changes\n";

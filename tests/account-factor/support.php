@@ -1,0 +1,25 @@
+<?php
+declare(strict_types=1);
+require dirname(__DIR__,2).'/vendor/autoload.php';require dirname(__DIR__,2).'/tests/bootstrap.php';require dirname(__DIR__,2).'/examples/SqlAccounts.php';require dirname(__DIR__,2).'/tests/webhook-inbox-support.php';
+final class ManagedEnvironment {
+    public $directory;public $pdo;public $observer;public $clock;public $accounts;public $factors;public $registry;public $keys;public $onRead;public $onManagement;public $reads=0;public $management=0;public $secret;public $codes;public $password='Owned managed account password 49!';
+    public function __construct(bool $enabled=true){
+        $this->directory=privateDirectory();mkdir($this->directory.'/factors',0700);$mysql=($GLOBALS['argv'][1]??'')==='mysql';$socket=getenv('SOSECURITY_TEST_MYSQL_SOCKET');
+        if($mysql&&(!is_string($socket)||!preg_match('~\A/tmp/sosecurity-mysql-[A-Za-z0-9_-]+/mysql\.sock\z~D',$socket)||!is_file(dirname($socket).'/account-test-owner')||is_link(dirname($socket)))){throw new RuntimeException('Owned local MySQL test database required.');}
+        $dsn=$mysql?'mysql:unix_socket='.$socket.';dbname=sosecurity_test;charset=utf8mb4':'sqlite:'.$this->directory.'/managed.sqlite';$options=[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,PDO::ATTR_TIMEOUT=>2];if($mysql){$options[PDO::ATTR_EMULATE_PREPARES]=false;}
+        $this->pdo=new InboxTestConnection($dsn,$mysql?'sosecurity_test':null,$mysql?'integration-only':null,$options);$this->pdo->setAttribute(PDO::ATTR_STATEMENT_CLASS,[InboxTestStatement::class,[$this->pdo]]);$this->observer=new PDO($dsn,$mysql?'sosecurity_test':null,$mysql?'integration-only':null,$options);
+        foreach(['account_example','sosecurity_account_records','sosecurity_account_roots'] as $table){$this->pdo->exec('DROP TABLE IF EXISTS '.$table);}$driver=$mysql?'mysql':'sqlite';
+        foreach(['account','account-example'] as $name){$sql=preg_replace('/^--.*$/m','',file_get_contents(dirname(__DIR__,2).'/resources/sql/'.$name.'-'.$driver.'.sql'));foreach(explode(';',$sql) as $statement){if(trim($statement)!==''){$this->pdo->exec($statement);}}}
+        if(!$mysql){chmod($this->directory.'/managed.sqlite',0600);}$this->clock=new TestClock();$this->accounts=new SoSecurity\Account\Example\SqlAccounts($this->pdo);$pending=$this->accounts->createPending('tenant','user',new SoSecurity\Account\Address('owned@example.test'));$this->accounts->activate($pending,(new SoSecurity\Password\PasswordHasher('bcrypt',['cost'=>10]))->hash($this->password));
+        $factorStore=new SoSecurity\Storage\FileStore($this->directory.'/factors','managed-factor-test',$this->clock);if(($GLOBALS['argv'][2]??'')==='mysql-store'){if(!$mysql){throw new RuntimeException('Use only the owned MySQL test instance.');}$factorPdo=new PDO($dsn,'sosecurity_test','integration-only',$options);SoSecurity\Storage\MySqlStore::install($factorPdo);$factorStore=new SoSecurity\Storage\MySqlStore($factorPdo,'managed-'.basename($this->directory),$this->clock);}
+        $this->factors=new SoSecurity\Mfa\TotpFactors($factorStore,new SoSecurity\Crypto\Cipher('test',['test'=>str_repeat('t',32)],'managed-test'),'Managed test',$this->clock);$this->keys=new SoSecurity\Support\HmacKeys('test',['test'=>str_repeat('s',32)]);
+        if($enabled){$this->enroll();}$this->registry=$this->build();
+    }
+    public function enroll():void {$enrollment=$this->factors->begin('tenant','user','owned@example.test');parse_str(parse_url($enrollment->provisioningUri(),PHP_URL_QUERY),$parts);$this->secret=$parts['secret'];$this->codes=$this->factors->confirm('tenant','user',$enrollment->id(),(new SoSecurity\Mfa\Totp())->codeAt($this->secret,$this->clock->time));if($this->codes===null){throw new RuntimeException('Owned enrollment failed.');}}
+    public function build(?SoSecurity\Support\HmacKeys $keys=null,string $epoch=''):SoSecurity\Account\FactorRegistry {
+        return new SoSecurity\Account\FactorRegistry($this->pdo,'managed-test','tenant',$epoch?:str_repeat('e',64),$keys??$this->keys,$this->accounts,$this->factors,function(...$args):bool{++$this->reads;return $this->onRead===null||($this->onRead)(...$args)===true;},function(...$args):bool{++$this->management;return $this->onManagement===null||($this->onManagement)(...$args)===true;},null,$this->clock);
+    }
+    public function row():array{return $this->pdo->query("SELECT * FROM account_example WHERE scope='tenant' AND subject='user'")->fetch(PDO::FETCH_ASSOC);}
+    public function close():void {$this->onRead=null;$this->onManagement=null;$this->registry=null;$this->factors=null;$this->accounts=null;$this->observer=null;$this->pdo=null;gc_collect_cycles();foreach(new RecursiveIteratorIterator(new RecursiveDirectoryIterator($this->directory,FilesystemIterator::SKIP_DOTS),RecursiveIteratorIterator::CHILD_FIRST) as $file){if($file->isDir()){rmdir($file->getPathname());}else{unlink($file->getPathname());}}rmdir($this->directory);}
+}
+function managedCase(callable $test,bool $enabled=true):void {$e=new ManagedEnvironment($enabled);try{$test($e);}finally{$e->close();}}
