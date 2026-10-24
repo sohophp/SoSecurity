@@ -1,6 +1,6 @@
-# 首版候选：最小PHP接入与迁移回滚
+# 1.0.0本地交付：最小PHP接入与迁移回滚
 
-本指南面向现有PHP项目按需接入组件，不接管账号、业务数据库或路由。运行时源码为`fedc471`，固定G/B/F/H/C已经按准确候选完成；管理文档候选为`fc395be`。这是待管理签收的接入与部署限制方案，不是正式版本或生产上线声明。稳定方法及参数组合以[范围表](stable-v1-api-scope.md)为准，完整结果见[验收记录](stable-v1-acceptance.md)。
+本指南面向现有PHP项目按需接入组件，不接管账号、业务数据库或路由。运行时源码为`fedc471`，固定G/B/F/H/C已经按准确候选完成；管理已在`6de2a35`签收S范围及部署限制。1.0.0是本地交付候选，稳定承诺仅限S；E继续实验，未公开发布或生产上线。最终准确提交和包摘要只写包外交付清单。稳定方法及参数组合以[范围表](stable-v1-api-scope.md)为准，完整结果见[验收记录](stable-v1-acceptance.md)。
 
 ## 安装与实际依赖
 
@@ -20,19 +20,18 @@ Composer约束为PHP `>=7.2 <8.6`、ext-json、ext-hash；本地实际验证7.2.
 ```json
 {
   "name": "example/local-security-consumer",
-  "require": {"sohophp/sosecurity": "dev-candidate"},
+  "require": {"sohophp/sosecurity": "1.0.0"},
   "repositories": [
-    {"type": "path", "url": "/absolute/path/to/unpacked-sosecurity", "options": {"symlink": false, "versions": {"sohophp/sosecurity": "dev-candidate"}}},
+    {"type": "path", "url": "/absolute/path/to/unpacked-sosecurity", "options": {"symlink": false, "versions": {"sohophp/sosecurity": "1.0.0"}}},
     {"packagist.org": false}
   ],
-  "minimum-stability": "dev",
   "config": {"allow-plugins": false}
 }
 ```
 
-在新的消费者目录保存为composer.json，以实际目标PHP执行Composer `install --no-scripts --no-plugins --no-interaction --no-progress`，离线环境设置`COMPOSER_DISABLE_NETWORK=1`。不使用ignore-platform，不把依赖错误跳过；安装后保留composer.lock。`dev-candidate`及path reference是本地包标识，不是稳定标签或源码提交号。已有宿主须合并仓库配置并审阅锁文件差异，不能以此JSON覆盖宿主依赖清单。
+在新的消费者目录保存为composer.json，以实际目标PHP执行Composer `install --no-scripts --no-plugins --no-interaction --no-progress`，离线环境设置`COMPOSER_DISABLE_NETWORK=1`。不使用ignore-platform，不把依赖错误跳过；安装后保留composer.lock。`1.0.0`是明确的本地path版本映射；path reference不是Git提交，也不表示已有公开标签或Packagist发行。已有宿主须合并仓库配置并审阅锁文件差异，不能以此JSON覆盖宿主依赖清单。
 
-C01已验证归档SHA-256 `37ea29c8e92bc171580c322a7c3a1173b9d92f5a9b33d3f4b47c18cc324002fc`和367份安装运行时文件。该归档早于本指南；管理最终打包必须登记新包摘要及文档内容，不能把旧摘要贴到新归档。相同运行时的无关文档变化不要求重复G/B/F/H/C整轮。
+最终文件为`sosecurity-1.0.0.zip`；在交付目录执行`sha256sum -c SHA256SUMS`，核对包外`delivery-manifest.json`的固定SHA-256及准确提交后才解压。最终ZIP生成后不再修改包内文档；本指南不嵌入自身归档摘要，避免自引用。C01历史归档摘要不能用于此ZIP。367份运行时文件须与fedc471及安装包一致，最终包只做PHP7.2/8.5最小烟测，不重复九版G/B/F/H/C。
 
 ## 普通表单、会话、CSRF与共享登录预算
 
@@ -107,4 +106,4 @@ PHP7.2无hrtime，真实耗时预算使用microtime；回拨会使当次预算�
 4. 回滚先恢复可靠旧保护再停用新调用；旧保护不安全则关闭敏感入口，不能匿名放行。恢复已记录的依赖和配置；保留新旧状态、封禁、nonce、密钥及审计，不回退安全账本、不清空Redis/Session/目录，不重试结果未知的业务。
 5. CSRF/验证码切换可能要求刷新旧表单；已签发的API令牌由原管理流程有序撤销，不直接删除数据。密码升级不能还原旧弱哈希；旧版本若不能验证新哈希，保留兼容验证或停用对应登录入口。
 
-管理签收材料为本指南、范围表中的逐项源码路径核对、固定验收及Q01/Q02原始证据。签收只覆盖上述限制下的组件接入；最终候选新归档身份、实际宿主部署以及公开发布仍分别登记，不在本轮自动执行。
+管理已签收本指南所列S调用与部署限制。最终准确提交、ZIP摘要、原始安装/来源/最小PHP烟测证据由包外交付清单绑定；最终产物仍须管理复核。实际宿主部署与公开发行未授权。

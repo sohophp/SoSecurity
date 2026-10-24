@@ -1,5 +1,11 @@
 # SoSecurity
 
+## Local 1.0.0 delivery — not publicly released
+
+The stable commitment covers **only S methods, ordinary configurations and accepted deployment conditions** in the [scope register](docs/stable-v1-api-scope.md). E entries remain experimental; historical management timeouts, unknown outcomes and SqlInbox failures are retained and unresolved. Do not configure or expose E entries, share protected directories/connections/processes, or downgrade existing authentication/MFA. PHP 7.2 retains fail-closed wall-clock rollback availability limits.
+
+Start with the [PHP integration, dependencies and migration/rollback guide](docs/stable-v1-integration.md). [Acceptance evidence](docs/stable-v1-acceptance.md) binds the nine-runtime G/B/F/H/C gates and bounded Q checks to source fedc471. The external `delivery-manifest.json` and `SHA256SUMS` bind the final commit and ZIP; historical capability descriptions below are not a stable-method allowlist. No push, tag, registry publication or production deployment is authorized.
+
 The optional [native quarantine composition](docs/upload-quarantine-native.en.md) supplies protected pages and a CLI worker with a host-owned SQLite example index; the SDK does not require that schema or provision default accounts.
 
 Persistent upload quarantine now supplies private pending jobs, bounded retries, administrative rescanning/rejection and current-generation content snapshots. See the [guide](docs/upload-quarantine.en.md); full integration acceptance remains open.
@@ -44,7 +50,7 @@ The 2026-10-17 refinement adds optional encrypted TOTP enrollment, atomic replay
 
 Framework-independent, modular PHP Web security helpers for **PHP 7.2–8.5**. Composer package: `sohophp/sosecurity`; namespace: `SoSecurity\`. Start with the [Chinese documentation index](docs/index.md).
 
-The current version is an **unreleased development candidate**. Use a local Composer path repository with `"sohophp/sosecurity": "@dev"`; the intended command after public release is `composer require sohophp/sosecurity`. The core requires PHP, JSON and hash, with no mandatory third-party runtime package.
+The current version is a **local 1.0.0 delivery candidate, with only S usage stable and no public release**. Verify the fixed ZIP checksum in the external delivery manifest first. Use a Composer path repository with `"options":{"symlink":false,"versions":{"sohophp/sosecurity":"1.0.0"}}` and require `"sohophp/sosecurity":"1.0.0"`. Disable Packagist and install offline with `COMPOSER_DISABLE_NETWORK=1 composer install --no-plugins --no-scripts --no-interaction --no-progress`; do not ignore platform requirements. The complete local JSON is in the integration guide. The core requires PHP, JSON and hash, with no mandatory third-party runtime package.
 
 Capabilities include CAPTCHA, stateful and signed stateless CSRF, application rate limiting and automatic/manual bans, passwords/reset tokens, opt-in session helpers, contextual output encoding, strict input validation, optional reviewed HTML cleanup, private uploads, HTTP/CORS/proxy/redirect policies, bounded pinned outbound HTTP, API credentials/HMAC/nonces, audit callbacks and diagnostics. Automatic bans reuse RateLimit; there is no system Fail2ban integration or separate AutoBan package.
 

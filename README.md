@@ -1,5 +1,11 @@
 # SoSecurity
 
+## 1.0.0本地交付范围（尚未公开发布）
+
+首版稳定承诺**仅覆盖[范围表](docs/stable-v1-api-scope.md)的S方法、普通配置与已签收部署条件**。E入口仍为实验功能，历史管理超时、未知结果和SqlInbox失败保留未修复；不配置/暴露E入口，不混用受保护目录、连接或进程，不降低已有认证/MFA保护。PHP7.2回拨时拒绝的可用性条件保留。未推送、打标签或登记公开包。
+
+从[最小PHP接入、依赖及迁移回滚指南](docs/stable-v1-integration.md)开始；[固定验收与证据](docs/stable-v1-acceptance.md)覆盖当前源码fedc471的九版G/B/F/H/C及限定Q检查。最终ZIP、准确提交及固定SHA-256见包外`delivery-manifest.json`和`SHA256SUMS`，不得把历史开发记录当作所有能力稳定的声明。
+
 可选[原生隔离接入](docs/upload-quarantine-native.md)现提供受保护网页和CLI扫描工作进程，使用宿主SQLite示例索引；SDK不依赖该表结构，也不创建默认账号。
 
 上传隔离核心现支持私有待扫、后台有限重试、管理员重扫／拒绝与当前版本内容读取；原同步接口保持。见[持久隔离指南](docs/upload-quarantine.md)，完整接入验收继续。
@@ -14,20 +20,20 @@
 
 SoSecurity 是 **框架无关、按需使用的 PHP Web 安全加固组件库**。通过 Composer 安装，可在原生 PHP、自研框架或已有框架项目中逐项替换验证码、CSRF、登录防护等旧代码。包名 `sohophp/sosecurity`，命名空间 `SoSecurity\`，支持 PHP **7.2–8.5**。
 
-当前是**未发布开发候选**，已有功能和验证范围见[功能清单](docs/features.md)与[当前状态](docs/execution-status.md)。自动封禁属于统一的请求限流体系，不接系统 Fail2ban，也不单独创建 AutoBan。
+当前是**1.0.0本地交付候选（未公开发布，仅S范围稳定）**，已有功能和验证范围见[功能清单](docs/features.md)与[当前状态](docs/execution-status.md)。自动封禁属于统一的请求限流体系，不接系统 Fail2ban，也不单独创建 AutoBan。
 
 ## 安装与最小配置
 
-尚未发布稳定版本，当前在独立测试项目中使用本地路径仓库：
+公开发行尚未授权；在独立项目中先核对交付ZIP的固定SHA-256，解压后使用1.0.0本地路径映射：
 
 ```json
 {
-  "repositories": [{"type": "path", "url": "/absolute/path/to/soSecurity", "options": {"symlink": false}}],
-  "require": {"sohophp/sosecurity": "@dev"}
+  "repositories": [{"type": "path", "url": "/absolute/path/to/unpacked-sosecurity", "options": {"symlink": false, "versions": {"sohophp/sosecurity": "1.0.0"}}}, {"packagist.org": false}],
+  "require": {"sohophp/sosecurity": "1.0.0"}
 }
 ```
 
-执行 `composer install`。公开发布后的安装命令为 `composer require sohophp/sosecurity`。
+离线执行`COMPOSER_DISABLE_NETWORK=1 composer install --no-plugins --no-scripts --no-interaction --no-progress`，保持Packagist禁用，完整JSON见接入指南。不得忽略平台要求；公开下载/发布并未授权。
 
 ```php
 require 'vendor/autoload.php';
@@ -45,6 +51,8 @@ CSRF、验证码默认复用宿主 Session；跨会话限流、密码重置和 A
 核心仅要求 PHP、JSON 和 hash，没有第三方运行时强制依赖。GD、Redis、PDO MySQL、cURL、intl、DOM/ctype及HTML Purifier仅用于对应能力，见[配置参考](docs/configuration.md)。
 
 ## 现有能力
+
+以下目录同时包含S与E，是否稳定以范围表的具体方法/参数为准；E不得由此获得稳定承诺。
 
 | 能力 | 内容 | 指南 |
 | --- | --- | --- |
