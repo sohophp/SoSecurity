@@ -1,4 +1,4 @@
-# 首版固定基础接入验收（待管理审查，尚未执行）
+# 首版固定基础接入验收与实测记录（整体候选待最终签收）
 
 2026-10-25。依据 [管理范围](stable-v1-management-2026-10-25.md)、[管理审查](stable-v1-review-2026-10-25.md) 和 [API范围](stable-v1-api-scope.md)。本批只制定清单，所有下列新验收项状态均为**未执行**。本文件不是测试运行器；命令供管理审查后安排执行，不能据其存在宣称通过。
 
@@ -64,7 +64,7 @@ F01—F12九版普通组件，全部使用未绑定StateBoundary的新测试数�
 | B02 | `python3 tests/api_key_time_redis.py "$R"`；`python3 tests/preset_redis.py "$R"`；下方B02-R原始Redis检查 | 新建无TCP Redis，ext-redis必需；普通API与真实登录预算观察、重放/时效/错误backend及原子状态故障；父进程退出0，全部子程序完成，实际socket来自当前运行器 |
 | B03 | `python3 tests/mysql_check.py SELECTOR "$R"`；SELECTOR固定为`--mysql-store-regression --mysql-store-index --mysql-store-errors --api-key-time --configuration-presets`，分别执行 | 私有无TCP MySQL/新测试库及账号，ext-pdo_mysql；真实存储结构/错误、调用者事务拒绝且不提交宿主事务、scope/nonce/代次、登录共享预算；父退出0且各分支全部子程序通过。`--mysql-store-regression`额外调用ownership的`store/prune/install`（各显式/隐式事务），不调用处理器执行或未知结果 |
 | B04 | `"$R" -d memory_limit=32M tests/preset-shared-budget.php file`；Redis和MySQL分别由B02的preset运行器及B03的`--configuration-presets`提供 | 对同一新站点两个实例共享login预算，拒绝不共享/缺依赖；结尾`PASS actual login preset BACKEND`。File/Redis/MySQL三组均有证据才算预设共享通过 |
-| Q01 | `"$R" -d memory_limit=8M tests/webhook-metadata-budget.php sqlite all`；`python3 tests/mysql_check.py --webhook-metadata-budget "$R"` | 全新SQLite/MySQL收件数据，固定all，包含`event_type/receive`原未解释失败；全部声明场景完成、零失败、退出0、无错误提交/无处理业务。SqlInbox为E，但本项用于共享SQL/时钟与已知失败隔离审查；不因新通过删除旧失败 |
+| Q01 | 最终管理限定：PHP7.2仅一次`python3 tests/mysql_check.py --webhook-metadata-budget "$R"`，或引用准确输入相同的已完成结果；选择器调用原程序mysql/all | 全新私有MySQL收件数据，包含`event_type/receive`旧失败；31场景/26损坏/5正常、failures为空、退出0、无错误提交/无业务处理。原九版SQLite/MySQL计划由此次限定取代，不再补跑。SqlInbox为E，本次不追求无法恢复的历史根因；新通过不删除旧失败 |
 | Q02 | `"$R" -d memory_limit=8M tests/deadline-clock.php`；`"$R" -d memory_limit=8M tests/deadline-failure-kind.php` | 无效/不可用/倒退/耗时越界的错误码、固定消息和脱敏；退出0及各自PASS。这是明确故障注入，不证明真实时间源稳定；B/H/C同时记录未经替换的真实Deadline路径，PHP7.2应记录`hrtime`缺失 |
 
 B02-R使用以下固定文档内命令，补充现有`tests/redis.php`的真实类型损坏、过期/回调失败和初始化拒绝；不运行Redis恢复或账号恢复脚本。命令只在管理安排执行时复制运行，不在本批执行：
@@ -336,3 +336,41 @@ B组交付到管理会话审核和阶段提交，本会话未操作Git索引。�
 **失败记录保留**：本批243项功能和归档/安装未发生真实失败。新增独立复核脚本先后因命名空间分隔符计数及误将发行配置与源码基线比较而退出1；这些是复核判据错误，原脚本副本及各次错误记录保留在本批目录，最小修正后只重读原日志/摘要，不重跑有效用例、不覆盖原result，不改SDK或测试预期。历史最小消费者及MySQL运行器误判记录也继续保留。
 
 本节完成固定C01，不是全项目、生产接入或正式发布验收；未执行旧未知结果续办和暂缓恢复链，未推送/发布，也未操作Git索引。首版goal仍未完成，保留最多五项发布收口事项：稳定/实验共享底层隔离结论、默认管理超时及completion_unknown边界、Q02真实时钟可用性、Q01旧Webhook/MySQL失败解释，以及最终最小接入/迁移回滚交付。C01通过只补齐第五项中的固定消费者门禁，不自动关闭其余事项。下一步由管理会话复核本组并安排既有阻塞的限定处置，不新增功能或接口。
+
+
+## 最后限定收口：Q01/Q02、隔离与接入（2026-10-25）
+
+管理已复核完整C01并提交`fc395bee4a12ad30817621cec00a17736b90a5eb`，固定G/B/F/H/C不再整轮重复。本节遵照最后限定：Q01只引用本轮已完成的PHP7.2/MySQL原专项；Q02只执行九版既有故障检查并只读核查时间源；逐项核对现有S方法调用路径并交付一份[最小PHP接入/依赖/迁移回滚指南](stable-v1-integration.md)。未改变源码、测试、API、默认预算、时间函数或系统配置。
+
+### 已执行并通过
+
+- **Q01指定的一次PHP7.2/MySQL**：精确命令`python3 tests/mysql_check.py --webhook-metadata-budget /var/www/php/7.2/soSecurity/docs/stable-v1-start-evidence-2026-10-25/runtimes/php72`，父退出0，功能PHP子程序退出0由原运行器check=True及正常收尾确认。原`mysql/all`程序完整31场景：26损坏拒绝、5正常，297条断言，4MiB峰值，failures为空，唯一`PASS webhook metadata budget mysql`；全新私有无TCP实例，不运行处理器/业务。命令、运行时与原始结果见[Q01](stable-v1-known-failures-evidence-2026-10-25/q01-result.json)，[原日志](stable-v1-known-failures-evidence-2026-10-25/q01-72-mysql.log)。本次没有异常reason可报告；不能编造历史reason。原`event_type/receive` RuntimeException/test.assertion及duration_backwards=false日志保持不变，不归因于时钟、不将新通过称为历史修复。
+- **Q02九版18/18**：每版以相同R运行`-d memory_limit=8M tests/deadline-clock.php`及`tests/deadline-failure-kind.php`，各37/9条断言、退出0，精确完成标记各一次，无NOT RUN；[逐项原始结果](stable-v1-known-failures-evidence-2026-10-25/q02-result.json)。这是原测试内部的进程隔离故障注入，不用于替换Q01或G/B/F/H/C真实时钟，不改变生产Deadline。验证无效/不可用时钟的固定错误、预算耗尽与回拨分类、继承到期及无私密异常泄露，不证明真实时间源持续可用。
+- **候选和输入**：Q01/Q02开始与终态HEAD均为`91efdb8`，后续管理C01提交为`fc395be`；源码仍`fedc471`。本批重新枚举的1243份源码/资源/测试/样例与C01完全一致；二进制/包装器/扩展摘要绑定原运行映射，未漂移。[收口核对](stable-v1-known-failures-evidence-2026-10-25/closeout-audit.json)登记Q结果、源码文件摘要及旧失败日志摘要。
+- **指南检查**：新增文档内两个PHP片段在原生PHP7.2/8.5共4次语法检查退出0，Composer JSON可解析，本地链接存在；功能接线引用C01已经验证的实际安装包、legacy-login和api-request适配器，没有重跑整轮。语法/链接检查不冒称新宿主功能验收，也没有接入真实业务站。
+
+### 时间源及精确隔离结论
+
+只读核查为WSL2内核`5.15.167.4-microsoft-standard-WSL2`，当前内核clocksource为`tsc`，可选项含`hyperv_clocksource_tsc_page`；PHP7.2没有hrtime，其余八版存在。见[只读时间源记录](stable-v1-known-failures-evidence-2026-10-25/time-source-readonly.json)。内核元数据不证明历史时钟调整原因，更不能保证未来microtime单调；没有执行切换、同步、常驻服务或时钟替换。
+
+精确源码调用图及对应既有门禁已写入[范围表最终核对](stable-v1-api-scope.md#首版最终源码路径核对2026-10-25fedc471待管理签收限制方案)：普通工厂的state boundary缺省null，普通ApiKeys/HMAC不构造CredentialRegistry；普通Webhook验签不构造SqlInbox/SqlProcessor；普通MySqlStore只拥有自己的事务并共享Guard/SqlSchema，FileStore始终保留物理目录保护。只有明确配置并调用E入口才进入旧管理/收件操作；不能通过删已有保护、换目录/连接或缓存权限事实来伪造这种隔离。任意宿主自定义服务及同进程混用E不在该结论内。
+
+共享Deadline**不能**按S/E隔离。PHP7.2使用microtime，回拨使当次操作预算持续到期，可能拒绝合法的基础请求；此时必须拒绝业务/503，不承诺无中断可用性。普通ApiKeys也可能产生`api.issuance_unknown`；隔离管理工作流不意味着普通存储提交永远确定，仍禁止自动重试未知结果。当前未发现可复现且需要修改SDK的S缺陷，故本批没有SDK补丁；不是全面无缺陷证明。
+
+### 保留的退出与未执行记录
+
+最新限定到达前，按旧Q01九版清单已额外完成PHP7.2/SQLite及7.3/7.4两种后端，均退出0；8.0/SQLite已登记退出0，正在执行的8.0/MySQL在父驱动暂停后独立完成并清理，内核终态wait status为0、日志完整31场景通过。随后只终止自己的父驱动，**父退出143**，没有修改为0，原部分结果没有补写成整组通过：[停止记录](stable-v1-known-failures-evidence-2026-10-25/q01-scope-stop.json)、[原部分结果](stable-v1-known-failures-evidence-2026-10-25/q01-remaining-result.json)。PHP8.1—8.5 Q01未执行，不再排队；这些额外结果不是最后限定所需的重复PHP7.2调用，最终Q01只引用上面指定的一项。
+
+未执行默认管理/未知结果重试、跨代交接、最终账号恢复、完整F01、实际业务站接入、生产数据库、外部投递、推送或发布；不操作Git索引。旧MySQL标记误判、C01复核脚本错误、旧超时/原失败及本次按范围停止143均原样保留。
+
+### 五项明确管理签收建议（不新增阻塞）
+
+| 原收口项 | 当前证据和建议决定 | 尚待签收的边界 |
+| --- | --- | --- |
+| 1. 稳定/实验隔离 | 按范围表逐项调用图及G/B/F/H/C签收S普通配置；不注册E路由/命令/工作端，不混用受保护目录/权限图/PDO | 支持条件，不是新增SDK禁用开关；任意E混用/第三方服务不自动取得稳定承诺 |
+| 2. 旧管理3000ms/未知结果 | 作为E未通过行为保留，普通S路径不调用该管理流程；不优化高级链或重试旧结果 | 普通API自身的未知签发/提交仍必须拒绝自动重试；不宣布管理功能稳定 |
+| 3. PHP7.2真实时钟 | 保留7.2兼容声明，签收回拨时拒绝/503的可用性条件；不能接受该条件的站点由管理选既有兼容7.3—8.5运行时 | 不保证WSL/宿主时间永不倒退，不改时钟、预算或系统默认；Q02不证明持续可用 |
+| 4. 旧SqlInbox失败 | 指定一次新数据专项完整通过；旧reason不可恢复，停止追求历史归因。以普通验签与耐久收件的源码入口隔离签收S | 旧失败保留，SqlInbox/处理器仍E，不以新绿删除失败或承诺持久去重/处理 |
+| 5. 唯一候选与接入交付 | 固定G/B/F/H/C已管理复核；本指南给出实际安装/表单/预算/API接线及迁移回滚，按本节结果交管理审查 | 最终文档候选新包摘要由管理下一步登记；没有生产或真实业务站上线声明 |
+
+本批交付限定决策材料，整体goal仍active；不自行把管理签收、新归档或首版稳定状态写成已完成。若管理拒绝某项隔离条件，只针对明确影响S的复现提出最小文件修复，不恢复高级优化队列或追加证明框架。

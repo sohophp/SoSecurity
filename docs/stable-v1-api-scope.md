@@ -46,6 +46,32 @@
 | `Storage\MySqlStore` | 普通专用连接的安装、构造、原子变更及清理；`schema`为当前结构描述 | 安装/变更不加入调用者已有事务；不接管宿主回滚。高级组件通过相同PDO或共享事务工具使用它时，仍需独立耦合证明 |
 | `Diagnostics\Inspector` / `Audit\AuditLogger` | 普通只读诊断和本地脱敏事件；诊断不构成安全认证 | 恢复/修复型操作、SQL审计委托与复杂审计发件箱为E；宿主自行注入的远程投递不在本地验收范围 |
 
+## 首版最终源码路径核对（2026-10-25，fedc471；待管理签收限制方案）
+
+本表核对上文S用途和混合方法的普通分支，不改变完整类型登记、方法契约或S/E名单。源码与当前`fc395be`候选的src/resources/tests/examples一致；G/B/F/H/C及本轮Q01/Q02分别提供执行证据。这里的隔离结论限于不配置/调用E入口、不混用受保护目录或连接的部署；不能证明任意自定义服务、同进程E调用或所有未来缺陷都被隔离。
+
+| 已审S方法/用途 | 实际普通调用路径与默认分支 | 实验路径的边界及现有证据 |
+| --- | --- | --- |
+| S01/S02：`Security::csrf/captcha/csrfPolicy/signedCsrf` | `proofStore(null)`→`authBoundary()`缺省null→`store('tokens')`；Config缺省token_storage为SessionStore。CsrfTokens/Captcha的state为null时直接调用普通AtomicStore；signedCsrf只取显式HmacKeys和Clock | 配置保护边界却未传完整proof连接时抛configuration.state_proof，不退回普通模式；不调用账号注册/恢复。F01/F02/F11、H01/H04、C01覆盖普通分支 |
+| S03：`rateLimiter/budgetLimiter/budgetGroup/budgetComposite` | rateLimiter→`store('shared')`→普通RateLimiter；预算方法→`apiStore(true)`→相同共享存储。拒绝MemoryStore/SessionStore承担跨会话预算 | `store`末尾检查与捕获认证目录重叠并拒绝；不调用管理凭据。F03/B04/H01/C01覆盖；自定义AtomicStore的原子性/预算仍属宿主契约 |
+| S04：`passwordHasher/passwordPolicy` | 根据password配置构造本地哈希/策略，默认不接外部breach_checker；不读取账号或启动管理状态 | Argon2id依实际构建能力；可选外部检查服务不由本地验收替代。F04、H01/C01覆盖bcrypt及算法拒绝 |
+| S05：`sessions/authentication`及普通SessionRegistry/AuthenticationFlow方法 | `authBoundary`缺省null；`authFactor`在managed_factors=false、second_factor=null且mfa未配置时返回null；通过宿主IdentityProvider及request_guard走普通会话/密码路径 | 缺认证配置/守卫即拒绝；只有显式配置才调用managedSecondFactor或StateBoundary。已启用MFA的账号不会因此降级。F05/F11、H01、C01提供基础与当前身份变化证据 |
+| S06/S08：`session/configureSession/sessionCookieHeader`及HTTP策略 | SessionSecurity的时间/轮换及显式原生配置、Cookie构造；ClientIp/TrustedProxies/CORS/Headers按独立策略处理 | fromArray不自动启动Session/发头；代理/会话生命周期由宿主负责。F05/F06、H01/H04、C01覆盖 |
+| S07：验证/输出编码 | Validator/Rule及上下文Escaper直接执行有界输入和编码；不通过账号管理或SqlInbox | HTML净化/高级可选适配不自动随基础编码启用。F06覆盖，S不包含未验收的E组合 |
+| S09：`uploader`及普通上传方法 | `Security::uploader`→Upload\Saver/Policy；与`quarantine()`分开，不构造扫描任务/租约/SqlProcessor | 原始上传来源、MIME/大小/资源检查仍执行；自定义Scanner/Storage须满足契约。F07/B01/H03/C01覆盖真实故障及multipart |
+| S10：`outbound`及普通出站方法 | `Security::outbound`→Http\Outbound\Client，显式Resolver/Transport；普通真实cURL路径不调Outbox/工作进程 | SSRF、固定地址/TLS和Deadline仍共享；F08/H06已分别覆盖适配故障及真实隔离网络，非真实外部服务通过 |
+| S11：`apiKeys(null)`及普通ApiKeys方法 | `apiStore()`在authBoundary非null时拒绝普通入口；否则构造`new ApiKeys(store,clock)`，state缺省null，issue/authenticate/revoke走普通存储/epoch，不构造CredentialRegistry | CredentialRegistry只由`apiCredentials`显式调用，旧account.completion_unknown不进入此图；普通ApiKeys自身仍可能api.issuance_unknown，不允许自动重试。F09/B02/B03/H02/C01覆盖 |
+| S11：`hmacSigner/hmacVerifier()`及`HmacVerifier::verify` | 普通SignaturePolicy/KeyProvider/NonceStore；构造器state/boundary均null。verify检查候选、consume nonce、最终时效，不调用native/withVerification | 额外状态图参数不完整即拒绝；受保护图只能用E方法，不能混用普通verify。F09/H02/C01验证原始字节/重放/权限/故障 |
+| S12：`webhook(name)`与`Verifier::endpoint/verify` | `webhookState`缺省返回null；工厂只构造Endpoint/Verifier。verify→当前请求守卫、Wire、两次密钥复核、时效；无PDO、SqlInbox、关联表或业务处理调用 | SqlInbox仅由webhookInbox显式构造，SqlProcessor同理；普通验签不提供耐久收件/去重保证。F10/H05及Q01当前收件专项分别记录，不能互相替代 |
+| S13：`fromArray/config/diagnose(null,false)/initializeStorage(false)` | fromArray仅Config与SystemClock；高级配置块仅在显式提供时校验，未提供保持null/空。Inspector默认probe=false；显式initializeStorage(false)仅遍历shared/tokens普通后端 | initializeStorage不是请求故障自动修复入口；true恢复参数仍E。F11及最小工厂/C01证明无高级服务依赖；诊断不构成授权或稳定认证 |
+| S14：`authorization`、普通Authorizer方法和本地AuditLogger | 普通IdentityProvider/PolicyProvider/本地审计；未配置Policy默认拒绝，受审计允许决定返回前重新读取当前身份 | stateAudited/Role/Snapshot及SQL审计委托仍E；任意注入sink/策略不由工厂自动隔离。F12与已有当前权限回归覆盖普通拒绝/复核 |
+| 共享FileStore | 普通transact/prune仍经FileStateBoundary::assertActive；未绑定物理目录不调用保护闭包，绑定后不能绕过；锁、读取、原子写入和Deadline共同执行 | 保护域是进程内物理目录身份，不是仅namespace。限制方案要求S与E目录不混用、S部署不注册E操作；B01/C01验证普通路径，不能把删除标记/换目录当迁移 |
+| 共享SQL | MySqlStore的owned/install用SqlTransactionGuard::assertIdle及SqlSchema检查；自己begin/commit/清理并恢复会话策略。它不调SqlInbox、SqlProcessor或高级SqlTransaction编排 | Guard/SqlSchema/Deadline仍共享；专用PDO，不加入宿主已有事务；B03全部事务/索引/错误模式与C01实测支撑普通路径。未知提交/清理失败仍拒绝且不重试 |
+
+对应源码：[工厂](../src/Security.php)、[Config](../src/Configuration/Config.php)、[ApiKeys](../src/Api/ApiKeys.php)、[HMAC](../src/Api/HmacVerifier.php)、[Webhook](../src/Webhook/Verifier.php)、[文件保护域](../src/Storage/FileStateBoundary.php)、[MySQL](../src/Storage/MySqlStore.php)、[Deadline](../src/Support/Deadline.php)。这不是根据类型名称推断，也没有用新测试框架替代源码核对。
+
+**提交管理签收的结论**：在上述普通调用图、独立存储/连接、E模块不配置也不暴露入口的限制下，旧管理3000ms/未知结果及SqlInbox收件操作不在S执行路径上；当前没有证据显示必须修改SDK的S缺陷。保留E原失败，不将新Q01通过称为根因修复。共享Deadline不能隔离：PHP7.2用microtime，回拨会拒绝合法请求，因此稳定支持须明示可用性条件及故障503，不承诺不间断服务；不能把它标成仅E问题。具体依赖、宿主责任、未知结果处置和迁移/回滚见[最小接入指南](stable-v1-integration.md)。管理确认这些限制后可签收该范围；未确认前不自行宣布首版已稳定。
+
 ## 实验入口分组（保留源码和旧契约）
 
 | 分组 | 具体入口及启用条件 | 本版边界 |
