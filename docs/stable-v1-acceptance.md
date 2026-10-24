@@ -60,7 +60,7 @@ F01—F12九版普通组件，全部使用未绑定StateBoundary的新测试数�
 
 | ID | 固定选择器（九版每个R） | 支持组合、拒绝/故障与完成判据 |
 | --- | --- | --- |
-| B01 | `"$R" -d memory_limit=32M tests/file-store-integrity.php`；`"$R" -d memory_limit=32M tests/file-store-lock-metadata.php`；`SOSECURITY_REQUIRE_POSIX=1 "$R" -d memory_limit=32M tests/storage-failure.php` | 自建0700普通目录；完整性、锁元数据、写入失败拒绝及回调异常后释放；POSIX/pcntl/prlimit前置条件必须满足，退出0及结尾断言完成；不绑定既有受保护目录 |
+| B01 | `"$R" -d memory_limit=32M tests/file-store-integrity.php`；`"$R" -d memory_limit=32M tests/file-store-lock-metadata.php`；`SOSECURITY_REQUIRE_POSIX=1 "$R" -d memory_limit=32M tests/storage-failure.php` | 自建0700普通目录；完整性、锁元数据、写入失败拒绝及回调异常后释放；必须有pcntl且满足posix_setrlimit或Linux可执行prlimit，真实限制与7条故障断言均须完成，退出0及结尾断言完成；不绑定既有受保护目录 |
 | B02 | `python3 tests/api_key_time_redis.py "$R"`；`python3 tests/preset_redis.py "$R"`；下方B02-R原始Redis检查 | 新建无TCP Redis，ext-redis必需；普通API与真实登录预算观察、重放/时效/错误backend及原子状态故障；父进程退出0，全部子程序完成，实际socket来自当前运行器 |
 | B03 | `python3 tests/mysql_check.py SELECTOR "$R"`；SELECTOR固定为`--mysql-store-regression --mysql-store-index --mysql-store-errors --api-key-time --configuration-presets`，分别执行 | 私有无TCP MySQL/新测试库及账号，ext-pdo_mysql；真实存储结构/错误、调用者事务拒绝且不提交宿主事务、scope/nonce/代次、登录共享预算；父退出0且各分支全部子程序通过。`--mysql-store-regression`额外调用ownership的`store/prune/install`（各显式/隐式事务），不调用处理器执行或未知结果 |
 | B04 | `"$R" -d memory_limit=32M tests/preset-shared-budget.php file`；Redis和MySQL分别由B02的preset运行器及B03的`--configuration-presets`提供 | 对同一新站点两个实例共享login预算，拒绝不共享/缺依赖；结尾`PASS actual login preset BACKEND`。File/Redis/MySQL三组均有证据才算预设共享通过 |
@@ -132,8 +132,24 @@ for row in reviewed:
     assert hashlib.sha256(runtime.read_bytes()).hexdigest()==row['wrapper_sha256']
     for module in row['modules']:
         assert hashlib.sha256((root/module['file']).read_bytes()).hexdigest()==module['sha256']
-    if row['missing_required_extensions']:
-        raise RuntimeError('Reviewed runtime profile incomplete: '+row['version']+' '+str(row['missing_required_extensions']))
+    missing=[name for name in row['missing_required_extensions'] if name!='posix']
+    if missing:
+        raise RuntimeError('Reviewed runtime profile incomplete: '+row['version']+' '+str(missing))
+    # storage-failure.php starts PHP_BINARY without the extension activation flags.
+    # Check the real child profile as well; do not require ext-posix when its existing prlimit path applies.
+    probe_env={k:v for k,v in os.environ.items() if k not in ['PHP_INI_SCAN_DIR','PHPRC']}
+    probe_code='echo json_encode(["php"=>PHP_VERSION,"binary"=>PHP_BINARY,"extensions"=>get_loaded_extensions(),"pcntl"=>function_exists("pcntl_signal"),"posix"=>function_exists("posix_setrlimit"),"prlimit"=>PHP_OS_FAMILY==="Linux"&&is_executable("/usr/bin/prlimit")]);'
+    parent=subprocess.run([str(runtime),'-r',probe_code],env=probe_env,capture_output=True,text=True,timeout=15)
+    assert parent.returncode==0 and not parent.stderr
+    parent_profile=json.loads(parent.stdout)
+    child=subprocess.run([parent_profile['binary'],'-r',probe_code],env=probe_env,capture_output=True,text=True,timeout=15)
+    assert child.returncode==0 and not child.stderr
+    child_profile=json.loads(child.stdout)
+    assert set(['json','hash','session','gd','fileinfo','curl','pdo_sqlite','pdo_mysql','sodium','redis','pcntl']).issubset(parent_profile['extensions'])
+    assert set(['gd','fileinfo','pcntl']).issubset(child_profile['extensions'])
+    for profile in [parent_profile,child_profile]:
+        assert profile['php']==row['native_version'] and profile['pcntl'] and (profile['posix'] or profile['prlimit'])
+    print('WRITE_FAILURE_PROFILE',row['version'],json.dumps({'parent':parent_profile,'child':child_profile},sort_keys=True))
     runtimes.append(str(runtime))
 env={k:v for k,v in os.environ.items() if not k.startswith(('SOSECURITY_TEST_','SOSECURITY_REQUIRE_')) and not ('SOSECURITY_' in k and '_EXAMPLE_' in k) and k not in ['PHP_INI_SCAN_DIR','PHPRC'] and k.upper() not in ['HTTP_PROXY','HTTPS_PROXY','ALL_PROXY']}
 env.update(COMPOSER_DISABLE_NETWORK='1',COMPOSER_NO_INTERACTION='1',PYTHONDONTWRITEBYTECODE='1')
@@ -244,13 +260,35 @@ Q01属于已有失败的诊断：一次按当前准确候选收集具体异常�
 | 7.4.33 | `docs/stable-v1-start-evidence-2026-10-25/runtimes/php74` | sodium、posix | 已具备 |
 | 8.0.30 | `docs/stable-v1-start-evidence-2026-10-25/runtimes/php80` | sodium | 已具备 |
 | 8.1.34 | `docs/stable-v1-start-evidence-2026-10-25/runtimes/php81` | 无 | 已具备 |
-| 8.2.32 | `docs/stable-v1-start-evidence-2026-10-25/runtimes/php82` | igbinary、msgpack、redis | 仍缺版本匹配posix |
+| 8.2.32 | `docs/stable-v1-start-evidence-2026-10-25/runtimes/php82` | igbinary、msgpack、redis | posix扩展未加载；B01已验证prlimit路径 |
 | 8.3.35 | `docs/stable-v1-start-evidence-2026-10-25/runtimes/php83` | sodium | 已具备 |
-| 8.4.23 | `docs/stable-v1-start-evidence-2026-10-25/runtimes/php84` | igbinary、msgpack、redis | 仍缺版本匹配posix |
+| 8.4.23 | `docs/stable-v1-start-evidence-2026-10-25/runtimes/php84` | igbinary、msgpack、redis | posix扩展未加载；B01已验证prlimit路径 |
 | 8.5.9 | `docs/stable-v1-start-evidence-2026-10-25/runtimes/php85` | 无 | 已具备 |
 
 sodium/7.2与7.4的posix包与原生PHP上游版本相同，但部分Remi包release号不同；这是可核验RPM payload的进程级测试激活，不声称系统RPM依赖安装已满足。Redis6.3.0及其igbinary/msgpack依赖按对应PHP API/Zend ABI核对。旧本地8.2/8.4 process包分别面向8.2.34/8.4.26，与当前8.2.32/8.4.23不同，已拒绝加载，详情记录在runtime-map.json的rejected_modules中；未用“可以加载”代替版本匹配证明。
 
-依赖缺口归入既有阻塞5，不新增第六项。管理后续可安排核验版本匹配的本地包，或审查既有POSIX系统工具备用路径能否满足具体用例；不能静默删测试或降低PHP兼容声明。必要依赖未齐前不展开九版大矩阵；最小消费者通过不关闭时钟、管理超时及旧Webhook失败。
+管理已批准按用途使用既有备用路径：storage-failure.php需要pcntl和posix_setrlimit或Linux可执行prlimit，并断言实际限制成功、存储/上传故障拒绝、原文件保持和临时写入清理，共7条断言。B01九版已全部执行通过；8.2/8.4不再因缺非必需posix扩展阻塞该用例及C01。C01门禁同时探测包装器和实际PHP_BINARY子进程的相应能力，实际故障程序仍必须运行并完成断言。其他测试若具体调用未提供的posix函数，仍按该测试真实依赖拒绝，不能全局豁免。原运行时映射中的缺失扩展事实不改写，也未加载不匹配包。
 
 下一组仍为固定B01/B04文件存储与登录共享预算，随后按已审清单的B02/B03/F/H推进；实际执行由管理会话直接安排，不重新请求用户逐步授权。本批未执行这些后端/HTTP组合、Q01诊断或九版消费者，未提交/推送/打标签/发布。
+
+
+## B组完整执行结果（2026-10-25）
+
+B01/B02/B03/B04已按固定选择器完成，未增加产品能力、修改SDK/公开API或进入恢复/未知结果链路。三组开始执行时HEAD均为`d9852ec`，管理文档随后本地提交为`2ca6204`；源码始终为`fedc471`。三组登记的1243份源码/资源/测试/样例输入摘要完全一致，终态复核无漂移。实际后端为Redis5.0.3、MySQL8.0.46；不能外推其他服务器版本或生产环境。
+
+| 已执行组 | 外层程序 | 实际功能子程序 | 结论与证据 |
+| --- | --- | --- | --- |
+| B01及B04 file | 36/36 | 36/36 | 九版各完整性、锁元数据、真实部分写入故障、file登录共享预算；[结果](stable-v1-files-evidence-2026-10-25/result.json) |
+| B02及B04 redis | 27/27 | 36/36 | 九版各API时效/鉴权运行器（2个PHP子程序）、redis预设和原始Redis故障；[结果](stable-v1-redis-evidence-2026-10-25/result.json) |
+| B03及B04 mysql | 45/45（独立复核） | 216/216 | 九版五选择器、每版24个PHP子程序；[独立完整复核](stable-v1-mysql-evidence-2026-10-25/marker-audit.json) |
+| 合计 | 108/108 | 288/288 | 定向基础后端验收，不是全项目或F/H/C整轮 |
+
+MySQL每版子程序为：存储回归7项（driver1及store/prune/install显式/隐式事务各1）、索引9模式、错误4模式、API I/O/epoch/鉴权3项、预设1项，共24。独立复核要求各自准确标记及数量、父退出码0、无NOT RUN/未捕获异常，以及45个唯一的运行时×选择器身份齐全；不能只看一条PASS。45个原始调用各自新建无TCP服务器及临时测试库，已全部终止，未重跑有效用例。
+
+**原始判据失败仍保留**：原MySQL运行器的index/error正则与源码实际输出不同，因此原[result.json](stable-v1-mysql-evidence-2026-10-25/result.json)仍为27/45、18项判据误判；父进程退出码实际全部为0。按源码的`PASS exact private store indexes`九行及`PASS private store error {construct/install/transact/prune}`各一行重新核对原日志，另写marker-audit.json，不修改原result、原runner或旧日志。其余三个选择器也逐一核对全部子程序和模式。原result与runner的SHA-256登记于独立复核文件，不能把这18个运行器误判写成18个SDK失败，也不能把原批次记录改成全绿。
+
+**真实失败与未执行**：本组未发现SDK/后端用例真实失败或必需分支跳过；F01—F12、H01—H06、完整C01、Q01诊断等尚未由本组执行，不拼接历史结果。既有管理超时、时钟倒退及未解释Webhook失败依旧保留。
+
+**按用途依赖门禁已修正**：真实写入故障需要pcntl及`posix_setrlimit`或Linux可执行`prlimit`；不是全局强制加载posix。九版B01均实际完成7条故障断言，8.2/8.4没有加载版本不匹配的posix包。7.2/7.4的测试父进程虽加载posix，其PHP_BINARY子进程仍使用原生配置并实际走prlimit备用路径；两者均登记元数据。C01现在核对父进程和真实子进程的用途依赖、必需扩展及来源摘要，九版门禁通过，仍须实际执行故障程序和全部断言；[门禁证据](stable-v1-files-evidence-2026-10-25/c01-profile-guard-final.json)只证明前置条件，不代表完整消费者已执行。
+
+B组交付到管理会话审核和阶段提交，本会话未操作Git索引。按持续执行授权，接续原固定F01—F12（每版40个程序），不等待逐步用户确认；每阶段保留准确命令/退出码/完成标记、失败及未执行项，不扩张范围。
