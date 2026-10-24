@@ -139,8 +139,10 @@ def main():
         environment.update({"NO_PROXY": "localhost,127.0.0.1", "no_proxy": "localhost,127.0.0.1"})
         checks = 0
         try:
+            mfa_cases = ("mfa",) if run([runtime, "-r", 'echo extension_loaded("sodium") ? "yes" : "no";']) == b"yes" else ()
+            mfa_completed = 0
             for case in ("valid", "wrong-state", "bad-signature", "wrong-nonce", "untrusted-cert",
-                         "redirect-token", "oversize-token", "redirect-keys", "oversize-keys"):
+                         "redirect-token", "oversize-token", "redirect-keys", "oversize-keys") + mfa_cases:
                 session_id = "oidc-" + os.urandom(8).hex()
                 common = [runtime, "-d", "curl.cainfo=" + str(certificate), "-d", "openssl.cafile=" + str(certificate),
                           str(runner), str(autoload), issuer, str(sessions), session_id]
@@ -158,7 +160,7 @@ def main():
                 server.id_token = signed_token(key, claims, case == "bad-signature")
                 before_tokens, before_keys, before_other = (server.token_requests, server.key_requests,
                                                              server.other_requests)
-                callback = common + ["callback_fence" if case == "valid" else "callback",
+                callback = common + ["callback_fence" if case == "valid" else ("callback_mfa" if case == "mfa" else "callback"),
                                      "wrong-state" if case == "wrong-state" else begin["state"]]
                 logout_input = None
                 if case == "valid":
@@ -181,6 +183,12 @@ def main():
                     if replay.get("ok") is not False or server.token_requests != before_tokens + 1:
                         raise AssertionError("Consumed callback state was reused")
                     checks += 1
+                elif case == "mfa":
+                    if result.get("ok") is not True or result.get("mfa") != "totp" or result.get("federated") is not True:
+                        raise AssertionError("Signed TLS callback did not complete local MFA: " + str(result))
+                    if server.token_requests != before_tokens + 1 or server.key_requests != before_keys + 1:
+                        raise AssertionError("MFA callback used unexpected HTTPS endpoints")
+                    mfa_completed += 1
                 elif case in ("wrong-state", "untrusted-cert"):
                     if result.get("ok") is not False or server.token_requests != before_tokens:
                         raise AssertionError(case + " reached the token endpoint")
@@ -304,7 +312,7 @@ def main():
             server.shutdown()
             server.server_close()
             worker.join(timeout=5)
-        print("PASS exact-client local TLS OIDC callback/logout:", checks, "assertions", runtime)
+        print("PASS exact-client local TLS OIDC callback/logout:", checks, "assertions; MFA callbacks:", mfa_completed, runtime)
 
 
 if __name__ == "__main__":

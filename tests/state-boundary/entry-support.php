@@ -1,0 +1,39 @@
+<?php
+declare(strict_types=1);
+require dirname(__DIR__).'/account-factor/restoration-support.php';
+require __DIR__.'/witness-support.php';
+require __DIR__.'/auth-profile.php';
+final class EntryEnvironment
+{
+    public $signingKeys;public $e;public $witness;public $boundary;public $store;public $provider;public $sessions;public $auth;public $remember;public $guard;public $fence;public $recovery;
+    public $inventoryServices;public $source;public $sources;public $operations;public $factorAdapter;public $publicAllowed=true;public $currentAllowed=true;public $budgetAllowed=true;public $finalAllowed=true;
+    public $lookups=0;public $guards=[];public $budgets=[];public $currentHook;public $persistHook;public $budgetHook;
+    public function __construct(ManagedEnvironment $e,bool $restricted=false,int $format=2,?array $inventoryServices=null,int $milliseconds=30000,?SoSecurity\Account\StateRecoveryAudit $recoveryAudit=null,?string $generation=null,array $businessTables=[],?SoSecurity\Api\KeyRing $signingKeys=null,int $filesCap=100000)
+    {
+        $this->e=$e;$this->signingKeys=$signingKeys;$this->inventoryServices=$inventoryServices;$f=$inventoryServices===null?revocationSetup($e):$inventoryServices[0];$this->fence=$f;$this->operations=$inventoryServices===null?lifecycleOperations($e,$f):$inventoryServices[1];$receipts=[];$this->recovery=$inventoryServices===null?lifecycleRecovery($e,$f,$receipts):$inventoryServices[3];$e->pdo->exec('DROP TABLE IF EXISTS entry_worker_audit');$e->pdo->exec($e->pdo->getAttribute(PDO::ATTR_DRIVER_NAME)==='mysql'?'CREATE TABLE entry_worker_audit(operation VARBINARY(64) NOT NULL PRIMARY KEY,context_digest CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL) ENGINE=InnoDB':'CREATE TABLE entry_worker_audit(operation TEXT NOT NULL PRIMARY KEY,context_digest TEXT NOT NULL)');$h=new SoSecurity\Password\PasswordHasher('bcrypt',['cost'=>10]);
+        if($restricted){$foreign=$e->accounts->createPending('foreign','foreign-user',new SoSecurity\Account\Address('foreign@example.test'));$e->accounts->activate($foreign,$h->hash('Owned foreign account password 49!'));}
+        $this->provider=new SoSecurity\Auth\PasswordIdentityProvider(function(string $scope,string $address)use($e){++$this->lookups;$r=$e->accounts->findAddress($scope,new SoSecurity\Account\Address($address));return $r===null?null:$e->accounts->passwordRecord($r);},function(string $scope,string $subject)use($e){++$this->lookups;$r=$e->accounts->find($scope,$subject);return $r===null?null:$e->accounts->passwordRecord($r);},$h,$h->hash('Owned entry boundary dummy password 49!'));
+        $extra=['entry_worker_audit'=>['columns'=>['operation'=>'digest','context_digest'=>'digest'],'primary'=>['operation']]];if($inventoryServices!==null){$extra['factor_restoration_audit']=['columns'=>['operation'=>'bytes:64','phase'=>'bytes:32','nonce'=>'bytes:64'],'primary'=>['operation','phase','nonce']];if($e->pdo->getAttribute(PDO::ATTR_DRIVER_NAME)==='sqlite'){$extra['factor_restoration_audit']['sqlite_declarations']=['operation'=>'VARCHAR(64)','phase'=>'VARCHAR(32)','nonce'=>'VARCHAR(64)'];}}$source=ownedAuthenticationSource($e,$extra+$businessTables,$restricted?'tenant':null,$this->sources,false,$signingKeys,$filesCap);$this->source=$source;$this->witness=new SoSecurity\Account\LocalStateWitness($e->pdo,$e->directory.'/independent-witness','managed-test','tenant',str_repeat('e',64),$e->keys,$source,function($handle)use($e):bool{witnessPersist($handle,$e->directory.'/independent-witness');return $this->persistHook===null||($this->persistHook)($handle)===true;},$milliseconds,$format,$generation,$recoveryAudit);$this->witness->initialize($source->digest());
+        $this->boundary=new SoSecurity\Account\StateBoundary($this->witness,function(string $phase,string $action):bool{$this->budgets[]=[$phase,$action];if($this->budgetHook!==null&&($this->budgetHook)($phase,$action)!==true){return false;}return $phase==='public'?$this->budgetAllowed:$this->finalAllowed;});
+        $this->guard=new SoSecurity\Account\StateRequests(function(string $action,string $scope):bool{$this->guards[]=['public',$this->boundary->active(),$action,$scope];return $this->publicAllowed;},function(string $action,string $scope):bool{$this->guards[]=['current',$this->boundary->active(),$action,$scope];if($this->currentHook!==null){($this->currentHook)();}return $this->currentAllowed;});
+        $this->store=new SoSecurity\Storage\FileStore($e->directory.'/factors','entry-sessions',$e->clock,5000);$factor=$e->registry->secondFactor();$this->factorAdapter=$factor;
+        $this->sessions=new SoSecurity\Auth\SessionRegistry($this->store,$this->provider,$factor,$e->clock,1800,28800,16,$this->boundary);
+        $this->auth=new SoSecurity\Auth\AuthenticationFlow($this->store,$this->provider,$this->sessions,$this->guard,$factor,$e->clock,300,10,5,$this->boundary);
+        $this->remember=new SoSecurity\Auth\RememberedLogin($this->store,$this->provider,$this->sessions,$e->keys,$this->guard,$factor,$e->clock,2592000,8,300,5,null,$this->boundary);
+    }
+    public function inspect():array{return $this->witness->inspect('witnessBudget');}
+    public function login():SoSecurity\Auth\LoginResult
+    {
+        $e=$this->e;$first=$this->auth->password('tenant','owned-entry-browser','owned@example.test',$e->password,'Owned entry device');Check::same('mfa_required',$first->status());
+        $result=$this->auth->secondFactor('tenant','owned-entry-browser',$first->challenge(),normalFactor($e));Check::same('authenticated',$result->status());return $result;
+    }
+}
+function entryCase(callable $body):void{managedCase(static function(ManagedEnvironment $e)use($body):void{$body(new EntryEnvironment($e));});}
+function entryFiles(EntryEnvironment $x):array{$files=[];foreach(new DirectoryIterator($x->e->directory.'/factors') as $file){if($file->isDot()){continue;}if(!$file->isFile()||$file->isLink()||$file->getSize()>65536){throw new RuntimeException('Owned bounded FileStore only.');}$files[$file->getFilename()]=file_get_contents($file->getPathname());}ksort($files);return $files;}
+function entryRestore(EntryEnvironment $x,array $files):void{$dir=$x->e->directory.'/factors';foreach(new DirectoryIterator($dir) as $file){if(!$file->isDot()&&!array_key_exists($file->getFilename(),$files)){unlink($file->getPathname());}}foreach($files as $name=>$value){if(!preg_match('/\A(?:[a-f0-9]{64}\.json|lock-(?:[0-9]|[1-5][0-9]|6[0-3]))\z/D',$name)){throw new RuntimeException('Owned exact file names only.');}file_put_contents($dir.'/'.$name,$value);chmod($dir.'/'.$name,0600);}}
+function entryPromote(EntryEnvironment $x):SoSecurity\Account\LocalEpochFence
+{
+    $e=$x->e;$dir=$e->directory.'/entry-bound-fence';if(!is_dir($dir)){mkdir($dir,0700);}$next=new SoSecurity\Account\LocalEpochFence($dir,'managed-test','tenant',str_repeat('e',64),$e->keys,static function($h)use($dir):bool{return witnessPersist($h,$dir);},5000,$x->boundary);$root=workerWitness($e,$x->fence);
+    $x->boundary->run('workers.promote',static function()use($x,$next,$root,$e):void{$next->initialize();$x->recovery->rotateWorkers($next,$root,'owned-promote',static function():bool{return true;},static function(array $context,string $operation)use($e):bool{$q=$e->pdo->prepare('INSERT INTO entry_worker_audit VALUES(?,?)');$q->execute([$operation,hash('sha256',json_encode($context))]);$q->closeCursor();return true;});});
+    $migration=lifecycleRebind($e,$next,lifecycleRaw($e));if($x->inventoryServices!==null){$x->boundary->run('owned.rebind.inventory',static function()use($x,$e,$next,$migration):void{$ops=lifecycleOperations($e,$next);$receipts=[];$recovery=lifecycleRecovery($e,$next,$receipts);$r=restorationService($e,$next,null,null,null,null,null,false);$x->inventoryServices=[$next,$ops,$r,$recovery,$migration];$x->fence=$next;});}return $next;
+}

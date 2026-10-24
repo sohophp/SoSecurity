@@ -14,25 +14,26 @@ final class LeaseManager
     private $store;
     private $policy;
     private $clock;
-    public function __construct(AtomicStore $store, ?LeasePolicy $policy = null, ?Clock $clock = null) { $this->store = $store; $this->policy = $policy ?? new LeasePolicy(); $this->clock = $clock ?? new SystemClock(); }
+    private $state;
+    public function __construct(AtomicStore $store, ?LeasePolicy $policy = null, ?Clock $clock = null, ?\SoSecurity\Account\StateLeaseConnection $state = null) { $this->store = $store; $this->policy = $policy ?? new LeasePolicy(); $this->clock = $clock ?? new SystemClock(); $this->state=$state; if($state!==null){$state->validate($store,$this->clock);} }
     public function policy(): LeasePolicy { return $this->policy; }
     /** Authorized provisioning only. Normal acquisition never creates a missing ledger. Pin this epoch in the business resource. */
     public function initialize(string $scope, string $resource): string
     {
-        $now = $this->clock->now(); $key = LeaseState::context($scope, $resource, $now); $epoch = bin2hex(random_bytes(16));
-        $result = $this->store->transact($key, function ($state) use ($now, $epoch) {
+        $now = $this->now(); $key = LeaseState::context($scope, $resource, $now); $epoch = bin2hex(random_bytes(16));
+        $result = $this->transact('initialize',$scope,$resource,null,$key,$now,false,function ($state,int $now) use ($epoch) {
             $state = LeaseState::read($state, $this->policy, $now);
             if ($state === null) { $state = ['v' => 1, 'epoch' => $epoch, 'policy' => $this->policy->fingerprint(), 'sequence' => 0, 'seen' => $now, 'holders' => []]; }
             $state = LeaseState::prune($state, $now);
             return new Change($state, 0, $state['epoch']);
         });
-        LeaseState::finish($now, $this->clock->now()); return $result;
+        return $result;
     }
     public function acquire(string $scope, string $resource, string $owner): ?Lease
     {
-        $now = $this->clock->now(); $key = LeaseState::context($scope, $resource, $now, $owner); $binding = LeaseState::owner($scope, $resource, $owner);
+        $now = $this->now(); $key = LeaseState::context($scope, $resource, $now, $owner); $binding = LeaseState::owner($scope, $resource, $owner);
         $id = bin2hex(random_bytes(16)); $secret = bin2hex(random_bytes(32));
-        $result = $this->store->transact($key, function ($state) use ($now, $binding, $id, $secret) {
+        $result = $this->transact('acquire',$scope,$resource,$owner,$key,$now,true,function ($state,int $now) use ($binding, $id, $secret) {
             $state = $this->required($state, $now); $state = LeaseState::prune($state, $now);
             foreach ($state['holders'] as $holder) { if (hash_equals($holder['owner'], $binding)) { return new Change($state, 0, null); } }
             if (count($state['holders']) >= $this->policy->maximum()) { return new Change($state, 0, null); }
@@ -41,17 +42,17 @@ final class LeaseManager
             $state['holders'][$id] = ['digest' => hash('sha256', $token), 'owner' => $binding, 'fence' => $state['sequence'], 'issued' => $now, 'expires' => $expires, 'absolute' => $absolute];
             return new Change($state, 0, new Lease($token, $state['sequence'], $expires, $absolute));
         });
-        $this->finishCredential($key, $now, $result); return $result;
+        return $result;
     }
     public function renew(string $scope, string $resource, string $owner, string $token): ?Lease { return $this->credential($scope, $resource, $owner, $token, 'renew'); }
     public function verify(string $scope, string $resource, string $owner, string $token): ?Lease { return $this->credential($scope, $resource, $owner, $token, 'verify'); }
     public function release(string $scope, string $resource, string $owner, string $token): bool { return $this->credential($scope, $resource, $owner, $token, 'release'); }
     private function credential(string $scope, string $resource, string $owner, string $token, string $operation)
     {
-        $now = $this->clock->now(); $key = LeaseState::context($scope, $resource, $now, $owner); $reference = LeaseState::token($token);
+        $now = $this->now(); $key = LeaseState::context($scope, $resource, $now, $owner); $reference = LeaseState::token($token);
         if ($reference === null) { return $operation === 'release' ? false : null; }
         $binding = LeaseState::owner($scope, $resource, $owner);
-        $result = $this->store->transact($key, function ($state) use ($now, $reference, $binding, $token, $operation) {
+        $result = $this->transact($operation,$scope,$resource,$owner,$key,$now,true,function ($state,int $now) use ($reference, $binding, $token, $operation) {
             $state = $this->required($state, $now); $state = LeaseState::prune($state, $now); $holder = LeaseState::holder($state, $reference, $binding);
             $result = $operation === 'release' ? false : null;
             if ($holder !== null) {
@@ -63,31 +64,45 @@ final class LeaseManager
             }
             return new Change($state, 0, $result);
         });
-        $this->finishCredential($key, $now, $result instanceof Lease ? $result : null); return $result;
+        return $result;
     }
     public function inspect(string $scope, string $resource): LeaseStatus
     {
-        $now = $this->clock->now(); $key = LeaseState::context($scope, $resource, $now);
-        $result = $this->store->transact($key, function ($state) use ($now) {
+        $now = $this->now(); $key = LeaseState::context($scope, $resource, $now);
+        $result = $this->transact('inspect',$scope,$resource,null,$key,$now,false,function ($state,int $now) {
             $state = LeaseState::read($state, $this->policy, $now);
             if ($state !== null) { $state = LeaseState::prune($state, $now); }
             $active = $state['holders'] ?? []; $retry = 0;
             if (count($active) >= $this->policy->maximum()) { $retry = min(array_column($active, 'expires')) - $now; }
             return new Change($state, 0, new LeaseStatus($state['epoch'] ?? null, count($active), $this->policy->maximum(), $state['sequence'] ?? 0, $retry));
         });
-        LeaseState::finish($now, $this->clock->now()); return $result;
+        return $result;
     }
     /** Authorized cleanup after draining/retiring the host resource. Epoch prevents deleting a replacement ledger. */
     public function remove(string $scope, string $resource, string $epoch): bool
     {
-        $now = $this->clock->now(); $key = LeaseState::context($scope, $resource, $now);
+        $now = $this->now(); $key = LeaseState::context($scope, $resource, $now);
         if (!LeaseState::hex($epoch, 32)) { throw new ConfigurationException('Expected the pinned lease epoch.', 'configuration.lease'); }
-        $result = $this->store->transact($key, function ($state) use ($now, $epoch) {
+        $result = $this->transact('remove',$scope,$resource,null,$key,$now,false,function ($state,int $now) use ($epoch) {
             $state = LeaseState::read($state, $this->policy, $now); $remove = false;
             if ($state !== null) { $state = LeaseState::prune($state, $now); $remove = hash_equals($state['epoch'], $epoch) && !$state['holders']; }
             return new Change($remove ? null : $state, 0, $remove);
         });
-        LeaseState::finish($now, $this->clock->now()); return $result;
+        return $result;
+    }
+    private function now():int
+    {
+        if($this->state===null){return $this->clock->now();}
+        try{return $this->clock->now();}catch(\Throwable $error){throw new StorageException('Lease clock unavailable.','lease.clock');}
+    }
+    private function transact(string $action,string $scope,string $resource,?string $owner,string $key,int $started,bool $credential,callable $prepare)
+    {
+        $finish=function($result)use($key,$started,$credential):void{
+            if($credential){$this->finishCredential($key,$started,$result instanceof Lease?$result:null);}
+            else{LeaseState::finish($started,$this->now());}
+        };
+        if($this->state!==null){return $this->state->transact($action,$scope,$resource,$owner,$this->policy,$prepare,$finish);}
+        $result=$this->store->transact($key,static function($old)use($prepare,$started):Change{return $prepare($old,$started);});$finish($result);return $result;
     }
     private function required($state, int $now): array
     {
@@ -97,7 +112,7 @@ final class LeaseManager
     }
     private function finishCredential(string $key, int $started, ?Lease $lease): void
     {
-        $finished = $this->clock->now();
+        $finished = $this->now();
         if ($lease !== null && ($finished < $started || $lease->expiresAt() <= $finished)) {
             $floor = max($started, $finished); $reference = LeaseState::token($lease->token());
             // A late/invalid observed credential must not revive after a later clock correction.

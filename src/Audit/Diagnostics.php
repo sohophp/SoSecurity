@@ -22,17 +22,21 @@ final class Diagnostics
 
     public function inspect(): array
     {
-        try { $authorized = ($this->authorize)(); }
-        catch (\Throwable $error) { $authorized = false; }
-        if (!$authorized) {
-            throw new SecurityException('Audit diagnostics access denied.', 'audit.diagnostics_forbidden');
-        }
+        $this->authorizeRead();
         $metrics = $this->metrics->inspect();
         $budget = $this->budget->inspect();
+        $this->authorizeRead();
         return ['window_start' => $metrics['window_start'], 'expires_at' => $metrics['expires_at'],
             'counts' => $metrics['counts'], 'total' => $metrics['total'], 'alerts' => $metrics['alerts'],
             'budget' => ['allowed' => $budget->allowed(), 'remaining' => $budget->remaining(),
                 'retry_after' => $budget->retryAfter()]];
+    }
+
+    private function authorizeRead(): void
+    {
+        try { $authorized = ($this->authorize)(); }
+        catch (\Throwable $error) { $authorized = false; }
+        if (!$authorized) { throw new SecurityException('Audit diagnostics access denied.', 'audit.diagnostics_forbidden'); }
     }
 
     public function __debugInfo(): array { return ['audit_diagnostics' => '[redacted]']; }

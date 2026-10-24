@@ -29,16 +29,20 @@ use SoSecurity\Support\SystemClock;
 final class AddressChange
 {
     private $scope;
+    private $nativeProofs;
+    private $nativeBusy=false;private $nativeReview;private $nativeReturn;private $observationUnit;private $observationLedger;
+    private $maintenanceState;
+    private $stateGuard;
     private $context;
     private $dependencies;
     private $dispatchFactory;
     private $observed=0;
     public function __construct(PDO $connection,string $site,string $scope,string $epoch,HmacKeys $keys,HmacKeys $outboxKeys,
         IdentityRepository $accounts,Notifications $notifications,SessionRegistry $sessions,Grants $grants,callable $requestGuard,callable $budget,
-        ?Policy $policy=null,?Clock $clock=null,?callable $managementGuard=null,?callable $deliveryGuard=null)
+        ?Policy $policy=null,?Clock $clock=null,?callable $managementGuard=null,?callable $deliveryGuard=null,?StateAccountConnection $state=null,?StateRequestGuard $requests=null)
     {
         Guard::label($site);if(preg_match('//u',$site)!==1){throw new ConfigurationException('Use a UTF-8 site label.','configuration.account');}
-        $policy=$policy ?? new Policy();$clock=$clock ?? new SystemClock();$unit=new SqlTransaction($connection,$clock,$policy->ioMilliseconds());
+        $policy=$policy ?? new Policy();$clock=$clock ?? new SystemClock();if($requests!==null&&$state===null){throw new ConfigurationException('Native mailbox proofs require an exact protected connection.','configuration.state_request');}$this->nativeProofs=$requests===null?null:$state->requestHandler('address_change',$requests);$this->maintenanceState=$state;$this->stateGuard=\SoSecurity\Support\SqlStateAccess::entryGuard($connection,$accounts,$site,$scope,$epoch,$clock,$policy,$state);if($state!==null){$state->assertAuthentication($sessions,$grants);}$unit=new SqlTransaction($connection,$clock,$policy->ioMilliseconds());
         try{$same=$accounts->connection()===$connection;}catch(\Throwable $error){$same=false;}
         if(!$same){throw new ConfigurationException('Use the same account transaction PDO.','configuration.account_connection');}
         $this->scope=$scope;$context=hash('sha256',self::json(['SoSecurity.Account.AddressChange.1',$site]));$this->context=$context;
@@ -57,17 +61,17 @@ final class AddressChange
             if($deliveryGuard===null){throw new ConfigurationException('Explicit current notification authority is required for dispatch.','configuration.account_dispatch');}
             $producer='account-address-change';$age=max($policy->lifetime('verify_address_new'),$policy->lifetime('address_changed'));
             $authority=static function(string $action,string $phase,string $currentScope,string $currentProducer,string $actor,array $metadata)use($scope,$producer,$worker,$workerAuthority):bool{
-                return $currentScope===$scope&&$currentProducer===$producer&&$actor===$worker&&in_array($action,['claim','current_claim','acknowledge','fail'],true)&&$workerAuthority($action,$phase,$currentScope,$currentProducer,$actor,$metadata)===true;
+                return $currentScope===$scope&&$currentProducer===$producer&&$actor===$worker&&in_array($action,['claim','claim_initial','claim_rejected','current_claim','acknowledge','fail'],true)&&$workerAuthority($action,$phase,$currentScope,$currentProducer,$actor,$metadata)===true;
             };
-            $queue=new SqlOutbox($connection,$site,$epoch,$outboxKeys,$authority,new OutboxPolicy(['message_age'=>$age,'recovery_age'=>$age,'maximum_entries'=>$policy->maximumEntries(),'maximum_payload_bytes'=>64,'io_milliseconds'=>$policy->ioMilliseconds()]),$clock);
+            $queue=new SqlOutbox($connection,$site,$epoch,$outboxKeys,$authority,new OutboxPolicy(['message_age'=>$age,'recovery_age'=>$age,'maximum_entries'=>$policy->maximumEntries(),'maximum_payload_bytes'=>64,'io_milliseconds'=>$policy->ioMilliseconds()]),$clock,null,$this->maintenanceState);
             return new Dispatcher($site,$scope,$worker,$queue,$this,$budgets,$templates,$transport,$clock,$budgetMilliseconds,$transportMilliseconds);
         };
         $this->dependencies=static function()use($unit,$ledger,$accounts,$notifications,$sessions,$grants,$keys,$queue,$policy,$requestGuard,$budget,$managementGuard,$deliveryGuard,$clock,$epoch):array{
             return [$unit,$ledger,$accounts,$notifications,$sessions,$grants,$keys,$queue,$policy,$requestGuard,$budget,$managementGuard,$deliveryGuard,$clock,$epoch];
         };
     }
-    private function unit():SqlTransaction {return ($this->dependencies)()[0];}
-    private function ledger():Ledger {return ($this->dependencies)()[1];}
+    private function unit():SqlTransaction {return $this->observationUnit??($this->dependencies)()[0];}
+    private function ledger():Ledger {return $this->observationLedger??($this->dependencies)()[1];}
     private function accounts():IdentityRepository {return ($this->dependencies)()[2];}
     private function notices():Notifications {return ($this->dependencies)()[3];}
     private function sessions():SessionRegistry {return ($this->dependencies)()[4];}
@@ -101,7 +105,7 @@ final class AddressChange
         $callback=($this->dependencies)()[10];$args=[$action,$phase,$this->scope,$source,$address,$subject,$operation];
         if($phase==='public'){try{$refs=[];foreach($args as &$value){$refs[]=&$value;}unset($value);$allowed=call_user_func_array($callback,$refs);}catch(\Throwable $error){throw new DependencyException('Account request budget unavailable.','account.budget');}}
         else{$allowed=$this->unit()->invoke($callback,$args,'account.budget');}
-        if($allowed!==true){throw new SecurityException('Account request budget refused.','account.budget');}
+        if($allowed!==true){$refusal=$phase==='public'?null:StateBudgetRefusal::fromTransaction($this->unit());throw $refusal??new SecurityException('Account request budget refused.','account.budget');}
     }
     /** @return never */
     private static function corrupt():void {throw new StorageException('Address-change state cannot be authenticated.','account.corrupt');}
@@ -200,12 +204,14 @@ final class AddressChange
             }
             $this->authorize($action,'review',$facts['record'],$target);$this->unchangedFacts($facts);return $facts+['address'=>$target,'intent'=>$this->intent($facts,$target,$selector)];
         },null,null,null,$deadline);
-        if($snapshot['identity']->fingerprint()!==$session->account()->fingerprint()){throw new SecurityException('Authentication identity differs from current account.','account.changed');}return $snapshot+['session'=>$session];
+        if($snapshot['identity']->fingerprint()!==$session->account()->fingerprint()){throw new SecurityException('Authentication identity differs from current account.','account.changed');}
+        if($this->nativeReview!==null){$admitted=$this->nativeReview;$before=$admitted['session'];if($admitted['record']->fingerprint()!==$snapshot['record']->fingerprint()||$admitted['identity']->fingerprint()!==$snapshot['identity']->fingerprint()||$admitted['intent']->fingerprint()!==$snapshot['intent']->fingerprint()||$before->id()!==$session->id()||$before->createdAt()!==$session->createdAt()||$before->authenticatedAt()!==$session->authenticatedAt()||$before->method()!==$session->method()){throw new SecurityException('Admitted address authority changed before effects.','account.changed');}}
+        return $snapshot+['session'=>$session];
     }
     private function permit(array $review,string $subject,string $sessionToken,string $grant,Deadline $deadline):Permit
     {
         if(!preg_match('/\Aog1\.[a-f0-9]{32}\.[a-f0-9]{64}\z/D',$grant)){throw new ValidationException('Invalid operation grant.','account.operation');}
-        $deadline->check('account.timeout');$permit=$this->grants()->consume($this->scope,$subject,$sessionToken,$review['intent'],$grant);$deadline->check('account.timeout');
+        $deadline->check('account.timeout');$permit=$this->nativeReview===null?$this->grants()->consume($this->scope,$subject,$sessionToken,$review['intent'],$grant):$this->grants()->consumeForAddress($this->scope,$subject,$sessionToken,$review['intent'],$grant,$deadline);$deadline->check('account.timeout');
         if($permit===null||$permit->account()->fingerprint()!==$review['identity']->fingerprint()||$permit->sessionId()!==$review['session']->id()||$permit->method()!==$review['session']->method()||$permit->authenticatedAt()!==$review['session']->authenticatedAt()||$permit->expiresAt()<=$this->now()){throw new SecurityException('Current operation grant required.','account.operation');}return $permit;
     }
     private function send(string $selector,Address $recipient,string $type,string $token,int $until):string
@@ -215,23 +221,93 @@ final class AddressChange
         $this->queue()->enqueue(new Message($this->scope,'account-address-change',Message::identifier('account-change-notice-'.$id,$now),'mail','account.notice',$id,$id),'account-system');return $id;
     }
     public function initialize():void
-    {
+    {($this->stateGuard)();
         $this->guard('initialize');$this->queue()->initialize($this->scope,'account-address-change','account-system');$this->unit()->run(function():void{$this->authorize('initialize','before');$this->ledger()->initialize();},null,function():void{$this->authorize('initialize','commit');});
+    }
+    /** Native current-user proposals and effects; proof consumption remains in the original transaction path. */
+    public function proposalFor(StateAccountPolicy $policy,string $subject,string $newAddress,string $sessionToken,string $source):Intent
+    {return $this->nativeAddress($policy,'proposal',$subject,$newAddress,$sessionToken,null,$source);}
+    public function completionProposalFor(StateAccountPolicy $policy,string $subject,string $selector,string $sessionToken,string $source):Intent
+    {return $this->nativeAddress($policy,'completion_proposal',$subject,$selector,$sessionToken,null,$source);}
+    public function requestFor(StateAccountPolicy $policy,string $subject,string $newAddress,string $sessionToken,string $grant,string $source):void
+    {$this->nativeAddress($policy,'request',$subject,$newAddress,$sessionToken,$grant,$source);}
+    public function completeFor(StateAccountPolicy $policy,string $subject,string $selector,string $sessionToken,string $grant,string $source):bool
+    {return $this->nativeAddress($policy,'complete',$subject,$selector,$sessionToken,$grant,$source)===true;}
+    private function observeAddress(array $facts,?Address $address,string $selector,Deadline $deadline):array
+    {
+        $d=($this->dependencies)();$unit=SqlTransaction::forObservation($d[0]->connection(),$d[13],$this->policy()->ioMilliseconds());$this->observationUnit=$unit;$this->observationLedger=new Ledger($unit,$this->context,$this->scope,$d[14],$this->keys(),$this->policy());
+        try{return $unit->run(function()use($facts,$address,$selector):array{
+            $this->ledger()->checkpoint();$target=$address;$until=PHP_INT_MAX;
+            if($selector!==''){
+                $row=$this->ledger()->read($selector);if($row===null){throw new SecurityException('Address change is not ready.','account.change_incomplete');}$flow=$this->flow($row);$subject=$facts['record']->account()->subject();list(,$current)=$this->pointer($subject);
+                if($flow['subject']!==$subject||$current!==$selector||$flow['state']!=='ready'||$flow['valid_until']<=$this->unit()->now()||!$this->bound($flow,$facts)){throw new SecurityException('Address change is not ready.','account.change_incomplete');}
+                $target=$this->target($flow,$selector,'new')->recipient();$until=$flow['valid_until'];
+            }
+            if(!$target instanceof Address){throw new ConfigurationException('Use an exact address action target.','configuration.account');}
+            return ['address'=>$target,'intent'=>$this->intent($facts,$target,$selector),'until'=>$until];
+        },null,null,null,$deadline);}finally{$this->observationUnit=null;$this->observationLedger=null;}
+    }
+    private function nativeAddress(StateAccountPolicy $policy,string $method,string $subject,string $value,string $sessionToken,?string $grant,string $source)
+    {
+        if($this->maintenanceState===null||$this->nativeBusy){throw new ConfigurationException('Use one exact native address connection.','configuration.state_connection');}
+        $this->maintenanceState->assertAddressPolicy($policy);self::label($subject);self::label($source);$completion=in_array($method,['completion_proposal','complete'],true);$address=$completion?null:new Address($value,$this->policy()->allowsSmtpUtf8());$selector=$completion?$value:'';if($completion){self::id($selector);}
+        if(SessionRegistry::reference($sessionToken)===null){throw new SecurityException('Current address authentication required.','account.authentication');}if($grant!==null&&\SoSecurity\Operation\State::reference($grant,'og1')===null){throw new ValidationException('Invalid operation grant.','account.operation');}
+        $deadline=new Deadline($this->policy()->ioMilliseconds());$budgetId=bin2hex(random_bytes(16));$action=$completion?'complete':'request';$this->nativeBusy=true;
+        try{
+            $this->charge($action,'public',$source,$address,$subject,$budgetId);$deadline->check('account.timeout');
+            $result=$this->maintenanceState->addressOperation($policy,$method,function(string $expected)use($policy,$method,$subject,$sessionToken,$grant,$source,$action,$address,$selector,$deadline):StateOperation{
+                $deadline->check('account.timeout');$view=$this->maintenanceState->addressView($policy,$subject,$sessionToken,$expected);if($view===null||$view['session']===null){throw new SecurityException('Current address authentication required.','account.authentication');}$session=$view['session'];$now=$this->now();
+                if($session->expiresAt()<=$now||SessionRegistry::strength($session->method())<1||($grant!==null&&(!$session->recent(min(300,$this->grants()->policy()->maximumAge()),$now,$session->account()->mfaRequired()?2:1)||!in_array($session->method(),['password','totp','webauthn'],true)))){throw new SecurityException('Recent approved authentication required.','account.authentication');}
+                $facts=['record'=>$view['record'],'identity'=>$view['account']];$observed=$this->observeAddress($facts,$address,$selector,$deadline);$deadline->check('account.timeout');
+                $guard=$this->guard($action);$phase='admission';$scope=$this->scope;$record=$facts['record'];$target=$observed['address'];$guardAction=$action;
+                try{$allowed=$guard($guardAction,$phase,$scope,$record,$target);}catch(\Throwable $error){throw new DependencyException('Address request authority unavailable.','account.authority');}if($allowed!==true){throw new SecurityException('Address request authority refused.','account.denied');}$deadline->check('account.timeout');
+                $approved=$this->grants()->addressAdmission($policy,$this->scope,$subject,$sessionToken,$observed['intent'],$grant,$expected);if($approved===null){throw new SecurityException('Current operation grant required.','account.operation');}$at=$this->now();$deadline->check('account.timeout');
+                if($at<$now||min($observed['until'],$approved['until'])<=$at){throw new SecurityException('Address admission expired.','account.expired');}
+                $this->nativeReview=$facts+['session'=>$approved['session'],'intent'=>$observed['intent'],'policy'=>$policy,'address'=>$target,'until'=>min($observed['until'],$approved['until']),'strong'=>$grant!==null];$configuration=hash('sha256','SoSecurity.Account.AddressAdmission.Policy.1.'.self::json([$policy->binding(),$this->policy()->fingerprint(),$this->keys()->stateDigest(),$approved['policy'],($this->dependencies)()[14]]));
+                $request=hash('sha256','SoSecurity.Account.AddressAdmission.Request.1.'.self::json([$method,$this->scope,$subject,SessionRegistry::reference($sessionToken),$facts['record']->fingerprint(),$facts['identity']->fingerprint(),$observed['intent']->fingerprint(),$approved['reference'],hash('sha256',$source),$expected,$configuration]));
+                return StateOperation::address('account.address_change.'.$method,$this->scope,$subject,$request,$configuration,$at);
+            },function()use($method,$subject,$value,$sessionToken,$grant,$source,$budgetId,$deadline){
+                $admission=['id'=>$budgetId,'deadline'=>$deadline];$deadline->check('account.timeout');$this->nativeReturn=$this->nativeReview;
+                if($method==='proposal'){$result=$this->proposalInternal($subject,$value,$sessionToken,$source,$admission);}
+                elseif($method==='completion_proposal'){$result=$this->completionProposalInternal($subject,$value,$sessionToken,$source,$admission);}
+                elseif($method==='request'){$this->requestInternal($subject,$value,$sessionToken,$grant,$source,$admission);$result=null;}
+                else{$result=$this->completeInternal($subject,$value,$sessionToken,$grant,$source,$admission);}
+                $deadline->check('account.timeout');return $result;
+            },$deadline);
+            if($this->nativeReturn!==null){
+                $this->returnLive($deadline);$guard=$this->guard($action);$scope=$this->scope;$target=$this->nativeReturn['address'];
+                $this->maintenanceState->addressReturn($policy,$this->nativeReturn['record'],static function(AccountRecord $record)use($guard,$action,$scope,$target):bool{$localAction=$action;$phase='complete';$localScope=$scope;$localRecord=$record;$localTarget=$target;return $guard($localAction,$phase,$localScope,$localRecord,$localTarget)===true;},$deadline);
+                $this->returnLive($deadline);
+            }
+            return $result;
+        }finally{$this->nativeReview=null;$this->nativeReturn=null;$this->nativeBusy=false;}
+    }
+    private function returnLive(Deadline $deadline):void
+    {
+        $deadline->check('account.timeout');$r=$this->nativeReturn;$session=$r['session'];$now=$this->now();
+        if($r['until']<=$now||$session->expiresAt()<=$now||$session->createdAt()>$now||$session->authenticatedAt()>$now||($r['strong']&&(!$this->grants()->policy()->accepts($session,$now)||!$session->recent(min(300,$this->grants()->policy()->maximumAge()),$now,$session->account()->mfaRequired()?2:1)))){throw new SecurityException('Address authority expired before return.','operation.expired');}
     }
     /** Review metadata only. The subsequent Grants begin/reauthenticate/confirm sequence remains mandatory. */
     public function proposal(string $subject,string $newAddress,string $sessionToken,string $source):Intent
-    {
-        self::label($subject);self::label($source);$address=new Address($newAddress,$this->policy()->allowsSmtpUtf8());$deadline=new Deadline($this->policy()->ioMilliseconds());$this->charge('request','public',$source,$address,$subject);return $this->review($subject,$sessionToken,$address,'','request',$deadline,false)['intent'];
+    {return $this->proposalInternal($subject,$newAddress,$sessionToken,$source);}
+    private function proposalInternal(string $subject,string $newAddress,string $sessionToken,string $source,?array $admission=null):Intent
+    {($this->stateGuard)();
+        self::label($subject);self::label($source);$address=new Address($newAddress,$this->policy()->allowsSmtpUtf8());$deadline=$admission['deadline']??new Deadline($this->policy()->ioMilliseconds());if($admission===null){$this->charge('request','public',$source,$address,$subject);}return $this->review($subject,$sessionToken,$address,'','request',$deadline,false)['intent'];
     }
     public function completionProposal(string $subject,string $selector,string $sessionToken,string $source):Intent
-    {
-        self::label($subject);self::label($source);self::id($selector);$deadline=new Deadline($this->policy()->ioMilliseconds());$this->charge('complete','public',$source,null,$subject);return $this->review($subject,$sessionToken,null,$selector,'complete',$deadline,false)['intent'];
+    {return $this->completionProposalInternal($subject,$selector,$sessionToken,$source);}
+    private function completionProposalInternal(string $subject,string $selector,string $sessionToken,string $source,?array $admission=null):Intent
+    {($this->stateGuard)();
+        self::label($subject);self::label($source);self::id($selector);$deadline=$admission['deadline']??new Deadline($this->policy()->ioMilliseconds());if($admission===null){$this->charge('complete','public',$source,null,$subject);}return $this->review($subject,$sessionToken,null,$selector,'complete',$deadline,false)['intent'];
     }
     public function request(string $subject,string $newAddress,string $sessionToken,string $grant,string $source):void
-    {
-        self::label($subject);self::label($source);$address=new Address($newAddress,$this->policy()->allowsSmtpUtf8());$deadline=new Deadline($this->policy()->ioMilliseconds());$budgetId=bin2hex(random_bytes(16));$this->charge('request','public',$source,$address,$subject,$budgetId);
+    {$this->requestInternal($subject,$newAddress,$sessionToken,$grant,$source);}
+    private function requestInternal(string $subject,string $newAddress,string $sessionToken,string $grant,string $source,?array $admission=null):void
+    {($this->stateGuard)();
+        self::label($subject);self::label($source);$address=new Address($newAddress,$this->policy()->allowsSmtpUtf8());$deadline=$admission['deadline']??new Deadline($this->policy()->ioMilliseconds());$budgetId=$admission['id']??bin2hex(random_bytes(16));if($admission===null){$this->charge('request','public',$source,$address,$subject,$budgetId);}
         $review=$this->review($subject,$sessionToken,$address,'','request',$deadline,true);$permit=$this->permit($review,$subject,$sessionToken,$grant,$deadline);
-        try{$this->unit()->run(function()use($subject,$address,$review,$permit,$source,$budgetId):?array{
+        if($this->nativeReview!==null){$this->nativeReturn['until']=min($this->nativeReturn['until'],$permit->expiresAt());$this->nativeReturn['session']=$review['session'];}
+        try{$result=$this->unit()->run(function()use($subject,$address,$review,$permit,$source,$budgetId):?array{
             $this->ledger()->checkpoint(); // Match proof/maintenance order: ledger root before host account.
             $this->authorize('request','before',$review['record'],$address);$facts=$this->unchangedFacts($review);$this->charge('request','subject',$source,$address,$subject,$budgetId);$now=$this->unit()->now();
             if($permit->expiresAt()<=$now){throw new SecurityException('Operation expired.','account.operation');}
@@ -249,16 +325,26 @@ final class AddressChange
         },null,function(?array $state)use($permit,$source,$budgetId):void{
             if($state===null){return;}$this->authorize('request','commit',$state['record'],$state['address']);$this->unchangedFacts($state);$this->charge('request','final',$source,$state['address'],$state['record']->account()->subject(),$budgetId);$this->unchangedFlow($state['row']);if(min($permit->expiresAt(),$state['until'])<=$this->unit()->now()){throw new SecurityException('Address request expired.','account.expired');}
         },function(?array $state)use($permit):void{if($state!==null){$this->authorize('request','complete',$state['record'],$state['address']);$this->unchangedFacts($state);$this->unchangedFlow($state['row']);if(min($state['until'],$permit->expiresAt())<=$this->unit()->now()){throw new SecurityException('Address request expired during completion.','account.expired');}}},$deadline);
+            if($this->nativeReview!==null){$this->grants()->addressCompletion($this->nativeReview['policy'],$permit,$review['session'],$result===null?$review['identity']:$result['identity'],$sessionToken,$deadline);if($result!==null){$this->nativeReturn['record']=$result['record'];$this->nativeReturn['until']=min($this->nativeReturn['until'],$result['until']);}}
         }catch(\Throwable $error){if($this->unit()->committed()){throw new StorageException('Address request committed but completion is unknown.','account.completion_unknown');}throw $error;}
     }
     public function confirm(string $selector,string $side,string $token,string $source):bool
+    {return $this->proofEntry($selector,$side,$token,$source,false);}
+    public function cancel(string $selector,string $token,string $source):bool
+    {return $this->proofEntry($selector,'cancel',$token,$source,true);}
+    private function proofEntry(string $selector,string $side,string $token,string $source,bool $cancel):bool
     {
-        if(!in_array($side,['old','new'],true)){throw new ValidationException('Use a fixed mailbox proof purpose.','account.proof');}return $this->proof($selector,$side,$token,$source);
+        $action=$cancel?'cancel':'confirm';
+        $validate=static function()use($selector,$side,$token,$source,$cancel):void{
+            if(!$cancel&&!in_array($side,['old','new'],true)){throw new ValidationException('Use a fixed mailbox proof purpose.','account.proof');}
+            self::id($selector);self::id($token);self::label($source);
+        };
+        if($this->nativeProofs===null){($this->stateGuard)();$validate();return $this->proof($selector,$side,$token,$source);}
+        return ($this->nativeProofs)($action,function()use($validate,$action,$source):array{$validate();$budgetId=bin2hex(random_bytes(16));$this->charge($action,'public',$source,null,null,$budgetId);return [$budgetId];},function(array $admission)use($selector,$side,$token,$source):bool{return $this->proof($selector,$side,$token,$source,$admission[0]);});
     }
-    public function cancel(string $selector,string $token,string $source):bool {return $this->proof($selector,'cancel',$token,$source);}
-    private function proof(string $selector,string $side,string $token,string $source):bool
+    private function proof(string $selector,string $side,string $token,string $source,?string $admission=null):bool
     {
-        self::id($selector);self::id($token);self::label($source);$action=$side==='cancel'?'cancel':'confirm';$deadline=new Deadline($this->policy()->ioMilliseconds());$budgetId=bin2hex(random_bytes(16));$this->charge($action,'public',$source,null,null,$budgetId);
+        ($this->stateGuard)();self::id($selector);self::id($token);self::label($source);$action=$side==='cancel'?'cancel':'confirm';$deadline=new Deadline($this->policy()->ioMilliseconds());$budgetId=$admission??bin2hex(random_bytes(16));if($admission===null){$this->charge($action,'public',$source,null,null,$budgetId);}
         try{$state=$this->unit()->run(function()use($selector,$side,$token,$source,$action,$budgetId):?array{
             $this->authorize($action,'before');$row=$this->ledger()->read($selector);if($row===null||$row['kind']!=='change'){return null;}$flow=$this->flow($row);
             if(!in_array($flow['state'],$side==='cancel'?['pending','ready','locked']:['pending','ready'],true)||$flow['valid_until']<=$this->unit()->now()||$flow['proofs'][$side]['attempts']>=$this->policy()->maximumAttempts()||$flow['proofs'][$side]['confirmed']){return null;}
@@ -275,9 +361,12 @@ final class AddressChange
     }
     private function recipientMessage(string $selector,string $side,Address $address):string {return self::json(['SoSecurity.Account.AddressChange.Recipient.1',$this->context,$this->scope,$selector,$side,$address->value()]);}
     public function complete(string $subject,string $selector,string $sessionToken,string $grant,string $source):bool
-    {
-        self::label($subject);self::id($selector);self::label($source);$deadline=new Deadline($this->policy()->ioMilliseconds());$budgetId=bin2hex(random_bytes(16));$this->charge('complete','public',$source,null,$subject,$budgetId);
+    {return $this->completeInternal($subject,$selector,$sessionToken,$grant,$source);}
+    private function completeInternal(string $subject,string $selector,string $sessionToken,string $grant,string $source,?array $admission=null):bool
+    {($this->stateGuard)();
+        self::label($subject);self::id($selector);self::label($source);$deadline=$admission['deadline']??new Deadline($this->policy()->ioMilliseconds());$budgetId=$admission['id']??bin2hex(random_bytes(16));if($admission===null){$this->charge('complete','public',$source,null,$subject,$budgetId);}
         $review=$this->review($subject,$sessionToken,null,$selector,'complete',$deadline,true);$permit=$this->permit($review,$subject,$sessionToken,$grant,$deadline);
+        if($this->nativeReview!==null){$this->nativeReturn['until']=min($this->nativeReturn['until'],$permit->expiresAt());$this->nativeReturn['session']=$review['session'];}
         try{$result=$this->unit()->run(function()use($subject,$selector,$review,$permit,$source,$budgetId):?array{
             $this->ledger()->checkpoint(); // Match proof/maintenance order: ledger root before host account.
             $facts=$this->unchangedFacts($review);$row=$this->ledger()->read($selector);if($row===null){self::corrupt();}$flow=$this->flow($row);list(,$current)=$this->pointer($subject);
@@ -298,7 +387,9 @@ final class AddressChange
         },function(?array $state)use($permit):void{
             if($state===null){return;}$this->authorize('complete','complete',$state['record'],$state['target']);$this->unchangedFacts($state);$this->unchangedFlow($state['row']);
             if(min($state['until'],$permit->expiresAt())<=$this->unit()->now()){throw new SecurityException('Address completion expired during commit.','account.expired');}
-        },$deadline);return $result!==null;
+        },$deadline);
+            if($this->nativeReview!==null){$this->grants()->addressCompletion($this->nativeReview['policy'],$permit,$review['session'],$result===null?$review['identity']:$result['identity'],null,$deadline);if($result!==null){$this->nativeReturn['record']=$result['record'];$this->nativeReturn['until']=min($this->nativeReturn['until'],$result['until']);}}
+            return $result!==null;
         }catch(\Throwable $error){if($this->unit()->committed()){throw new StorageException('Address changed but completion could not be confirmed.','account.completion_unknown');}throw $error;}
     }
     private function deliveryState(string $id):?array
@@ -326,9 +417,9 @@ final class AddressChange
             function(?array $state):void{$this->authorize('notification','complete',$state===null?null:$state['record']);if($state!==null){$this->unchangedDelivery($state);}});
         return $state;
     }
-    public function notification(string $id):?ChangeDelivery {$state=$this->notificationRead($id);return $state===null?null:$state['delivery'];}
+    public function notification(string $id):?ChangeDelivery {($this->stateGuard)();$state=$this->notificationRead($id);return $state===null?null:$state['delivery'];}
     public function notificationForDispatch(string $id):?DispatchNotice
-    {
+    {($this->stateGuard)();
         $state=$this->notificationRead($id);if($state===null){return null;}$flow=$this->flow($state['flow']);return new DispatchNotice($state['delivery']->notice(),$state['delivery']->selector(),$flow['subject']);
     }
     private static function pageInput(int $limit,string $after):void
@@ -366,8 +457,22 @@ final class AddressChange
         }
     }
     /** At most limit headers plus current-pointer partners are deleted. Host accounts and Outbox remain untouched. */
-    public function maintain(int $limit=20,string $after=''):array
+    /** Native management requires explicit current account roles and the exact page target. */
+    public function maintainFor(StateAccountPolicy $policy,StatePermission $permission,int $limit=20,string $after=''):?array
+    {return $this->nativeMaintenance('maintain',$policy,$permission,$limit,$after);}
+    public function rotateFor(StateAccountPolicy $policy,StatePermission $permission,int $limit=20,string $after=''):?array
+    {return $this->nativeMaintenance('rotate',$policy,$permission,$limit,$after);}
+    private function nativeMaintenance(string $action,StateAccountPolicy $policy,StatePermission $permission,int $limit,string $after):?array
     {
+        if($this->maintenanceState===null){throw new ConfigurationException('Declare the complete native account maintenance graph.','configuration.state_connection');}
+        self::pageInput($limit,$after);$guard=$this->guard($action);$scope=$this->scope;
+        return $this->maintenanceState->maintenance('address_change',$action,$policy,$permission,$limit,$after,function()use($guard,$action,$scope):bool{
+            // Host admission is outside SQL observation units; the witness checks the full source before effects.
+            $phase='admission';$record=null;$address=null;try{return $guard($action,$phase,$scope,$record,$address)===true;}catch(\Throwable $error){throw new \SoSecurity\Exception\DependencyException('Account maintenance admission unavailable.','account.authority');}
+        },function()use($action,$limit,$after):array{return $this->$action($limit,$after);});
+    }
+    public function maintain(int $limit=20,string $after=''):array
+    {($this->stateGuard)();
         self::pageInput($limit,$after);$this->guard('maintain');
         $state=$this->unit()->run(function()use($limit,$after):array{
             $this->authorize('maintain','before');$headers=$this->ledger()->page($limit,$after);$remove=[];$expected=[];$now=$this->unit()->now();
@@ -387,6 +492,9 @@ final class AddressChange
         },null,function(array $state):void{
             $this->authorize('maintain','commit');foreach($state['rows'] as $id=>$row){if($this->ledger()->read($id)!==$row){throw new StorageException('Retained account payload changed before commit.','account.changed');}}
             if($this->ledger()->checkpoint()!==$state['checkpoint']){throw new StorageException('Account maintenance state changed before commit.','account.changed');}
+        },function(array $state):void{
+            try{$this->authorize('maintain','complete');}
+            catch(\Throwable $error){throw new StorageException('Account maintenance completion authority is uncertain; committed changes are not rolled back.','account.completion_unknown');}
         });
         return $state['result'];
     }
@@ -407,7 +515,7 @@ final class AddressChange
     }
     /** Reseal every record and reencrypt every notice; live inner recipient tags must rotate before retiring old keys. */
     public function rotate(int $limit=20,string $after=''):array
-    {
+    {($this->stateGuard)();
         self::pageInput($limit,$after);$this->guard('rotate');
         $state=$this->unit()->run(function()use($limit,$after):array{
             $this->authorize('rotate','before');$headers=$this->ledger()->page($limit,$after);$root=$this->ledger()->rotateRoot();$resealed=0;$reencrypted=0;$retagged=0;$expected=[];
@@ -423,6 +531,9 @@ final class AddressChange
         },null,function(array $state):void{
             $this->authorize('rotate','commit');foreach($state['rows'] as $id=>$row){if($this->ledger()->read($id)!==$row){throw new StorageException('Rotated account payload changed before commit.','account.changed');}}
             if($this->ledger()->checkpoint()!==$state['checkpoint']){throw new StorageException('Account rotation state changed before commit.','account.changed');}
+        },function(array $state):void{
+            try{$this->authorize('rotate','complete');}
+            catch(\Throwable $error){throw new StorageException('Account maintenance completion authority is uncertain; committed changes are not rolled back.','account.completion_unknown');}
         });
         return $state['result'];
     }

@@ -37,6 +37,12 @@ final class QuarantineFiles
         }
         return [$stat['dev'], $stat['ino'], $stat['uid']];
     }
+    private function assertStateActive():void
+    {
+        list($directory,$identity)=($this->location)();
+        $domain=hash('sha256','SoSecurity.FileStore.Directory.1.'.base64_encode($directory).':'.$identity[0].':'.$identity[1].':'.$identity[2]);
+        \SoSecurity\Storage\FileStateBoundary::assertActive($domain);
+    }
     private function path(string $id, string $extension): string
     {
         QuarantineState::id($id);
@@ -50,6 +56,7 @@ final class QuarantineFiles
     /** Serialize reservation/write and deletion across processes; the permanent lock file must not be removed. */
     public function locked(callable $operation)
     {
+        $this->assertStateActive();
         list($directory, $identity) = ($this->location)();
         if (self::directory($directory) !== $identity) { throw new StorageException('Quarantine directory changed.', 'upload.quarantine_directory'); }
         $path = $directory . DIRECTORY_SEPARATOR . '.quarantine.lock'; clearstatcache(true, $path); $before = @lstat($path);
@@ -77,6 +84,7 @@ final class QuarantineFiles
     }
     public function write(string $id, Candidate $candidate): void
     {
+        $this->assertStateActive();
         $path = $this->path($id, $candidate->extension()); $handle = @fopen($path, 'x+b');
         if ($handle === false) { throw new StorageException('Cannot allocate quarantine content.', 'upload.quarantine_io'); }
         $complete = false;
@@ -103,6 +111,7 @@ final class QuarantineFiles
     }
     public function read(string $id, array $file): Candidate
     {
+        $this->assertStateActive();
         $path = $this->path($id, $file['extension']); clearstatcache(true, $path); $before = @lstat($path);
         if (!is_array($before) || ($before['mode'] & 0170000) !== 0100000 || ($before['mode'] & 0777) !== 0600
             || $before['nlink'] !== 1 || $before['size'] !== $file['bytes']) { throw new StorageException('Quarantine content is missing or changed.', 'upload.quarantine_content'); }
@@ -134,6 +143,7 @@ final class QuarantineFiles
     }
     public function remove(string $id, string $extension): void
     {
+        $this->assertStateActive();
         $path = $this->path($id, $extension); clearstatcache(true, $path); $stat = @lstat($path);
         if ($stat === false) { return; }
         if (($stat['mode'] & 0170000) !== 0100000 || $stat['nlink'] !== 1 || !@unlink($path)) {

@@ -34,6 +34,20 @@ final class FactorRecovery
     public function confirm(string $selector,string $source,array $proof):bool {return $this->withWork(function()use($selector,$source,$proof){return $this->confirmInternal($selector,$source,$proof);});}
     public function cancel(string $selector,string $source):bool {return $this->withWork(function()use($selector,$source){return $this->cancelInternal($selector,$source);});}
     public function clean(string $selector,string $source):array {return $this->withWork(function()use($selector,$source){return $this->cleanInternal($selector,$source);});}
+    /** @internal Read-only state inventory context; it neither enters workers nor invokes host callbacks. */
+    public function recoveryBoundary(LocalStateWitness $witness):bool{$f=$this->d()[15];return $f!==null&&$f->recoveryBoundary($witness);}
+    public function stateHistory(\PDO $pdo,\SoSecurity\Mfa\TotpFactors $factors,string $site,string $scope,string $epoch,HmacKeys $keys,Clock $clock):?array
+    {
+        $d=$this->d();if($d[0]!==$pdo||$d[1]!==$site||$d[2]!==$scope||$d[3]!==$epoch||$d[4]!==$keys||$d[5]!==$factors||!($d[13]===$clock||($d[13] instanceof \SoSecurity\Support\SystemClock&&$clock instanceof \SoSecurity\Support\SystemClock))){return null;}
+        $format=$d[15]===null?1:2;$authority=$d[15]===null?null:$d[15]->binding();$policy=$format===1?$d[12]->fingerprint():hash('sha256','SoSecurity.Account.FencedLedger.2.'.$d[12]->fingerprint().$authority);
+        return ['namespace'=>hash('sha256',self::json(['SoSecurity.Account.Ledger.1','account-factor-recovery:'.hash('sha256',$site),$scope,$epoch])),'format'=>$format,'policy'=>$policy,'maximum'=>$d[12]->maximumEntries(),'owner_prefix'=>'SoSecurity.Account.FactorRecovery.Owner.1.','authority'=>$authority];
+    }
+    /** @internal Decode already authenticated bytes with the same parser as the real workflow. No approval is granted. */
+    public function stateSlots(array $row,string $subject):array
+    {
+        if($row['kind']==='budget'){return ['slots'=>[],'reference'=>$this->pointer($row,$subject)];}$b=$this->parse($row);if($b['subject']!==$subject){self::corrupt();}
+        return ['slots'=>[['scope'=>$b['old_scope'],'subject'=>$b['old_subject'],'factor'=>$b['old_factor']],['scope'=>$b['slot_scope'],'subject'=>$b['slot_subject'],'factor'=>$b['enrollment_id']]],'reference'=>null];
+    }
     private function d():array {return ($this->dependencies)();}
     private function unit():SqlTransaction {$d=$this->d();return new SqlTransaction($d[0],$d[13],$d[12]->ioMilliseconds());}
     private function ledger(SqlTransaction $u):Ledger {$d=$this->d();return new Ledger($u,'account-factor-recovery:'.hash('sha256',$d[1]),$d[2],$d[3],$d[4],$d[12],$d[15]===null?1:2,$d[15]===null?null:$d[15]->binding());}
@@ -328,7 +342,7 @@ final class FactorRecovery
     /** Explicit global management operation; preserve the account/directory epoch and all existing workflows. */
     public function rotateWorkers(LocalEpochFence $next,string $trustedRoot,string $source,callable $approval,callable $audit):array
     {
-        self::id($trustedRoot);self::label($source);$d=$this->d();$old=$d[15];
+        self::id($trustedRoot);self::label($source);$d=$this->d();$old=$d[15];if($old!==null&&$old->requiresStateBoundary()&&!$old->sameStateBoundary($next)){throw new ConfigurationException('Worker rotation cannot remove or replace the required state boundary.','configuration.state_boundary');}$next->assertStateActive();if($old!==null){$old->assertStateActive();}
         if($old===null||!$next->matches($d[1],$d[2],$d[3])||$old->binding()===$next->binding()){throw new ConfigurationException('Use a distinct matching worker authority.','configuration.factor_fence');}
         $context=['format'=>1,'purpose'=>'factor_worker_rotation','site'=>$d[1],'scope'=>$d[2],'epoch'=>$d[3],'from'=>$old->binding(),'to'=>$next->binding(),'root'=>$trustedRoot];$payload=self::json($context);$operation=hash('sha256','SoSecurity.Account.WorkerRotation.1.'.$payload);
         // Only the active root owner can enter the operation; no locks are retained across this preflight.

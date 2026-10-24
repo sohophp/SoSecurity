@@ -52,7 +52,7 @@ final class BudgetedSink
 
     public function __invoke(array $record): void
     {
-        if (array_keys($record) !== ['time', 'event', 'scope', 'subject', 'context']
+        if (count($record) !== 5 || array_keys($record) !== ['time', 'event', 'scope', 'subject', 'context']
             || !is_int($record['time']) || $record['time'] < 0
             || !is_string($record['event']) || !preg_match('/\A[a-z][a-z0-9_.]{0,63}\z/D', $record['event'])
             || !is_string($record['scope']) || $record['scope'] === '' || strlen($record['scope']) > 256

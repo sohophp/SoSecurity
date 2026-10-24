@@ -21,8 +21,8 @@ final class HtmlCleaner
         if (!preg_match('//u',$html) || preg_match('/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/',$html)) { throw new ValidationException('Use UTF-8 HTML without forbidden controls.','html.encoding'); }
         $this->preflight($html);
         try { $output=$this->sanitizer->sanitize($html); }
-        catch (\Throwable $e) { throw new SecurityException('HTML sanitization failed.','html.provider',$e); }
-        if (strlen($output)>$this->options['maximum_output'] || !preg_match('//u',$output) || strpos($output,"\0")!==false) {
+        catch (\Throwable $e) { throw new SecurityException('HTML sanitization failed.','html.provider'); }
+        if (strlen($output)>$this->options['maximum_output'] || !preg_match('//u',$output) || preg_match('/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/',$output)) {
             throw new SecurityException('HTML sanitizer output violates its budget/encoding contract.','html.output');
         }
         return $output;

@@ -11,7 +11,6 @@ use SoSecurity\Support\Deadline;
 use SoSecurity\Support\Guard;
 use SoSecurity\Support\HmacKeys;
 use SoSecurity\Support\SqlTransaction;
-use SoSecurity\Support\SqlTransactionGuard;
 use SoSecurity\Support\SystemClock;
 
 /** Explicit per-account signed factor directory. Active pointers have no automatic expiry or raw-state fallback. */
@@ -50,37 +49,29 @@ final class FactorRegistry
     {
         return $this->work(function()use($subject,$audit):array{return $this->retireUnfenced($subject,$audit);});
     }
+    public function ledgerPolicy(HmacKeys $keys):?Policy{$d=($this->dependencies)();return $d[4]===$keys?$d[9]:null;}
+    public function matchesStatePolicy(\SoSecurity\Mfa\TotpFactors $factors,\PDO $pdo,string $site,string $scope,string $epoch,\SoSecurity\Support\Clock $clock):bool{$d=($this->dependencies)();return $d[0]===$pdo&&$d[1]===$site&&$d[2]===$scope&&$d[3]===$epoch&&$d[6]===$factors&&($d[10]===$clock||($d[10] instanceof \SoSecurity\Support\SystemClock&&$clock instanceof \SoSecurity\Support\SystemClock));}
     private static function label(string $value):void {Guard::label($value);if(preg_match('//u',$value)!==1){throw new ConfigurationException('Use UTF-8 managed factor labels.','configuration.account_factor');}}
     private function unit():SqlTransaction {$d=($this->dependencies)();return new SqlTransaction($d[0],$d[10],$d[9]->ioMilliseconds());}
     private function ledger(SqlTransaction $unit,string $subject):Ledger {$d=($this->dependencies)();return new Ledger($unit,'account-factor-directory:'.hash('sha256',json_encode([$d[1],$subject])),$d[2],$d[3],$d[4],$d[9]);}
     private function id(string $subject):string {return hash('sha256','SoSecurity.Account.FactorRegistry.Pointer.1.'.$subject);}
-    private function guard(SqlTransaction $u,string $action,string $phase,?AccountRecord $record=null,?string $subject=null,?FactorInspection $inspection=null):void {$d=($this->dependencies)();$d[6]->enlistWorkers($d[0]);$callback=$action==='read'?$d[7]:$d[8];if($u->invoke($callback,[$action,$phase,$d[2],$record,$subject,$inspection],'account.factor_authority')!==true){throw new SecurityException('Current managed factor authority required.','account.factor_denied');}$d[6]->enlistWorkers($d[0]);}
+    private function guard(SqlTransaction $u,string $action,string $phase,?AccountRecord $record=null,?string $subject=null,?FactorInspection $inspection=null,bool $currentRead=false):void {$d=($this->dependencies)();$d[6]->enlistWorkers($d[0],$currentRead?$u:null);$callback=$action==='read'?$d[7]:$d[8];if($u->invoke($callback,[$action,$phase,$d[2],$record,$subject,$inspection],'account.factor_authority')!==true){throw new SecurityException('Current managed factor authority required.','account.factor_denied');}$d[6]->enlistWorkers($d[0],$currentRead?$u:null);}
     private function account(SqlTransaction $u,string $subject):AccountRecord {
         $d=($this->dependencies)();$record=$u->invoke([$d[5],'find'],[$d[2],$subject],'account.repository');
         if(!$record instanceof AccountRecord||$record->account()->scope()!==$d[2]||$record->account()->subject()!==$subject||$record->status()!=='active'||!$record->verified()||!$record->account()->enabled()){throw new SecurityException('Current active verified account required.','account.factor_account');}return $record;
     }
-    private function data(array $row,string $subject):array {
-        $f=json_decode($row['payload'],true,3);$fields=['format','purpose','subject','origin','slot_scope','slot_subject','factor_id','generation'];if(in_array($f['format']??null,[4,5],true)){$fields[]='migration';}if(($f['format']??null)===6){$fields[]='revocation';}if(($f['format']??null)===7){$fields[]='restoration';}
-        if($row['kind']!=='budget'||$row['record_id']!==$this->id($subject)||$row['owner']!==hash('sha256',$subject)||!is_array($f)||array_keys($f)!==$fields||!in_array($f['format'],[1,2,3,4,5,6,7],true)||$f['purpose']!=='managed_factor'||$f['subject']!==$subject){self::corrupt();}
-        foreach(['origin','slot_scope','slot_subject','factor_id','generation'] as $key){if(!is_string($f[$key])){self::corrupt();}}
-        if(($f['format']===1?!in_array($f['origin'],['none','legacy','recovery'],true):($f['format']===2?$f['origin']!=='retired':($f['format']===3?!in_array($f['origin'],['disabled','enrolled'],true):($f['format']===7?$f['origin']!=='restored':($f['format']===6?$f['origin']!=='revoked':($f['origin']!==($f['format']===4?'migrating':'migrated')||!is_string($f['migration'])||!preg_match('/\A[a-f0-9]{64}\z/D',$f['migration'])))))))||!preg_match('/\A[a-f0-9]{32}\z/D',$f['generation'])){self::corrupt();}
-        if($f['format']===6){$v=$f['revocation'];if(!is_array($v)||array_keys($v)!==['operation','context','revoked_at']||!is_string($v['operation'])||!preg_match('/\A[a-f0-9]{64}\z/D',$v['operation'])||!is_string($v['context'])||!preg_match('/\A[a-f0-9]{64}\z/D',$v['context'])||!is_int($v['revoked_at'])||$v['revoked_at']<0||$f['factor_id']===''){self::corrupt();}}
-        if($f['format']===7){$v=$f['restoration'];if(!is_array($v)||array_keys($v)!==['operation','context','restored_at']||!is_string($v['operation'])||!preg_match('/\A[a-f0-9]{64}\z/D',$v['operation'])||!is_string($v['context'])||!preg_match('/\A[a-f0-9]{64}\z/D',$v['context'])||!is_int($v['restored_at'])||$v['restored_at']<0||$f['factor_id']===''){self::corrupt();}}
-        try{new FactorSlot($subject,$this->bindingOf($f),$f['slot_scope'],$f['slot_subject'],$f['factor_id']);}catch(ConfigurationException $error){self::corrupt();}
-        if((($f['format']===1&&(($f['origin']==='none')!==($f['factor_id']==='')))||($f['format']===3&&(($f['origin']==='disabled')!==($f['factor_id']===''))))||json_encode($f,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)!==$row['payload']){self::corrupt();}return $f;
-    }
+    private function data(array $row,string $subject):array {$d=($this->dependencies)();return FactorDirectoryState::read($d[1],$d[2],$d[3],$row,$subject);}
     /** @return never */
     private static function corrupt():void {throw new StorageException('Managed factor pointer cannot be authenticated.','account.factor_corrupt');}
-    private function bindingOf(array $data):string {$d=($this->dependencies)();return hash('sha256',json_encode(['SoSecurity.Account.FactorRegistry.Binding.1',$d[1],$d[2],$d[3],$data],JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES));}
+    private function bindingOf(array $data):string {$d=($this->dependencies)();return FactorDirectoryState::binding($d[1],$d[2],$d[3],$data);}
     private function slotFrom(array $data):FactorSlot {return new FactorSlot($data['subject'],$this->bindingOf($data),$data['slot_scope'],$data['slot_subject'],$data['factor_id']);}
     /** Read joining is explicit and provisional inside a host transaction, including old PDO's hidden transactions. */
     private function readUnit(callable $body,callable $finish):array {
-        $d=($this->dependencies)();$u=$this->unit();$deadline=new Deadline($d[9]->ioMilliseconds());$active=true;
-        try{SqlTransactionGuard::assertActive($d[0],$u->driver(),$deadline);}catch(ConfigurationException $error){if($error->reason()!=='configuration.transaction'){throw $error;}$active=false;}
-        return $active?$u->enlist(function()use($u,$body):array{return $body($u);},null,function(array $state)use($u,$finish):void{$finish($u,$state);},$deadline):$u->run(function()use($u,$body):array{return $body($u);},null,function(array $state)use($u,$finish):void{$finish($u,$state);},null,$deadline);
+        $d=($this->dependencies)();$u=$this->unit();$deadline=new Deadline($d[9]->ioMilliseconds());
+        return $u->inContext(function()use($u,$body):array{return $body($u);},function(array $state)use($u,$finish):void{$finish($u,$state);},$deadline);
     }
     private function snapshot(string $subject):array {
-        self::label($subject);return $this->readUnit(function(SqlTransaction $u)use($subject):array{$this->guard($u,'read','before');$ledger=$this->ledger($u,$subject);$checkpoint=$ledger->checkpoint();$record=$this->account($u,$subject);$row=$ledger->read($this->id($subject));if($row===null||$checkpoint['entries']!==1){self::corrupt();}$data=$this->data($row,$subject);if($data['origin']==='migrating'){throw new SecurityException('Migration preparation cannot authenticate.','account.factor_migrating');}if(in_array($data['origin'],['retired','revoked'],true)){throw new SecurityException('Retired factor directories cannot authenticate.','account.factor_retired');}if($data['factor_id']!==''&&!$record->account()->mfaRequired()){self::corrupt();}$this->guard($u,'read','current',$record);return ['row'=>$row,'data'=>$data,'record'=>$record,'checkpoint'=>$checkpoint];},function(SqlTransaction $u,array $state)use($subject):void{$this->guard($u,'read','return',$state['record']);$ledger=$this->ledger($u,$subject);if($ledger->checkpoint()!==$state['checkpoint']||$ledger->read($this->id($subject))!==$state['row']||$this->account($u,$subject)->fingerprint()!==$state['record']->fingerprint()){self::corrupt();}});
+        self::label($subject);return $this->readUnit(function(SqlTransaction $u)use($subject):array{$this->guard($u,'read','before',null,null,null,true);$ledger=$this->ledger($u,$subject);$initial=$ledger->readCheckpoint($this->id($subject),function()use($u,$subject):AccountRecord{return $this->account($u,$subject);});$checkpoint=$initial['checkpoint'];$record=$initial['context'];$row=$initial['row'];if($row===null||$checkpoint['entries']!==1){self::corrupt();}$data=$this->data($row,$subject);if($data['origin']==='migrating'){throw new SecurityException('Migration preparation cannot authenticate.','account.factor_migrating');}if(in_array($data['origin'],['retired','revoked'],true)){throw new SecurityException('Retired factor directories cannot authenticate.','account.factor_retired');}if($data['factor_id']!==''&&!$record->account()->mfaRequired()){self::corrupt();}$this->guard($u,'read','current',$record,null,null,true);return ['row'=>$row,'data'=>$data,'record'=>$record,'checkpoint'=>$checkpoint];},function(SqlTransaction $u,array $state)use($subject):void{$this->guard($u,'read','return',$state['record'],null,null,true);$ledger=$this->ledger($u,$subject);if($ledger->readIfCheckpoint($this->id($subject),$state['checkpoint'])!==$state['row']||$this->account($u,$subject)->fingerprint()!==$state['record']->fingerprint()){self::corrupt();}});
     }
     private function currentUnfenced(string $subject):FactorSlot {return $this->slotFrom($this->snapshot($subject)['data']);}
     /** Provision explicitly for every account. Never invoke this as a login-error fallback. */

@@ -24,6 +24,23 @@ final class FactorMigration
         self::label($site);self::label($scope);self::id($epoch);if(!$fence->matches($site,$scope,$epoch)||!$managed->boundTo($fence)||!$managed->migratesFrom($legacy)){throw new ConfigurationException('Use the exact registered migration source and authority.','configuration.factor_migration');}new SqlTransaction($pdo,$clock,$policy->ioMilliseconds());$managed->validateConfiguration($clock,true);
         $this->dependencies=static function()use($pdo,$site,$scope,$epoch,$keys,$legacy,$managed,$fence,$facts,$write,$authority,$budgets,$approval,$stopped,$audit,$events,$policy,$clock):array{return [$pdo,$site,$scope,$epoch,$keys,$legacy,$managed,$fence,$facts,$write,$authority,$budgets,$approval,$stopped,$audit,$events,$policy,$clock];};
     }
+    /** @internal Read-only state inventory context; it neither enters workers nor invokes host callbacks. */
+    public function recoveryBoundary(LocalStateWitness $witness):bool{$f=$this->d()[7];return $f!==null&&$f->recoveryBoundary($witness);}
+    public function stateHistory(\PDO $pdo,\SoSecurity\Mfa\TotpFactors $factors,string $site,string $scope,string $epoch,HmacKeys $keys,Clock $clock):?array
+    {
+        $d=$this->d();if($d[0]!==$pdo||$d[1]!==$site||$d[2]!==$scope||$d[3]!==$epoch||$d[4]!==$keys||$d[6]!==$factors||!($d[17]===$clock||($d[17] instanceof \SoSecurity\Support\SystemClock&&$clock instanceof \SoSecurity\Support\SystemClock))){return null;}
+        $format=$d[7]===null?1:2;$authority=$d[7]===null?null:$d[7]->binding();$policy=$format===1?$d[16]->fingerprint():hash('sha256','SoSecurity.Account.FencedLedger.2.'.$d[16]->fingerprint().$authority);
+        return ['namespace'=>hash('sha256',self::json(['SoSecurity.Account.Ledger.1','account-factor-recovery:'.hash('sha256',$site),$scope,$epoch])),'format'=>$format,'policy'=>$policy,'maximum'=>$d[16]->maximumEntries(),'owner_prefix'=>'SoSecurity.Account.FactorMigration.Owner.1.','authority'=>$authority];
+    }
+    /** @internal The original migration decoder validates retained records before coordinates are used. */
+    public function stateSlots(array $row,string $subject):array
+    {
+        $b=$this->decode($row)['body'];$v=$b['review'];if($v['subject']!==$subject){throw new StorageException('Migration history belongs to another account.','account.migration_corrupt');}$slots=[];
+        if($v['factor_id']!==null){$slots[]=['scope'=>$v['scope'],'subject'=>$subject,'factor'=>$v['factor_id']];}
+        if($b['old']!==null){$d=$this->d();$old=FactorDirectoryState::read($d[1],$d[2],$d[3],['kind'=>'budget','record_id'=>hash('sha256','SoSecurity.Account.FactorRegistry.Pointer.1.'.$subject),'owner'=>hash('sha256',$subject),'payload'=>self::json($b['old'])],$subject);
+            if($old['factor_id']!==''){if($old['slot_scope']!==$d[2]||$old['slot_subject']!==$subject){throw new StorageException('Migration may refer only to the fixed original legacy coordinate.','account.migration_corrupt');}$slots[]=['scope'=>$old['slot_scope'],'subject'=>$old['slot_subject'],'factor'=>$old['factor_id']];}}
+        return ['slots'=>$slots,'reference'=>null];
+    }
     private function d():array {return ($this->dependencies)();}
     private function unit():SqlTransaction {$d=$this->d();return new SqlTransaction($d[0],$d[17],$d[16]->ioMilliseconds());}
     private function ledger(SqlTransaction $u):Ledger {$d=$this->d();return new Ledger($u,'account-factor-recovery:'.hash('sha256',$d[1]),$d[2],$d[3],$d[4],$d[16],2,$d[7]->binding());}

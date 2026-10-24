@@ -3,6 +3,7 @@ declare(strict_types=1);
 namespace SoSecurity\Http;
 
 use SoSecurity\Exception\ValidationException;
+use SoSecurity\Exception\ConfigurationException;
 
 /** Strict HTTP URI parser shared by format validation, redirects, CORS and outbound requests. No DNS or trust decision. */
 final class Uri
@@ -10,9 +11,7 @@ final class Uri
     private $scheme;
     private $host;
     private $port;
-    private $path;
-    private $query;
-    private $fragment;
+    private $read;
     private function __construct() {}
     public static function parse(string $value, bool $allowFragment = false): self
     {
@@ -35,12 +34,13 @@ final class Uri
         $path = $question === false ? $tail : substr($tail, 0, $question);
         if ($path !== '' && $path[0] !== '/') { throw new ValidationException('URI path is invalid.', 'url.path'); }
         $uri = new self(); $uri->scheme = $scheme; $uri->host = $host; $uri->port = $port;
-        $uri->path = self::dots($path === '' ? '/' : $path); $uri->query = $question === false ? null : substr($tail, $question + 1);
-        $uri->fragment = $parts[4] ?? null;
+        $values = [self::dots($path === '' ? '/' : $path), $question === false ? null : substr($tail, $question + 1), $parts[4] ?? null];
+        $uri->read = static function () use ($values): array { return $values; };
         return $uri;
     }
     public static function host(string $host): string
     {
+        if (strlen($host) > 253) { throw new ValidationException('Host is too long.', 'url.host'); }
         $host = strtolower($host);
         if (filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false && preg_match('/\A(?:0|[1-9][0-9]{0,2})(?:\.(?:0|[1-9][0-9]{0,2})){3}\z/D', $host)) { return $host; }
         if (preg_match('/\A(?:0x[a-f0-9]+|[0-9]+)(?:\.(?:0x[a-f0-9]+|[0-9]+)){0,3}\z/iD', $host)) { throw new ValidationException('Legacy numeric addresses are forbidden.', 'url.host'); }
@@ -55,31 +55,60 @@ final class Uri
     public static function originValue(string $value): string
     {
         $uri = self::parse($value);
-        if (!preg_match('/\Ahttps?:\/\/[^\/?#]+\/?\z/iD', $value) || $uri->path() !== '/' || $uri->query !== null) { throw new ValidationException('An origin has no path or query.', 'url.origin'); }
+        if (!preg_match('/\Ahttps?:\/\/[^\/?#]+\/?\z/iD', $value) || $uri->path() !== '/' || $uri->values()[1] !== null) { throw new ValidationException('An origin has no path or query.', 'url.origin'); }
         return $uri->origin();
     }
     public function scheme(): string { return $this->scheme; }
     public function hostName(): string { return $this->host; }
     public function port(): int { return $this->port; }
-    public function path(): string { return $this->path; }
+    public function path(): string { return $this->values()[0]; }
     public function origin(): string
     {
         $host = strpos($this->host, ':') === false ? $this->host : '[' . $this->host . ']';
         $default = $this->scheme === 'https' ? 443 : 80;
         return $this->scheme . '://' . $host . ($this->port === $default ? '' : ':' . $this->port);
     }
-    public function target(): string { return $this->path . ($this->query === null ? '' : '?' . $this->query); }
-    public function url(): string { return $this->origin() . $this->target() . ($this->fragment === null ? '' : '#' . $this->fragment); }
-    public function withoutFragment(): self { $copy = clone $this; $copy->fragment = null; return $copy; }
+    public function target(): string
+    {
+        $values = $this->values();
+        return $values[0] . ($values[1] === null ? '' : '?' . $values[1]);
+    }
+    public function url(): string
+    {
+        $values = $this->values();
+        return $this->origin() . $this->target() . ($values[2] === null ? '' : '#' . $values[2]);
+    }
+    public function withoutFragment(): self
+    {
+        $values = $this->values(); $values[2] = null; $copy = clone $this;
+        $copy->read = static function () use ($values): array { return $values; };
+        return $copy;
+    }
     public function resolve(string $reference): self
     {
         self::safeText($reference);
         if (preg_match('/\A[A-Za-z][A-Za-z0-9+.-]*:/', $reference)) { return self::parse($reference, true); }
         if (substr($reference, 0, 2) === '//') { return self::parse($this->scheme . ':' . $reference, true); }
         if ($reference[0] === '#') { return self::parse($this->origin() . $this->target() . $reference, true); }
-        if ($reference[0] === '?') { return self::parse($this->origin() . $this->path . $reference, true); }
-        $path = $reference[0] === '/' ? $reference : substr($this->path, 0, (int) strrpos($this->path, '/') + 1) . $reference;
+        if ($reference[0] === '?') { return self::parse($this->origin() . $this->path() . $reference, true); }
+        $path = $reference[0] === '/' ? $reference : substr($this->path(), 0, (int) strrpos($this->path(), '/') + 1) . $reference;
         return self::parse($this->origin() . $path, true);
+    }
+    private function values(): array
+    {
+        if (!$this->read instanceof \Closure) {
+            throw new ConfigurationException('Rebuild URI values from explicit input.', 'configuration.uri_serialization');
+        }
+        return ($this->read)();
+    }
+    public function __debugInfo(): array { return ['uri' => '[redacted]']; }
+    public function __sleep(): array
+    {
+        throw new ConfigurationException('Rebuild URI values from explicit input.', 'configuration.uri_serialization');
+    }
+    public function __wakeup(): void
+    {
+        throw new ConfigurationException('Rebuild URI values from explicit input.', 'configuration.uri_serialization');
     }
     private static function safeText(string $value): void
     {

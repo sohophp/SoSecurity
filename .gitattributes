@@ -13,3 +13,4 @@
 
 /integrations export-ignore
 /resources/api export-ignore
+/docs/*-evidence-* export-ignore

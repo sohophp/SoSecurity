@@ -18,9 +18,10 @@ final class Endpoint
     {
         if(!preg_match('/\A[a-z][a-z0-9_.-]{0,63}\z/D',$id)||!in_array($protocol,['standard-hmac','standard-ed25519','stripe-v1','github-sha256'],true)){throw new ConfigurationException('Configure an exact webhook endpoint/protocol.','configuration.webhook');}
         foreach([$scope,$account] as $value){Guard::label($value);if(!preg_match('//u',$value)){throw new ConfigurationException('Webhook identities must be UTF-8.','configuration.webhook');}}
-        $copy=[];foreach($options as $name=>$value){$copy[$name]=$value;}$options=$copy;
         $defaults=['allow_http'=>false,'allow_untimed'=>false,'maximum_body'=>65536,'tolerance'=>300,'future_skew'=>30,'io_milliseconds'=>3000];
-        if(array_diff(array_keys($options),array_keys($defaults))){throw new ConfigurationException('Unknown webhook policy.','configuration.webhook');}$options+=$defaults;
+        if(count($options) > count($defaults) || array_diff(array_keys($options),array_keys($defaults))){throw new ConfigurationException('Unknown webhook policy.','configuration.webhook');}
+        $copy=[];foreach($options as $name=>$value){$copy[$name]=$value;}$options=$copy;
+        $options+=$defaults;
         foreach(['allow_http','allow_untimed'] as $name){if(!is_bool($options[$name])){throw new ConfigurationException('Webhook exceptions must be explicit booleans.','configuration.webhook');}}
         foreach(['maximum_body'=>[0,1048576],'tolerance'=>[1,900],'future_skew'=>[0,120],'io_milliseconds'=>[1,30000]] as $name=>$limits){if(!is_int($options[$name])||$options[$name]<$limits[0]||$options[$name]>$limits[1]){throw new ConfigurationException('Invalid bounded webhook policy.','configuration.webhook');}}
         try{$uri=Uri::parse($url);}catch(\Throwable $error){throw new ConfigurationException('Configure an exact webhook URL.','configuration.webhook');}

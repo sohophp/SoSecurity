@@ -13,7 +13,7 @@ final class Policy
     {
         $defaults = ['hosts'=>[], 'ports'=>[443], 'allow_http'=>false, 'budget_ms'=>5000, 'redirects'=>3,
             'request_bytes'=>65536, 'response_bytes'=>1048576, 'header_bytes'=>16384];
-        if (array_diff(array_keys($options), array_keys($defaults))) { throw new ConfigurationException('Unknown outbound policy option.'); }
+        if (count($options) > count($defaults) || array_diff(array_keys($options), array_keys($defaults))) { throw new ConfigurationException('Unknown outbound policy option.'); }
         $options += $defaults;
         if (!is_array($options['hosts']) || !$options['hosts'] || count($options['hosts']) > 64 || !is_array($options['ports']) || !$options['ports'] || count($options['ports']) > 16) {
             throw new ConfigurationException('Provide exact bounded outbound host/port allowlists.');

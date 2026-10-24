@@ -16,15 +16,7 @@ final class SqlTransactionGuard
         $deadline->check('storage.transaction_timeout');
         if($pdo->inTransaction()){throw new ConfigurationException('Refuse an existing host transaction.','configuration.transaction');}
         if($driver!=='mysql'){return;}
-        try {
-            $query=@$pdo->prepare('SELECT @@SESSION.autocommit');
-            if($query===false){throw new StorageException('Cannot inspect transaction state.','storage.transaction_state');}
-            $deadline->check('storage.transaction_timeout');
-            if(!@$query->execute()){throw new StorageException('Cannot inspect transaction state.','storage.transaction_state');}
-            $value=$query->fetchColumn();$query->closeCursor();
-        } catch (\Throwable $error) {
-            throw new StorageException('Cannot inspect transaction state.','storage.transaction_state');
-        }
+        $value=self::autocommit($pdo,$deadline);
         $deadline->check('storage.transaction_timeout');
         if((string)$value!=='1'){throw new ConfigurationException('Use an autocommit-enabled connection for owned security transactions.','configuration.transaction');}
         // Old PDO MySQL does not always report SQL-started transactions. A savepoint persists only in an active transaction.
@@ -41,6 +33,12 @@ final class SqlTransactionGuard
     /** Require an explicit existing transaction, including SQL-started transactions hidden by old PDO. */
     public static function assertActive(PDO $pdo,string $driver,Deadline $deadline):void
     {
+        if(!self::active($pdo,$driver,$deadline)){throw new ConfigurationException('Begin the host transaction before enlisting security writes.','configuration.transaction');}
+    }
+
+    /** Native entry observation only. Unsupported ownership and uncertain probes throw; absence is explicit false. */
+    public static function active(PDO $pdo,string $driver,Deadline $deadline):bool
+    {
         $deadline->check('storage.transaction_timeout');
         if($driver==='sqlite'){
             // Always probe the engine: old PDO can also retain a true flag after a SQL COMMIT.
@@ -50,15 +48,11 @@ final class SqlTransactionGuard
                 list($rolledBack)=self::command($pdo,'ROLLBACK');
                 if(!$rolledBack){throw new StorageException('Cannot clean up the empty transaction probe.','sql.cleanup');}
                 $deadline->check('storage.transaction_timeout');
-                throw new ConfigurationException('Begin the host transaction before enlisting security writes.','configuration.transaction');
+                return false;
             }
             if($code!==1||$message!=='cannot start a transaction within a transaction'){throw new StorageException('Cannot confirm an active SQLite transaction.','storage.transaction_state');}
         }elseif($driver==='mysql'){
-            try{
-                $query=$pdo->query('SELECT @@SESSION.autocommit');
-                if($query===false){throw new \RuntimeException();}
-                $value=$query->fetchColumn();$query->closeCursor();
-            }catch(\Throwable $error){throw new StorageException('Cannot inspect transaction state.','storage.transaction_state');}
+            $value=self::autocommit($pdo,$deadline,true);
             $deadline->check('storage.transaction_timeout');
             // With autocommit=0 a savepoint can persist even before any host DML. It cannot prove prior ownership.
             if((string)$value!=='1'){throw new ConfigurationException('Enlist only in an explicit autocommit-enabled host transaction.','configuration.transaction');}
@@ -67,11 +61,29 @@ final class SqlTransactionGuard
             if(!$created){throw new StorageException('Cannot inspect transaction ownership.','storage.transaction_state');}
             list($released,$code)=self::command($pdo,'RELEASE SAVEPOINT '.$name);
             if(!$released){
-                if($code===1305){throw new ConfigurationException('Begin the host transaction before enlisting security writes.','configuration.transaction');}
+                if($code===1305){return false;}
                 throw new StorageException('Cannot confirm an active host transaction.','storage.transaction_state');
             }
         }else{throw new ConfigurationException('Use SQLite or MySQL transactions.','configuration.sql_transaction');}
-        $deadline->check('storage.transaction_timeout');
+        $deadline->check('storage.transaction_timeout');return true;
+    }
+
+    /** Close even after failed execution/fetch; unconfirmed cleanup never proves ownership. */
+    private static function autocommit(PDO $pdo,Deadline $deadline,bool $direct=false)
+    {
+        $query=null;$failed=false;$value=null;
+        try{
+            $query=$direct?@$pdo->query('SELECT @@SESSION.autocommit'):@$pdo->prepare('SELECT @@SESSION.autocommit');
+            if($query===false){throw new \RuntimeException();}
+            $deadline->check('storage.transaction_timeout');
+            if(!$direct&&!@$query->execute()){throw new \RuntimeException();}
+            $value=$query->fetchColumn();
+        }catch(\Throwable $error){$failed=true;}
+        if($query instanceof \PDOStatement){
+            try{if(!$query->closeCursor()){$failed=true;}}catch(\Throwable $error){$failed=true;}
+        }
+        if($failed){throw new StorageException('Cannot inspect transaction state.','storage.transaction_state');}
+        return $value;
     }
 
     private static function command(PDO $pdo,string $sql):array

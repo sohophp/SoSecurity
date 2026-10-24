@@ -28,16 +28,25 @@ final class Authorizer
     {
         Guard::label($scope); Shape::name($action); $fields = Shape::fields($fields);
         if (!$resources || count($resources) > 100 || array_values($resources) !== $resources) { throw new ValidationException('Batch requires 1-100 resource snapshots.', 'authorization.batch'); }
-        $seen = [];
+        $seen = []; $snapshots = [];
         foreach ($resources as $resource) {
             if (!$resource instanceof Resource) { throw new ValidationException('Expected resource snapshots.', 'authorization.batch'); }
             $key = json_encode([$resource->scope(), $resource->type(), $resource->id()]);
             if (isset($seen[$key])) { throw new ValidationException('Duplicate batch resource.', 'authorization.batch'); } $seen[$key] = true;
+            $snapshots[] = $resource;
         }
+        // Detach list-element references before identity, policy or audit callbacks.
+        $resources = $snapshots;
         $decision = $this->evaluate($scope, $actor, $action, $resources, $fields);
         if ($this->audit !== null) {
             try { $this->audit->record($decision->allowed() ? 'authorization.allowed' : 'authorization.denied', $scope, $actor === null ? null : $actor->subject(), ['allowed' => $decision->allowed()]); }
             catch (\Throwable $e) { throw new DependencyException('Authorization audit unavailable.', 'authorization.audit_unavailable'); }
+            // Audit can outlive either identity or policy authority. Recheck without emitting another event.
+            if ($decision->allowed() && $actor !== null) {
+                $current = $this->evaluate($scope, $actor, $action, $resources, $fields);
+                if (!$current->allowed()) { return $current; }
+                return Decision::allow(array_values(array_intersect($decision->fields(), $current->fields())));
+            }
         }
         return $decision;
     }
@@ -78,6 +87,8 @@ final class Authorizer
     }
     public function project(string $scope, ?Account $actor, string $action, Resource $resource, array $row, array $fields): array
     {
+        // Detach caller-owned references before identity, policy or audit callbacks run.
+        $fields = Shape::fields($fields);
         $this->assertAllowed($scope, $actor, $action, $resource, $fields); $out = [];
         foreach ($fields as $field) {
             if (!array_key_exists($field, $row)) { throw new ConfigurationException('Requested projection field is absent from the server row.', 'authorization.projection'); }
@@ -88,6 +99,26 @@ final class Authorizer
     private function enforce(Decision $decision): void
     {
         if (!$decision->allowed()) { throw new SecurityException('Authorization denied.', 'authorization.denied'); }
+    }
+    /** Pure policy extraction only; identity/session authority must be proven by the exact native capture. */
+    public function stateRolePolicy(IdentityProvider $identities):?RolePolicy
+    {
+        return $this->identities===$identities&&$this->policy instanceof RolePolicy&&$this->audit===null?$this->policy:null;
+    }
+    /** Fixed role policy and exact declared audit; arbitrary providers/callback sinks remain unsupported. */
+    public function stateAuditedPolicy(IdentityProvider $identities, \SoSecurity\Account\StateAccountPolicy $state): ?array
+    {
+        if ($this->identities !== $identities || !$this->policy instanceof RolePolicy || $this->audit === null) { return null; }
+        $binding = $state->credentialAuditContext($this->audit);
+        return $binding === null ? null : ['policy'=>$this->policy,'audit'=>$this->audit,'binding'=>$binding];
+    }
+    /** Explicit complete-source policy; unregistered custom providers remain unsupported. */
+    public function stateSnapshotPolicy(IdentityProvider $identities,\SoSecurity\Account\StateAccountPolicy $state):?array
+    {
+        if($this->identities!==$identities||!$this->policy instanceof SnapshotPolicy||!$this->policy->matches($state)){return null;}
+        $binding=$this->audit===null?null:$state->credentialAuditContext($this->audit);
+        if($this->audit!==null&&$binding===null){return null;}
+        return ['policy'=>$this->policy,'audit'=>$this->audit,'binding'=>$binding];
     }
     public function __debugInfo(): array { return ['authorization' => '[redacted]']; }
     public function __sleep(): array { throw new ConfigurationException('Rebuild authorization from trusted services.', 'configuration.authorization_serialization'); }

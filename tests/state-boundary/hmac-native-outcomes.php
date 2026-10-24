@@ -1,0 +1,7 @@
+<?php
+declare(strict_types=1);
+require __DIR__.'/hmac-native-support.php';
+foreach(['rollback','expiry','committed-unknown'] as $mode){hmacCase(static function(EntryEnvironment $x)use($mode):void{
+    $v=nativeHmac($x);$r=hmacRequest($x);$rows=businessRows($x);$before=$x->inspect();$calls=0;if($mode==='committed-unknown'){$x->finalAllowed=false;}witnessReason('account.completion_unknown',static function()use($x,$v,$r,$mode,&$calls):void{hmacExecute($x,$v,$r,static function(PDO $pdo,SoSecurity\Api\Identity $id,SoSecurity\Operation\Intent $intent)use($x,$mode,&$calls):int{++$calls;$n=hmacWrite($pdo,$id,$intent);if($mode==='rollback'){throw new RuntimeException('Owned HMAC SQL rollback');}if($mode==='expiry'){$x->e->clock->time+=61;}return $n;});});$x->finalAllowed=true;Check::same(1,$calls);$pending=$x->inspect();Check::same('pending',$pending['status']);Check::same('hmac.execute',$pending['intent']['action']);Check::same($before['digest'],$pending['digest']);Check::same($mode!=='committed-unknown',$rows===businessRows($x));$files=entryFiles($x);grantNoEffect($x,static function()use($x,$v,$r,&$calls){return hmacExecute($x,$v,$r,static function()use(&$calls):void{++$calls;});},'account.witness_pending');Check::same(1,$calls);Check::same($files,entryFiles($x));
+});}
+echo 'PASS native HMAC unknown outcomes: '.Check::$assertions.' assertions PHP '.PHP_VERSION."; real SQL rollback/expiry and post-commit failure retain pending, consumed nonce is not refunded, no business replay\n";

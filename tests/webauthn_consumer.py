@@ -75,14 +75,27 @@ with tempfile.TemporaryDirectory(prefix="sosecurity-webauthn-consumer-") as dire
             "web-auth/webauthn-lib", "web-auth/cose-lib"])
     autoload = str(project / "vendor/autoload.php")
     suite = root / "integrations/webauthn/tests"
-    for name in ("smoke", "challenge", "challenge-race", "repository", "persisted",
-                 "device-management", "session-device-authority", "device-race", "recovery",
+    for name in ("smoke", "list-budget", "challenge", "challenge-time", "challenge-race", "repository", "persisted",
+                 "device-management", "device-boundary", "session-device-authority", "authority-time", "authority-binding", "device-race", "recovery",
                  "recovery-race", "migration"):
         command = [runtime]
-        if name == "repository":
+        if name in ("repository", "list-budget", "challenge-time", "device-boundary"):
             command += ["-d", "memory_limit=8M"]
         command += [str(suite / (name + ".php")), autoload]
         subprocess.run(command, cwd=root, env=env, check=True, timeout=120)
+        if name == "authority-binding":
+            for mode in ("normal", "return-binding", "issue-reference", "issue-provider", "issue-clock",
+                         "allow-reference", "allow-provider", "allow-clock", "issue-proof", "allow-proof"):
+                subprocess.run(command + [mode], cwd=root, env=env, check=True, timeout=120)
+        if name == "device-boundary":
+            for mode in ("before", "current", "return", "notice", "clock-before", "clock-return"):
+                subprocess.run(command + [mode], cwd=root, env=env, check=True, timeout=120)
+        if name == "challenge-time":
+            for mode in ("issue-expired", "consume-backward", "invalid-clock", "consume-valid"):
+                subprocess.run(command + [mode], cwd=root, env=env, check=True, timeout=120)
+        if name == "list-budget":
+            for mode in ("register-large", "authenticate-large"):
+                subprocess.run(command + [mode], cwd=root, env=env, check=True, timeout=120)
     if with_mysql:
         mysql_env = dict(env, SOSECURITY_WEBAUTHN_AUTOLOAD=autoload)
         subprocess.run(["python3", str(root / "tests/mysql_check.py"), "--webauthn", runtime],
@@ -91,7 +104,7 @@ with tempfile.TemporaryDirectory(prefix="sosecurity-webauthn-consumer-") as dire
         browser_env = dict(env, SOSECURITY_WEBAUTHN_AUTOLOAD=autoload)
         subprocess.run(["python3", str(suite / "browser.py"), runtime],
                        cwd=root, env=browser_env, check=True, timeout=180)
-print("PASS optional WebAuthn local consumer: exact 5.3.9 lock, eleven component suites"
+print("PASS optional WebAuthn local consumer: exact 5.3.9 lock, sixteen component suites"
       + (", private MySQL" if with_mysql else "")
       + (", local Chromium virtual authenticator" if with_browser else "")
       + (", installed from Composer ZIP archive" if with_archive else ""))

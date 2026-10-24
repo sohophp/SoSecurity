@@ -1,0 +1,11 @@
+<?php
+declare(strict_types=1);
+require __DIR__.'/api-native-support.php';
+managedCase(static function(ManagedEnvironment $e):void{
+    $h=new SoSecurity\Password\PasswordHasher('bcrypt',['cost'=>10]);$other=$e->accounts->createPending('tenant','other',new SoSecurity\Account\Address('other@example.test'));$e->accounts->activate($other,$h->hash('Owned second account password 49!'));$e->registry->initialize('other');$x=new EntryEnvironment($e);$token=$x->login()->credential()->token();
+    $role=new SoSecurity\Authorization\RolePolicy(['api.credentials.issue'=>['type'=>'api_credential_owner','roles'=>['operator'],'fields'=>[]],'api.credentials.all'=>['type'=>'api_credential_owner','roles'=>['operator'],'fields'=>[]],'api.credentials.revoke_all'=>['type'=>'api_credential_owner','roles'=>['operator'],'fields'=>[]]]);$authz=new SoSecurity\Authorization\Authorizer($x->provider,$role);$calls=0;$api=nativeApi($x,static function()use(&$calls):bool{++$calls;return true;},null,[],$authz,static function():string{return 'user';});
+    nativeApiNoEffect($x,static function()use($api,$token){$api->issue('tenant','other',$token,'Denied delegate',['records:read']);},'authorization.denied');Check::same(0,$calls);
+    $x->boundary->run('owned.operator.roles',static function()use($e):void{$e->pdo->exec("UPDATE account_example SET roles='[\"operator\"]' WHERE subject='user'");});$token=$x->login()->credential()->token();$key=$api->issue('tenant','other',$token,'Delegated native',['records:read']);Check::same('other',$api->authenticate('tenant',$key->token(),'records:read')->account()->subject());Check::same(1,count($api->all('tenant','other',$token)));Check::same(1,$api->revokeAll('tenant','other',$token));
+    $x->boundary->run('owned.operator.withdraw',static function()use($e):void{$e->pdo->exec("UPDATE account_example SET roles='[]' WHERE subject='user'");});nativeApiNoEffect($x,static function()use($api,$token){$api->issue('tenant','other',$token,'Withdrawn delegate',['records:read']);},'api_credentials.denied');
+});
+echo 'PASS native delegated API admission: '.Check::$assertions.' assertions PHP '.PHP_VERSION."; actual separate target, current role and strong operator session, pure object policy denial before host callback, role removal invalidates old session without writing\n";

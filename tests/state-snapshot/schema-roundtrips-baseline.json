@@ -1,0 +1,34 @@
+{
+  "sqlite": {
+    "empty": {
+      "digest": "06692ef54b610390a5fb1bddb8bb7dd21365abb51df93ef357981f22ea45fc34",
+      "statements": 28
+    },
+    "records": {
+      "digest": "5363cc601bc1e9c992bdf46dd7332618a7f0dc84f7ec2abe634cdd669c4e5d83",
+      "statements": 28
+    },
+    "index": {
+      "digest": "8a5916538d38d520dd2f39ac845305bc2f4c6818a644172011e051a89797f47d",
+      "statements": 28
+    },
+    "trigger": {
+      "digest": "940523cdd7571bbce535762a50bdd3990dffa2472c40726c14fe7ff09f0813cd",
+      "statements": 28
+    },
+    "temp_trigger": {
+      "digest": "4d5313ec13ae859f3c742febd7bea6891cf12c0a6abde79981d961a161e3af4c",
+      "statements": 28
+    }
+  },
+  "mysql": {
+    "empty": {
+      "digest": "25e203b48cbbd78997abb0fc5bc4d75b1676cd6a5799e7096275798dbe6c3589",
+      "statements": 22
+    },
+    "records": {
+      "digest": "e2dbb0fabf55e75c45560a0e5af82f12d160433f9594e9d528fa8615af9f6710",
+      "statements": 22
+    }
+  }
+}

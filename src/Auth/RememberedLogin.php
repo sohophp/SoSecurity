@@ -28,25 +28,62 @@ final class RememberedLogin
     private $grace;
     private $policy;
     private $riskGuard;
+    private $boundary;
+    private $busy = false;
 
     public function __construct(AtomicStore $store, IdentityProvider $provider, SessionRegistry $sessions, HmacKeys $keys,
         callable $requestGuard, ?SecondFactor $factor = null, ?Clock $clock = null, int $ttl = 2592000,
-        int $capacity = 8, int $freshAge = 300, int $concurrencyGrace = 5, ?callable $riskGuard = null)
+        int $capacity = 8, int $freshAge = 300, int $concurrencyGrace = 5, ?callable $riskGuard = null, ?\SoSecurity\Account\StateBoundary $boundary = null)
     {
+        if($boundary===null&&($sessions->requiresStateBoundary()||$store instanceof \SoSecurity\Account\WitnessedStore||\SoSecurity\Storage\FileStateBoundary::protects($store))){throw new ConfigurationException('Protected persistent login requires its exact state authority.','configuration.state_boundary');}
         Guard::duration($ttl);
         if ($capacity < 1 || $capacity > 16 || $freshAge < 1 || $freshAge > 3600 || $concurrencyGrace < 0 || $concurrencyGrace > 10) {
             throw new ConfigurationException('Invalid persistent-login limits.', 'configuration.remember');
         }
-        $this->store = $store; $this->sessions = $sessions; $this->identities = new IdentityState($provider, $factor);
+        if($boundary!==null&&(!$sessions->boundTo($boundary)||!$requestGuard instanceof \SoSecurity\Account\StateRequestGuard)){throw new ConfigurationException('Persistent login and sessions require one exact authority and staged request guard.','configuration.state_boundary');}
+        $this->boundary=$boundary; $this->store = $boundary===null?$store:$boundary->protect($store); $this->sessions = $sessions; $this->identities = new IdentityState($provider, $factor);
         $this->codec = new RememberCodec($keys); $this->guard = $requestGuard; $this->clock = $clock ?? new SystemClock();
         $this->ttl = $ttl; $this->capacity = $capacity; $this->fresh = $freshAge; $this->grace = $concurrencyGrace; $this->policy = $sessions->policy();
         $this->riskGuard = $riskGuard;
     }
 
-    /** Caller obtains explicit user consent first. Only a recent, non-restored full login can create a grant. */
-    public function issue(string $scope, string $subject, $sessionToken, string $label = ''): ?RememberCredential
+    public function issue(string $scope,string $subject,$sessionToken,string $label=''): ?RememberCredential
     {
-        $key = Guard::key('auth-sessions', $scope, $subject); $this->guard('remember_issue', $scope);
+        if($this->boundary===null){return $this->issueInternal($scope,$subject,$sessionToken,$label);}
+        Guard::key('auth-sessions',$scope,$subject);$this->boundary->assertScope($scope);$deadline=new \SoSecurity\Support\Deadline(30000);$this->publicGuard('remember_issue',$scope);
+        if(strlen($label)>128||!preg_match('//u',$label)||preg_match('/[\x00-\x1f\x7f]/',$label)){throw new ConfigurationException('Invalid persistent device label.','configuration.remember');}
+        if(SessionRegistry::reference($sessionToken)===null){return null;}
+        return $this->native('issue',$scope,$deadline,function()use($scope,$subject,$sessionToken,$label){return $this->issueInternal($scope,$subject,$sessionToken,$label,true);});
+    }
+    public function resume(string $scope,$token): RememberResult
+    {
+        if($this->boundary===null){return $this->resumeInternal($scope,$token);}
+        Guard::label($scope);$this->boundary->assertScope($scope);$deadline=new \SoSecurity\Support\Deadline(30000);$this->publicGuard('remember_resume',$scope);if($this->codec->parse($scope,$token)===null){return new RememberResult('invalid');}
+        return $this->native('resume',$scope,$deadline,function()use($scope,$token){return $this->resumeInternal($scope,$token,true);});
+    }
+    public function revoke(string $scope,string $subject,string $selector): bool
+    {
+        if($this->boundary===null){return $this->revokeInternal($scope,$subject,$selector);}
+        Guard::key('auth-sessions',$scope,$subject);$this->boundary->assertScope($scope);$deadline=new \SoSecurity\Support\Deadline(30000);$this->publicGuard('remember_revoke',$scope);if(!preg_match('/\A[a-f0-9]{32}\z/D',$selector)){return false;}
+        return $this->native('revoke',$scope,$deadline,function()use($scope,$subject,$selector){return $this->revokeInternal($scope,$subject,$selector,true);});
+    }
+    public function forget(string $scope,$token): bool
+    {
+        if($this->boundary===null){return $this->forgetInternal($scope,$token);}
+        Guard::label($scope);$this->boundary->assertScope($scope);$deadline=new \SoSecurity\Support\Deadline(30000);$this->publicGuard('remember_forget',$scope);if($this->codec->parse($scope,$token)===null){return false;}
+        return $this->native('forget',$scope,$deadline,function()use($scope,$token){return $this->forgetInternal($scope,$token,true);});
+    }
+    public function all(string $scope,string $subject): array
+    {
+        if($this->boundary===null){return $this->allInternal($scope,$subject);}
+        Guard::key('auth-sessions',$scope,$subject);$this->boundary->assertScope($scope);$deadline=new \SoSecurity\Support\Deadline(30000);$this->publicGuard('remember_list',$scope);
+        return $this->native('all',$scope,$deadline,function()use($scope,$subject){return $this->allInternal($scope,$subject,true);});
+    }
+
+    /** Caller obtains explicit user consent first. Only a recent, non-restored full login can create a grant. */
+    private function issueInternal(string $scope, string $subject, $sessionToken, string $label = '',bool $admitted=false): ?RememberCredential
+    {
+        $key = Guard::key('auth-sessions', $scope, $subject); if(!$admitted){$this->guard('remember_issue', $scope);}
         if (strlen($label) > 128 || !preg_match('//u', $label) || preg_match('/[\x00-\x1f\x7f]/', $label)) { throw new ConfigurationException('Invalid persistent device label.', 'configuration.remember'); }
         $verified = $this->sessions->verify($scope, $subject, $sessionToken); $now = $this->now();
         if ($verified === null || !$verified->recent($this->fresh, $now, 1)) { return null; }
@@ -90,19 +127,16 @@ final class RememberedLogin
     }
 
     /** POST/CSRF-protected restoration; a retry outcome must not overwrite/delete the winner's cookies. */
-    public function resume(string $scope, $token): RememberResult
+    private function resumeInternal(string $scope, $token,bool $admitted=false): RememberResult
     {
-        Guard::label($scope); $this->guard('remember_resume', $scope);
+        Guard::label($scope); if(!$admitted){$this->guard('remember_resume', $scope);}
         $parts = $this->codec->parse($scope, $token);
         if ($parts === null) { return new RememberResult('invalid'); }
         $locator = $this->locator($scope, $parts['id']);
         if ($locator === null) { return new RememberResult('invalid'); }
         $subject = $locator['subject']; $key = Guard::key('auth-sessions', $scope, $subject); $identity = $this->identities->load($scope, $subject);
         // Evaluate outside the retryable storage callback; the callback must not perform I/O or mutate host state.
-        $risk = $this->riskGuard === null ? new DeviceRiskDecision('allow', 'none') : ($this->riskGuard)($scope, $subject, $parts['id']);
-        if (!$risk instanceof DeviceRiskDecision) {
-            throw new SecurityException('Trusted-device risk assessment was not confirmed.', 'auth.device_risk_denied');
-        }
+        $risk = $this->risk($scope,$subject,$parts['id']);
         $now = $this->now(); $secret = bin2hex(random_bytes(32)); $sessionSecret = bin2hex(random_bytes(32)); $nextEpoch = bin2hex(random_bytes(32));
         $result = $this->store->transact($key, function ($state) use ($scope, $parts, $identity, $risk, $now, $secret, $sessionSecret, $nextEpoch) {
             $state = $this->state($state, $now);
@@ -152,6 +186,8 @@ final class RememberedLogin
                 new RememberCredential($next, $parts['id'], $grant['expires']), $identity['account']));
         });
         if ($result->status() === 'authenticated') {
+            // Storage may outlive the initial assessment. Native requests already review risk after witness completion.
+            if($this->boundary===null&&$this->riskGuard!==null&&$this->risk($scope,$subject,$parts['id'])->action()!=='allow'){throw new SecurityException('Current device risk denies persistent login.','auth.device_risk_denied');}
             // A replay/disable/version change that committed while the result was being returned must not be ignored.
             if ($this->sessions->verify($scope, $subject, $result->session()->token()) === null) { return new RememberResult('invalid'); }
         }
@@ -159,9 +195,9 @@ final class RememberedLogin
     }
 
     /** Host authorizes the trusted subject/selector management target; removes its linked sessions too. */
-    public function revoke(string $scope, string $subject, string $selector): bool
+    private function revokeInternal(string $scope, string $subject, string $selector,bool $admitted=false): bool
     {
-        $key = Guard::key('auth-sessions', $scope, $subject); $this->guard('remember_revoke', $scope); $now = $this->now();
+        $key = Guard::key('auth-sessions', $scope, $subject); if(!$admitted){$this->guard('remember_revoke', $scope);} $now = $this->now();
         if (!preg_match('/\A[a-f0-9]{32}\z/D', $selector)) { return false; }
         return $this->store->transact($key, function ($state) use ($now, $selector) {
             $state = $this->state($state, $now); $exists = $state !== null && isset($state['remember'][$selector]);
@@ -170,9 +206,9 @@ final class RememberedLogin
         });
     }
     /** Explicit sign-out without an active host session; possession of the signed credential only permits revocation. */
-    public function forget(string $scope, $token): bool
+    private function forgetInternal(string $scope, $token,bool $admitted=false): bool
     {
-        Guard::label($scope); $this->guard('remember_forget', $scope); $parts = $this->codec->parse($scope, $token);
+        Guard::label($scope); if(!$admitted){$this->guard('remember_forget', $scope);} $parts = $this->codec->parse($scope, $token);
         if ($parts === null) { return false; }
         $locator = $this->locator($scope, $parts['id']); if ($locator === null) { return false; }
         $now = $this->now();
@@ -184,9 +220,9 @@ final class RememberedLogin
             return RegistryState::change($state, $now, $valid);
         });
     }
-    public function all(string $scope, string $subject): array
+    private function allInternal(string $scope, string $subject,bool $admitted=false): array
     {
-        $key = Guard::key('auth-sessions', $scope, $subject); $this->guard('remember_list', $scope); $now = $this->now();
+        $key = Guard::key('auth-sessions', $scope, $subject); if(!$admitted){$this->guard('remember_list', $scope);} $now = $this->now();
         return $this->store->transact($key, function ($state) use ($now) {
             $state = $this->state($state, $now); $rows = [];
             foreach ($state === null ? [] : $state['remember'] as $id => $grant) {
@@ -223,13 +259,50 @@ final class RememberedLogin
         });
     }
     private function state($state, int $now): ?array { return RegistryState::read($state, $now, $this->policy['idle'], $this->policy['absolute']); }
+    /** Completion is a read-only capture: never repeat rotation or restore a consumed persistent token. */
+    private function native(string $phase,string $scope,\SoSecurity\Support\Deadline $deadline,callable $work)
+    {
+        $this->busy=true;$guardPhase='remember_'.($phase==='all'?'list':$phase);
+        try{
+            $start=$this->now();
+            $result=$this->boundary->run('remember.'.$phase,$work,function()use($guardPhase,$scope):void{$this->currentGuard($guardPhase,$scope);},null,$deadline);
+            $this->boundary->run('remember.'.$phase.'_check',static function():void{throw new ConfigurationException('Authentication completion is read only.','configuration.state_business');},function()use($guardPhase,$scope,$result):bool{$this->currentGuard($guardPhase,$scope);if($result instanceof RememberResult&&$result->status()==='authenticated'&&$this->risk($scope,$result->account()->subject(),$result->nextCredential()->id())->action()!=='allow'){throw new SecurityException('Current device risk denies persistent login.','auth.device_risk_denied');}return false;},null,$deadline);
+            $deadline->check('account.operation_timeout');$now=$this->now();
+            if($now<$start){throw new SecurityException('Authentication clock moved backwards.','auth.clock');}
+            $expires=null;
+            if($result instanceof RememberCredential){$expires=$result->expiresAt();}
+            elseif($result instanceof RememberResult&&$result->status()==='authenticated'){$expires=min($result->session()->expiresAt(),$result->nextCredential()->expiresAt());}
+            if($expires!==null&&$expires<=$now){throw new SecurityException('Persistent login result expired before return.','auth.expired');}
+            return $result;
+        }finally{$this->busy=false;}
+    }
+    private function risk(string $scope,string $subject,string $selector):DeviceRiskDecision
+    {
+        try{$risk=$this->riskGuard===null?new DeviceRiskDecision('allow','none'):($this->riskGuard)($scope,$subject,$selector);}catch(\Throwable $error){throw new \SoSecurity\Exception\DependencyException('Device risk assessment unavailable.','auth.device_risk_unavailable');}
+        if(!$risk instanceof DeviceRiskDecision){throw new SecurityException('Trusted-device risk assessment was not confirmed.','auth.device_risk_denied');}
+        // Cached objects can bypass construction; validate the complete action/reason pair and detach it.
+        try{return new DeviceRiskDecision($risk->action(),$risk->reason());}catch(\Throwable $error){throw new SecurityException('Trusted-device risk assessment was not confirmed.','auth.device_risk_denied');}
+    }
+    private function currentGuard(string $phase,string $scope):void
+    {
+        try{$allowed=($this->guard)->current($phase,$scope);}catch(\Throwable $error){throw new \SoSecurity\Exception\DependencyException('Current authentication admission unavailable.','auth.request_unavailable');}
+        if($allowed!==true){throw new SecurityException('Current request admission denied.','auth.request_denied');}
+    }
+    private function publicGuard(string $phase,string $scope):void
+    {
+        if($this->busy||$this->boundary->active()){throw new ConfigurationException('Enter native authentication once.','configuration.state_request_nested');}
+        $this->busy=true;
+        try{try{$allowed=($this->guard)($phase,$scope);}catch(\Throwable $error){throw new \SoSecurity\Exception\DependencyException('Authentication admission unavailable.','auth.request_unavailable');}if($allowed!==true){throw new SecurityException('Host request protection was not confirmed.','auth.request_denied');}}
+        finally{$this->busy=false;}
+    }
     private function guard(string $phase, string $scope): void
     {
-        if (($this->guard)($phase, $scope) !== true) { throw new SecurityException('Host persistent-login request protection was not confirmed.', 'auth.request_denied'); }
+        $allowed=$this->boundary!==null&&$this->boundary->active()?($this->guard)->current($phase,$scope):($this->guard)($phase,$scope);
+        if ($allowed !== true) { throw new SecurityException('Host persistent-login request protection was not confirmed.', 'auth.request_denied'); }
     }
     private function now(): int
     {
-        $now = $this->clock->now();
+        try{$now = $this->clock->now();}catch(\Throwable $error){throw new \SoSecurity\Exception\DependencyException('Persistent login clock unavailable.','auth.clock');}
         if ($now < 0 || $now > PHP_INT_MAX - 31536000) { throw new ConfigurationException('Authentication clock out of range.', 'configuration.clock'); }
         return $now;
     }

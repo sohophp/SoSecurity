@@ -1,0 +1,16 @@
+<?php
+declare(strict_types=1);
+require __DIR__.'/bootstrap.php';
+use SoSecurity\Support\SqlSchema;
+use SoSecurity\Support\SqlTransaction;
+$socket=getenv('SOSECURITY_TEST_MYSQL_SOCKET');if(!is_string($socket)||!preg_match('~\A/tmp/sosecurity-mysql-[A-Za-z0-9_-]+/mysql\.sock\z~D',$socket)||!is_file(dirname($socket).'/account-test-owner')||is_link(dirname($socket))){throw new RuntimeException('Owned MySQL required');}
+function visibilityControl(string $sql):string{$pipes=[];$p=proc_open('mysql --no-defaults --socket='.escapeshellarg(getenv('SOSECURITY_TEST_MYSQL_SOCKET')).' -uroot --batch --skip-column-names',[0=>['pipe','r'],1=>['pipe','w'],2=>['pipe','w']],$pipes);if(!is_resource($p)){throw new RuntimeException('Owned control unavailable');}fwrite($pipes[0],$sql.';'.PHP_EOL);fclose($pipes[0]);$out=stream_get_contents($pipes[1]);stream_get_contents($pipes[2]);fclose($pipes[1]);fclose($pipes[2]);if(proc_close($p)!==0){throw new RuntimeException('Owned control failed');}return trim($out);}
+$pdo=new PDO('mysql:unix_socket='.$socket.';dbname=sosecurity_test','sosecurity_test','integration-only',[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,PDO::ATTR_EMULATE_PREPARES=>false]);$created=[];
+try{
+ foreach(explode(';',preg_replace('/^--.*$/m','',file_get_contents(dirname(__DIR__).'/resources/sql/account-mysql.sql'))) as $ddl){if(trim($ddl)!==''){$pdo->exec($ddl);if(preg_match('/CREATE TABLE\s+(\w+)/i',$ddl,$m)){$created[]=$m[1];}}}
+ $q=$pdo->query('SELECT CONNECTION_ID()');$id=(int)$q->fetchColumn();$q->closeCursor();$unit=new SqlTransaction($pdo,new SoSecurity\Support\SystemClock(),10000);Check::same(true,$unit->canBatchLedgerReads());visibilityControl("SET GLOBAL log_output='TABLE'; SET GLOBAL general_log=ON");
+ $unit->run(static function()use($unit):void{Check::same(['database'=>'sosecurity_test'],SqlSchema::ledgerSchemaContext($unit));});visibilityControl('SET GLOBAL general_log=OFF');$sql=visibilityControl("SELECT argument FROM mysql.general_log WHERE thread_id=".$id." AND command_type='Prepare' AND argument LIKE 'SELECT _sosecurity_context.%' ORDER BY event_time LIMIT 1");Check::same(true,strlen($sql)>100);
+ $timer=static function():float{return function_exists('hrtime')?hrtime(true)/1000000000:microtime(true);};$start=$timer();$unit->run(static function()use($unit):void{for($i=0;$i<64;++$i){Check::same(['database'=>'sosecurity_test'],SqlSchema::ledgerSchemaContext($unit));}});$seconds=$timer()-$start;
+ $r=['schema_privilege_subqueries'=>substr_count($sql,'FROM information_schema.SCHEMA_PRIVILEGES'),'global_privilege_subqueries'=>substr_count($sql,'FROM information_schema.USER_PRIVILEGES'),'current_user_calls'=>substr_count($sql,'CURRENT_USER()'),'sql_bytes'=>strlen($sql),'unlogged_context_calls'=>64,'seconds'=>$seconds,'php'=>PHP_VERSION,'source'=>(new ReflectionClass(SqlSchema::class))->getFileName()];echo 'OBSERVATION shared visibility '.json_encode($r).PHP_EOL;
+ Check::same(1,$r['schema_privilege_subqueries']);Check::same(1,$r['global_privilege_subqueries']);Check::same(2,$r['current_user_calls']);Check::same(false,$pdo->inTransaction());echo 'PASS shared ledger visibility '.Check::$assertions.' PHP '.PHP_VERSION.PHP_EOL;
+}finally{visibilityControl('SET GLOBAL general_log=OFF');if($pdo->inTransaction()){$pdo->rollBack();}foreach(array_reverse($created) as $table){$pdo->exec('DROP TABLE '.$table);}}

@@ -11,7 +11,6 @@ use SoSecurity\Support\Deadline;
 use SoSecurity\Support\Guard;
 use SoSecurity\Support\HmacKeys;
 use SoSecurity\Support\SqlTransaction;
-use SoSecurity\Support\SqlTransactionGuard;
 
 /** Current SQL registration plus host object/purpose authorization; never provisions a worker authority. */
 final class FactorWorkerAuthority
@@ -28,10 +27,10 @@ final class FactorWorkerAuthority
     public function boundTo(LocalEpochFence $fence):bool {return ($this->dependencies)()[5]->binding()===$fence->binding();}
     public function ioMilliseconds():int {return ($this->dependencies)()[7]->ioMilliseconds();}
     /** Acquire the registered root BEFORE directory/account locks, on the exact host PDO. No caller authorization is granted here. */
-    public function assertCurrent(PDO $connection):void
+    public function assertCurrent(PDO $connection,?SqlTransaction $owner=null):void
     {
         $d=($this->dependencies)();if($d[0]!==$connection){throw new ConfigurationException('Registered workers must use the exact host connection.','configuration.factor_workers');}
-        $this->read(null);
+        $this->read(null,$owner);
     }
     public function __invoke(string $action,string $phase,string $scope,string $subject,array $metadata):bool
     {
@@ -41,19 +40,18 @@ final class FactorWorkerAuthority
         try{return $this->read([$action,$phase,$scope,$subject,$metadata]);}
         catch(SecurityException $error){if($error->reason()!=='account.worker_denied'){throw $error;}return false;}
     }
-    private function read(?array $request):bool
+    private function read(?array $request,?SqlTransaction $owner=null):bool
     {
-        $d=($this->dependencies)();$u=new SqlTransaction($d[0],$d[8],$d[7]->ioMilliseconds());$deadline=new Deadline($d[7]->ioMilliseconds());$active=true;
-        try{SqlTransactionGuard::assertActive($d[0],$u->driver(),$deadline);}catch(ConfigurationException $error){if($error->reason()!=='configuration.transaction'){throw $error;}$active=false;}
+        $d=($this->dependencies)();$d[5]->assertStateActive();$u=new SqlTransaction($d[0],$d[8],$d[7]->ioMilliseconds());$deadline=new Deadline($d[7]->ioMilliseconds());
         $body=function()use($u,$d,$request):bool{
             $ledger=new Ledger($u,'account-factor-recovery:'.hash('sha256',$d[1]),$d[2],$d[3],$d[4],$d[7],2,$d[5]->binding());
             $root=$ledger->checkpoint();
             $allowed=$request===null||$u->invoke($d[6],$request,'account.worker_permission')===true;
-            if($ledger->checkpoint()!==$root){throw new StorageException('Registered worker state changed during permission checks.','account.worker_changed');}
+            if($request!==null&&$ledger->checkpoint()!==$root){throw new StorageException('Registered worker state changed during permission checks.','account.worker_changed');}
             if(!$allowed){throw new SecurityException('Current physical factor authority required.','account.worker_denied');}
             return true;
         };
-        return $active?$u->enlist($body,null,null,$deadline):$u->run($body,null,null,null,$deadline);
+        return $owner===null?$u->inContext($body,null,$deadline):$u->readIn($owner,$body,$deadline);
     }
     public function __debugInfo():array {return ['registered_factor_workers'=>'[redacted]'];}
     public function __sleep():array {throw new ConfigurationException('Reload current registered worker authority.','configuration.factor_workers');}

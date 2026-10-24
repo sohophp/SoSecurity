@@ -20,18 +20,82 @@ final class SessionRegistry
     private $idle;
     private $absolute;
     private $capacity;
+    private $boundary;
 
     public function __construct(AtomicStore $store, IdentityProvider $provider, ?SecondFactor $factor = null,
-        ?Clock $clock = null, int $idle = 1800, int $absolute = 28800, int $capacity = 16)
+        ?Clock $clock = null, int $idle = 1800, int $absolute = 28800, int $capacity = 16, ?\SoSecurity\Account\StateBoundary $boundary = null)
     {
+        if($boundary===null&&($store instanceof \SoSecurity\Account\WitnessedStore||\SoSecurity\Storage\FileStateBoundary::protects($store))){throw new ConfigurationException('Protected sessions require their exact state authority.','configuration.state_boundary');}
+        if($boundary!==null&&!$boundary->semanticAuthority()){throw new ConfigurationException('Protected authentication requires persisted operation descriptions.','configuration.state_boundary');}
         Guard::duration($idle); Guard::duration($absolute);
         if ($idle > $absolute || $capacity < 1 || $capacity > 32) { throw new ConfigurationException('Invalid session limits.', 'configuration.auth_sessions'); }
-        $this->store = $store; $this->identities = new IdentityState($provider, $factor); $this->clock = $clock ?? new SystemClock();
+        $this->boundary = $boundary; $this->store = $boundary === null ? $store : $boundary->protect($store); $this->identities = new IdentityState($provider, $factor); $this->clock = $clock ?? new SystemClock();
         $this->idle = $idle; $this->absolute = $absolute; $this->capacity = $capacity;
     }
 
+    public function boundTo(\SoSecurity\Account\StateBoundary $boundary): bool { return $this->boundary === $boundary; }
+    public function requiresStateBoundary(): bool { return $this->boundary !== null; }
+    public function statePolicy(\SoSecurity\Storage\FileStore $store,\SoSecurity\Account\ManagedSecondFactor $factor,\SoSecurity\Account\LocalStateWitness $witness):?array{if($this->boundary===null||!$this->boundary->boundTo($witness)||!$this->store instanceof \SoSecurity\Account\WitnessedStore||!$this->store->protects($store)||!$this->identities->matchesStatePolicy($factor)){return null;}return ['idle'=>$this->idle,'absolute'=>$this->absolute,'clock'=>$this->clock];}
+    /** Pure exact physical binding; no grant, registry read, or authority reset. */
+    public function credentialInstallationContext(\SoSecurity\Storage\FileStore $store,\SoSecurity\Account\FactorRegistry $registry,\SoSecurity\Account\LocalStateWitness $witness,string $scope,string $subject):?array
+    {
+        $key=Guard::key('auth-sessions',$scope,$subject);
+        if($this->boundary===null||!$this->boundary->recoveryAuthority($witness)||!$witness->allowsScope($scope)||!$this->store instanceof \SoSecurity\Account\WitnessedStore||!$this->store->protects($store)||!$this->identities->matchesRecoveryRegistry($registry)){return null;}
+        return ['key'=>$key,'reference'=>$store->snapshotReference($key),'policy'=>hash('sha256',json_encode([$this->idle,$this->absolute,$this->capacity])),'clock'=>$this->clock];
+    }
+    public function credentialRegistryContext(IdentityProvider $provider,?SecondFactor $factor,Clock $clock,\SoSecurity\Account\StateBoundary $boundary):bool{return $this->boundary===$boundary&&$this->clock===$clock&&$provider instanceof PasswordIdentityProvider&&$factor instanceof \SoSecurity\Account\ManagedSecondFactor&&$this->identities->matchesProviders($provider,$factor);}
+    /** Pure matching identity/policy extraction; no session lookup or permission is granted. */
+    public function operationRolePolicy(\SoSecurity\Authorization\Authorizer $authorizer):?\SoSecurity\Authorization\RolePolicy{return $this->boundary===null?null:$this->identities->operationRolePolicy($authorizer);}
+    /** Pure configuration agreement only; no session lookup, evaluator call or permission is granted. */
+    public function operationSnapshotPolicy(\SoSecurity\Authorization\Authorizer $authorizer,\SoSecurity\Account\StateAccountPolicy $state):?\SoSecurity\Authorization\SnapshotPolicy
+    {
+        if($this->boundary===null||!$state->credentialContext($this->store,$this,$this->clock,$this->boundary)){return null;}
+        return $this->identities->operationSnapshotPolicy($authorizer,$state);
+    }
+    private function within(string $action,string $scope,callable $operation) { if($this->boundary===null){return $operation();}$this->boundary->assertScope($scope);return $this->boundary->run('sessions.'.$action,$operation); }
+    private function inputIssue(string $scope,string $subject,string $fingerprint,string $epoch,string $method,string $label): void
+    {
+        Guard::key('auth-sessions',$scope,$subject);self::strength($method);
+        if(!preg_match('/\A[a-f0-9]{64}\z/D',$fingerprint)||!preg_match('/\A[a-f0-9]{64}\z/D',$epoch)||strlen($label)>128||!preg_match('//u',$label)||preg_match('/[\x00-\x1f\x7f]/',$label)){throw new ConfigurationException('Invalid session proof metadata.','configuration.auth_sessions');}
+    }
+    public function epoch(string $scope,string $subject): ?string
+    {
+        if($this->boundary!==null){Guard::key('auth-sessions',$scope,$subject);}
+        return $this->within('epoch',$scope,function()use($scope,$subject){return $this->epochInternal($scope,$subject);});
+    }
+    public function register(string $scope,string $subject,string $expectedFingerprint,string $expectedEpoch,string $method='password',string $label=''): ?SessionCredential
+    {
+        if($this->boundary!==null){$this->inputIssue($scope,$subject,$expectedFingerprint,$expectedEpoch,$method,$label);}
+        return $this->within('register',$scope,function()use($scope,$subject,$expectedFingerprint,$expectedEpoch,$method,$label){return $this->registerInternal($scope,$subject,$expectedFingerprint,$expectedEpoch,$method,$label);});
+    }
+    public function replace(string $scope,string $subject,string $expectedFingerprint,string $expectedEpoch,string $method,string $id,string $expectedDigest): ?SessionCredential
+    {
+        if($this->boundary!==null){if(!preg_match('/\A[a-f0-9]{32}\z/D',$id)||!preg_match('/\A[a-f0-9]{64}\z/D',$expectedDigest)){throw new ConfigurationException('Invalid reauthentication reference.','configuration.authentication');}$this->inputIssue($scope,$subject,$expectedFingerprint,$expectedEpoch,$method,'');}
+        return $this->within('replace',$scope,function()use($scope,$subject,$expectedFingerprint,$expectedEpoch,$method,$id,$expectedDigest){return $this->replaceInternal($scope,$subject,$expectedFingerprint,$expectedEpoch,$method,$id,$expectedDigest);});
+    }
+    public function verify(string $scope,string $subject,$token,int $minimumStrength=0): ?VerifiedSession
+    {
+        if($this->boundary!==null){Guard::key('auth-sessions',$scope,$subject);if($minimumStrength<0||$minimumStrength>2){throw new ConfigurationException('Invalid authentication strength.','configuration.authentication');}if(self::reference($token)===null){return null;}}
+        return $this->within('verify',$scope,function()use($scope,$subject,$token,$minimumStrength){return $this->verifyInternal($scope,$subject,$token,$minimumStrength);});
+    }
+    public function revoke(string $scope,string $subject,string $id): bool
+    {
+        if($this->boundary!==null){if(!preg_match('/\A[a-f0-9]{32}\z/D',$id)){return false;}Guard::key('auth-sessions',$scope,$subject);}
+        return $this->within('revoke',$scope,function()use($scope,$subject,$id){return $this->revokeInternal($scope,$subject,$id);});
+    }
+    public function revokeAll(string $scope,string $subject): void
+    {
+        if($this->boundary!==null){Guard::key('auth-sessions',$scope,$subject);}
+        $this->within('revoke_all',$scope,function()use($scope,$subject):void{$this->revokeAllInternal($scope,$subject);});
+    }
+    public function all(string $scope,string $subject): array
+    {
+        if($this->boundary!==null){Guard::key('auth-sessions',$scope,$subject);}
+        return $this->within('all',$scope,function()use($scope,$subject){return $this->allInternal($scope,$subject);});
+    }
+
     /** Capture after successful first-factor verification, before an optional second-factor challenge. */
-    public function epoch(string $scope, string $subject): ?string
+    private function epochInternal(string $scope, string $subject): ?string
     {
         $key = Guard::key('auth-sessions', $scope, $subject); $identity = $this->identities->load($scope, $subject);
         if ($identity === null) { return null; }
@@ -43,14 +107,14 @@ final class SessionRegistry
     }
 
     /** Only call after verified credentials. Fingerprint and epoch MUST come from trusted pre-proof snapshots. */
-    public function register(string $scope, string $subject, string $expectedFingerprint, string $expectedEpoch,
+    private function registerInternal(string $scope, string $subject, string $expectedFingerprint, string $expectedEpoch,
         string $method = 'password', string $label = ''): ?SessionCredential
     {
         return $this->issue($scope, $subject, $expectedFingerprint, $expectedEpoch, $method, $label, null);
     }
 
     /** Rotates the original secret while preserving its ID and absolute expiry. Used by AuthenticationFlow. */
-    public function replace(string $scope, string $subject, string $expectedFingerprint, string $expectedEpoch,
+    private function replaceInternal(string $scope, string $subject, string $expectedFingerprint, string $expectedEpoch,
         string $method, string $id, string $expectedDigest): ?SessionCredential
     {
         if (!preg_match('/\A[a-f0-9]{32}\z/D', $id) || !preg_match('/\A[a-f0-9]{64}\z/D', $expectedDigest)) {
@@ -59,7 +123,7 @@ final class SessionRegistry
         return $this->issue($scope, $subject, $expectedFingerprint, $expectedEpoch, $method, '', ['id' => $id, 'digest' => $expectedDigest]);
     }
 
-    public function verify(string $scope, string $subject, $token, int $minimumStrength = 0): ?VerifiedSession
+    private function verifyInternal(string $scope, string $subject, $token, int $minimumStrength = 0): ?VerifiedSession
     {
         $key = Guard::key('auth-sessions', $scope, $subject);
         if ($minimumStrength < 0 || $minimumStrength > 2) { throw new ConfigurationException('Invalid authentication strength.', 'configuration.authentication'); }
@@ -95,11 +159,16 @@ final class SessionRegistry
             return $this->change($state, $now, $record);
         });
         if ($record === null || $record['expires'] <= $this->now()) { return null; }
-        return new VerifiedSession($identity['account'], $parts['id'], $record['method'], $record['created'], $record['authenticated'], $record['expires'], $record['resumed']);
+        // Storage I/O can outlive the authority observed before it. Do not return that stale identity.
+        $current = $this->identities->load($scope, $subject);
+        $end = $this->now();
+        if ($end < $now || $record['expires'] <= $end || $end - $record['seen'] >= $record['idle'] || $current === null
+            || !hash_equals($identity['fingerprint'], $current['fingerprint'])) { return null; }
+        return new VerifiedSession($current['account'], $parts['id'], $record['method'], $record['created'], $record['authenticated'], $record['expires'], $record['resumed']);
     }
 
     /** Management ID only; knowing it grants no authentication capability. Never accept an untrusted subject. */
-    public function revoke(string $scope, string $subject, string $id): bool
+    private function revokeInternal(string $scope, string $subject, string $id): bool
     {
         if (!preg_match('/\A[a-f0-9]{32}\z/D', $id)) { return false; }
         $key = Guard::key('auth-sessions', $scope, $subject); $now = $this->now();
@@ -116,7 +185,7 @@ final class SessionRegistry
     }
 
     /** Also invalidates first-factor snapshots captured before this call, including in-flight MFA logins. */
-    public function revokeAll(string $scope, string $subject): void
+    private function revokeAllInternal(string $scope, string $subject): void
     {
         $key = Guard::key('auth-sessions', $scope, $subject); $now = $this->now(); $epoch = bin2hex(random_bytes(32));
         $this->store->transact($key, function ($state) use ($now, $epoch) {
@@ -126,7 +195,7 @@ final class SessionRegistry
     }
 
     /** Stored live records only, not proof of a browser being online; host authorizes this query. */
-    public function all(string $scope, string $subject): array
+    private function allInternal(string $scope, string $subject): array
     {
         $key = Guard::key('auth-sessions', $scope, $subject); $now = $this->now();
         return $this->store->transact($key, function ($state) use ($now) {

@@ -54,3 +54,31 @@ SOSECURITY_PLAYWRIGHT_MODULE=/path/to/node_modules/playwright python3 tests/weba
 ```
 
 当前测试覆盖依赖加载、挑战随机性、账号／会话／代际绑定、过期、重放、文件存储并发消费、SQLite／私有MySQL凭据唯一性与修订号、16MiB异常BLOB与含NUL的SQLite TEXT及元数据限量读取、受权删除拒绝条件、SQLite双进程末设备保留和旧注册／恢复竞态。Chromium 虚拟认证器还验证了真实浏览器 API 的注册／登录、两设备受权删除后Signal API的客户端凭据同步，以及重放、旧挑战、篡改签名和错误 Origin 的服务端拒绝；实体安全密钥、宿主强审批／会话栅栏／通知及生产数据库流程尚未执行。
+
+### 设备删除授权的近期认证时限
+
+`SessionDeviceAuthority`在宿主会话读取及SessionRegistry验证后重新读取自身时钟，拒绝早于调用方时间的时钟及已超过近期认证期限的会话。签发删除证明和消费CSRF证明后再次检查截止时间；这些I/O跨过边界或时钟倒退时拒绝，不因调用开始时尚有效而放行。已消费的一次性证明不退还；失败签发过程中可能留下不可用于过期会话的证明，按原TTL自然失效。重新认证及重建请求仍由宿主负责。
+
+方法签名、设备SQL格式和原近期认证时长保持；不新增设备恢复或账号启用能力。`tests/authority-time.php`使用合成的可信强会话测试权限时限，不能当成真实WebAuthn设备或浏览器验收。
+
+Device removal authority rechecks recent-authentication expiry after host/session I/O and after CSRF issue/consume. Expired authority and observed clock rollback fail closed. Consumed one-use proofs are not refunded. This preserves public signatures and SQL schema and does not implement account recovery.
+
+### 注册／登录凭据列表预算
+
+`Ceremonies::beginRegistration()`最多接受32个现有凭据（可为空）；`beginAuthentication()`接受1—32个已注册凭据。两者在遍历、创建描述对象前检查数量，超过上限抛出`InvalidArgumentException`。上限与SQL仓库及设备信号一致，也适用于自行调用无状态Ceremonies的宿主；此前传入超过32项的自定义接入需调整。用户归属、挑战及签名校验保持。
+
+### 挑战读取／写入期间到期
+
+`ChallengeStore`在存储返回和选项解析后重新核对期限与时间单调性。读取期间到期返回null；写入期间到期抛`StorageException`（`webauthn.expired`），不返回已过期句柄。负值、加法溢出范围、单次操作内时钟倒退或时钟异常均以`webauthn.clock`拒绝，原始时钟异常不向外传播。已消费挑战不因迟到或错误退回，调用方必须重新发起挑战。格式v1及绑定规则保持，不需要迁移既有挑战记录。
+
+### 设备删除权限与异常边界
+
+`DeviceAuthority::allow()`现在有三个阶段：`before`验证当前权限并消费一次性请求证明；`current`在读取目标凭据后、SQL删除前再次检查当前身份、近期认证与权限；`return`在删除后复核。`current`不得重复消费证明或重复扣减请求预算，未知阶段应默认拒绝。内置`SessionDeviceAuthority`已接通新阶段，保持同一会话／目标／证明绑定；自定义授权器如果只认可旧两个阶段，需要显式实现`current`，否则会安全拒绝删除。
+
+读取期间失权返回false，设备保持；删除之后才失权或通知失败仍抛“outcome requires reconciliation”，实际删除不回滚、不自动重试，也不伪造通知成功。宿主授权、通知及Clock异常不再通过原始异常链泄露；若依赖原始异常类型或getPrevious()诊断，需要在受控宿主回调内部记录脱敏结果。
+
+## 删除授权的宿主会话绑定与错误边界
+
+before／current／return现在同时比较实际宿主会话binding的摘要、注册会话ID、账号、设备和请求证明。即使注册表token不变，宿主binding在阶段间改变也会拒绝，并清除已接受的阶段状态；不能恢复旧binding后继续完成。宿主应在一次设备删除请求内提供稳定、来自服务端的会话绑定。
+
+SessionDeviceAuthority直接调用入口的宿主会话／身份查询故障为webauthn.authority_unavailable，自身时钟故障为webauthn.clock，请求证明依赖故障为webauthn.request_unavailable；均不附带原始异常文本或previous。CSRF时钟拒绝仍为StorageException及csrf.clock。没有退还一次性证明、撤销已提交删除或自动重试；公开方法签名保持。当前四个支持版本的独立归档消费者及证据见[本批记录](../../docs/webauthn-authority-binding-2026-10-23.md)。

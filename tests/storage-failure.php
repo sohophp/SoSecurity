@@ -6,7 +6,9 @@ use SoSecurity\Storage\Change;
 use SoSecurity\Storage\FileStore;
 use SoSecurity\Storage\StorageException;
 
-if (!function_exists('posix_setrlimit') || !function_exists('pcntl_signal')) {
+$nativeLimit = function_exists('posix_setrlimit');
+$processLimit = PHP_OS_FAMILY === 'Linux' && is_executable('/usr/bin/prlimit');
+if ((!$nativeLimit && !$processLimit) || !function_exists('pcntl_signal')) {
     echo "NOT RUN filesystem write failure: POSIX test process required\n";
     exit(getenv('SOSECURITY_REQUIRE_POSIX') === '1' ? 1 : 0);
 }
@@ -36,7 +38,21 @@ try {
     }
     // Limits apply ONLY to this standalone test process. Simulate an actual partial OS write, not a fake store.
     pcntl_signal(SIGXFSZ, SIG_IGN);
-    Check::same(true, posix_setrlimit(POSIX_RLIMIT_FSIZE, 16, 16));
+    if ($nativeLimit) {
+        $limited = posix_setrlimit(POSIX_RLIMIT_FSIZE, 16, 16);
+    } else {
+        // The target is this owned test child only, never the caller or another service.
+        // prlimit applies the same kernel RLIMIT_FSIZE when ext-posix is unavailable.
+        $pipes = [];
+        $limit = proc_open('/usr/bin/prlimit --pid=' . (string) getmypid() . ' --fsize=16:16',
+            [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+        if (!is_resource($limit)) { throw new RuntimeException('Cannot limit owned write-failure child.'); }
+        fclose($pipes[0]);
+        $output = stream_get_contents($pipes[1]); $errors = stream_get_contents($pipes[2]);
+        fclose($pipes[1]); fclose($pipes[2]);
+        $limited = proc_close($limit) === 0 && $output === '' && $errors === '';
+    }
+    Check::same(true, $limited);
     Check::throws(StorageException::class, function () use ($store) {
         $store->transact('key', function () { return new Change(['replacement' => str_repeat('x', 100)], 0, true); });
     });

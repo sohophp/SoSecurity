@@ -23,6 +23,20 @@ final class FactorOperations
         new SqlTransaction($connection,$clock,$policy->ioMilliseconds());$factors->validateConfiguration($clock,true);
         $this->dependencies=static function()use($connection,$site,$scope,$epoch,$keys,$factors,$fence,$facts,$mutate,$authority,$budgets,$approval,$events,$policy,$clock):array{return [$connection,$site,$scope,$epoch,$keys,$factors,$fence,$facts,$mutate,$authority,$budgets,$approval,$events,$policy,$clock];};
     }
+    /** @internal Read-only state inventory context; it neither enters workers nor invokes host callbacks. */
+    public function recoveryBoundary(LocalStateWitness $witness):bool{$f=$this->d()[6];return $f!==null&&$f->recoveryBoundary($witness);}
+    public function stateHistory(\PDO $pdo,\SoSecurity\Mfa\TotpFactors $factors,string $site,string $scope,string $epoch,HmacKeys $keys,Clock $clock):?array
+    {
+        $d=$this->d();if($d[0]!==$pdo||$d[1]!==$site||$d[2]!==$scope||$d[3]!==$epoch||$d[4]!==$keys||$d[5]!==$factors||!($d[14]===$clock||($d[14] instanceof \SoSecurity\Support\SystemClock&&$clock instanceof \SoSecurity\Support\SystemClock))){return null;}
+        $format=$d[6]===null?1:2;$authority=$d[6]===null?null:$d[6]->binding();$policy=$format===1?$d[13]->fingerprint():hash('sha256','SoSecurity.Account.FencedLedger.2.'.$d[13]->fingerprint().$authority);
+        return ['namespace'=>hash('sha256',self::json(['SoSecurity.Account.Ledger.1','account-factor-recovery:'.hash('sha256',$site),$scope,$epoch])),'format'=>$format,'policy'=>$policy,'maximum'=>$d[13]->maximumEntries(),'owner_prefix'=>'SoSecurity.Account.FactorOperations.Owner.1.','authority'=>$authority];
+    }
+    /** @internal Decode already authenticated bytes with the same parser as the real workflow. No approval is granted. */
+    public function stateSlots(array $row,string $subject):array
+    {
+        $b=$this->parse($row);if($b['review']['subject']!==$subject){throw new StorageException('Management history belongs to another account.','account.factor_corrupt');}
+        return ['slots'=>[['scope'=>$b['slot']['scope'],'subject'=>$b['slot']['subject'],'factor'=>$b['slot']['factor']]],'reference'=>null];
+    }
     private function d():array {return ($this->dependencies)();}
     private function unit():SqlTransaction {$d=$this->d();return new SqlTransaction($d[0],$d[14],$d[13]->ioMilliseconds());}
     private function ledger(SqlTransaction $u):Ledger {$d=$this->d();return new Ledger($u,'account-factor-recovery:'.hash('sha256',$d[1]),$d[2],$d[3],$d[4],$d[13],2,$d[6]->binding());}

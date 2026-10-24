@@ -76,13 +76,22 @@ with tempfile.TemporaryDirectory(prefix="sosecurity-oidc-consumer-") as director
         if not 70200 <= int(version) < 80400:
             raise RuntimeError(runtime + " is outside the OIDC adapter's PHP range")
         for name in ("claims", "client-debug", "proof-export", "links", "fences",
-                     "sessions", "signed-callback"):
+                     "sessions", "session-binding", "batch-unlink", "unlink-current", "signed-callback"):
             run(runtime, str(tests / (name + ".php")), autoload)
-        run("python3", str(tests / "process_race.py"), autoload, runtime)
+        for mode in ("absolute", "idle", "backwards", "absolute-final", "idle-final", "live", "live-final"):
+            run(runtime, str(tests / "session-io-time.php"), mode, autoload)
+        if subprocess.run([runtime, "-r", 'exit(extension_loaded("sodium") ? 0 : 1);'], env=TEST_ENV).returncode == 0:
+            run(runtime, str(tests / "mfa-login.php"), autoload)
+            run(sys.executable, str(tests / "mfa_process.py"), autoload, runtime)
+        else:
+            print("NOT RUN encrypted OIDC MFA integration: ext-sodium required", flush=True)
+            if TEST_ENV.get("SOSECURITY_REQUIRE_CRYPTO") == "1":
+                raise RuntimeError("Required OIDC MFA test dependency is unavailable")
+        run(sys.executable, str(tests / "process_race.py"), autoload, runtime)
         db_env = dict(env, SOSECURITY_OIDC_AUTOLOAD=autoload)
-        run("python3", str(ROOT / "tests" / "mysql_check.py"), "--oidc-process", runtime,
+        run(sys.executable, str(ROOT / "tests" / "mysql_check.py"), "--oidc-process", runtime,
             env=db_env)
-        run("python3", str(tests / "redis_process.py"), autoload, runtime)
-        run("python3", str(tests / "tls_integration.py"), autoload, runtime)
+        run(sys.executable, str(tests / "redis_process.py"), autoload, runtime)
+        run(sys.executable, str(tests / "tls_integration.py"), autoload, runtime)
 print("PASS optional OIDC local consumer: locked v1.0.2 and local integration"
       + (", installed from Composer ZIP archive" if WITH_ARCHIVE else ""))

@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """Exercise native persistent-login risk responses with server-controlled local signals."""
 import base64
+import atexit
 import contextlib
 import copy
 import http.cookiejar
+from email.message import Message
 import json
 import os
+import select
 from pathlib import Path
 import socket
 import subprocess
@@ -54,6 +57,62 @@ class Visitor:
             if cookie.name == 'SoSecurityRememberLocal':
                 visitor.jar.set_cookie(copy.copy(cookie))
         return visitor
+
+if '--browser' in sys.argv[2:]:
+    if not os.environ.get('SOSECURITY_TEST_PLAYWRIGHT'):
+        raise RuntimeError('Set SOSECURITY_TEST_PLAYWRIGHT to the installed local Playwright module')
+    bridge = subprocess.Popen(['node', str(root / 'tests/device-risk-browser.cjs')],
+                              stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+
+    def close_browser():
+        bridge.stdin.close()
+        try:
+            bridge.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            bridge.terminate()
+            try:
+                bridge.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                bridge.kill(); bridge.wait(timeout=5)
+
+    atexit.register(close_browser)
+
+    def browser_command(**command):
+        bridge.stdin.write(json.dumps(command) + '\n'); bridge.stdin.flush()
+        if not select.select([bridge.stdout], [], [], 45)[0]:
+            raise RuntimeError('Local Chromium bridge response timed out')
+        line = bridge.stdout.readline()
+        if not line:
+            raise RuntimeError('Local Chromium bridge exited')
+        result = json.loads(line)
+        if 'error' in result:
+            raise RuntimeError(result['error'])
+        return result
+
+    class BrowserVisitor:
+        def __init__(self, url, copy_from=None):
+            self.url = url
+            self.csrf = ''
+            options = {} if copy_from is None else {'copy': copy_from}
+            self.id = browser_command(action='new', **options)['id']
+
+        def call(self, action=None, fields=None):
+            body = None if action is None else urllib.parse.urlencode(dict(fields or {}, action=action, _csrf=self.csrf))
+            result = browser_command(action='call', id=self.id, url=self.url, body=body)
+            headers = Message()
+            for header in result['headers']:
+                headers[header['name']] = header['value']
+            check('no-store', headers['Cache-Control'])
+            self.csrf = result['data'].get('csrf', self.csrf)
+            return result['status'], result['data'], headers
+
+        def cookie(self, name='SoSecurityRememberLocal'):
+            return browser_command(action='cookie', id=self.id, name=name)['value']
+
+        def persistent_only(self):
+            return BrowserVisitor(self.url, self.id)
+
+    Visitor = BrowserVisitor
 
 with tempfile.TemporaryDirectory(prefix='sosecurity-device-risk-http-') as directory:
     work = Path(directory)
@@ -141,4 +200,4 @@ with tempfile.TemporaryDirectory(prefix='sosecurity-device-risk-http-') as direc
         renewed.url = url
         check('anonymous', renewed.call()[1]['stage'])
 
-print('PASS native trusted-device risk HTTP: ' + str(assertions) + ' assertions PHP ' + runtime)
+print('PASS native trusted-device risk ' + ('Chromium' if '--browser' in sys.argv[2:] else 'HTTP') + ': ' + str(assertions) + ' assertions PHP ' + runtime)

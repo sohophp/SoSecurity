@@ -10,6 +10,20 @@ use SoSecurity\Storage\NamespacedStore;
 /** Diagnostic results never contain connection objects, passwords, tokens, raw exception text or filesystem paths. */
 final class Inspector
 {
+    private function webhookState(Config $config,string $name,array $options,array $services):bool
+    {
+        $state=$options['state_connection']===null?null:($services[$options['state_connection']]??null);
+        if(!$state instanceof \SoSecurity\Account\StateWebhookConnection){return false;}
+        $auth=$config->authentication()['state_boundary']??null;
+        if($auth!==null){$boundary=$services[$auth['authority']]??null;if(!$boundary instanceof \SoSecurity\Account\StateBoundary||!$state->boundTo($boundary)){return false;}}
+        try{
+            $endpoint=new \SoSecurity\Webhook\Endpoint($name,$options['scope'],$options['account'],$options['url'],$options['protocol'],$options['policy']);
+            $provider=$options['key_provider']===null?null:($services[$options['key_provider']]??null);
+            if($options['key_provider']!==null){if(!$provider instanceof \SoSecurity\Webhook\KeySet){return false;}$state->validateVerifier($config->site(),$endpoint,$provider);}
+            if($options['inbox']!==null){$v=$options['inbox'];$state->validateReceive($services[$v['connection']]??null,$config->site(),$endpoint,$provider,$services[$v['integrity_keys']]??null);}
+            if($options['processing']!==null){$v=$options['processing'];$state->validateProcessing($services[$v['connection']]??null,$config->site(),$endpoint,$services[$v['integrity_keys']]??null,new \SoSecurity\Webhook\ProcessingPolicy($v['policy']));}
+        }catch(\Throwable $error){return false;}return true;
+    }
     public function inspect(Config $config, array $services = [], ?string $documentRoot = null, bool $probe = false): array
     {
         $checks = [['check' => 'configuration', 'status' => 'pass', 'reason' => 'configuration.valid']];
@@ -168,9 +182,11 @@ final class Inspector
         }
         foreach($config->webhooks() as $name=>$options){
             $prefix='webhooks.'.$name.'.';$provider=$options['key_provider']===null?null:($services[$options['key_provider']] ?? null);$guard=$options['request_guard']===null?null:($services[$options['request_guard']] ?? null);
+            $protected=$options['state_connection']!==null;$required=($config->authentication()['state_boundary']??null)!==null;
+            if($protected||$required){$valid=$this->webhookState($config,$name,$options,$services);$checks[]=['check'=>$prefix.'state_connection','status'=>$valid?'manual':'fail','reason'=>$valid?'webhook.state_coverage_unverified':'configuration.state_webhook'];}
             if($options['key_provider']===null){$checks[]=['check'=>$prefix.'receive','status'=>'not_configured','reason'=>'configuration.webhook_receive'];}
             else{
-                foreach(['key_provider'=>is_callable($provider),'request_guard'=>is_callable($guard)] as $item=>$valid){$checks[]=['check'=>$prefix.$item,'status'=>$valid?'manual':'fail','reason'=>$valid?'webhook.'.$item.'_unverified':'configuration.webhook_provider'];}
+                foreach(['key_provider'=>$protected?$provider instanceof \SoSecurity\Webhook\KeySet:is_callable($provider),'request_guard'=>is_callable($guard)] as $item=>$valid){$checks[]=['check'=>$prefix.$item,'status'=>$valid?'manual':'fail','reason'=>$valid?'webhook.'.$item.'_unverified':'configuration.webhook_provider'];}
                 $checks[]=['check'=>$prefix.'transport','status'=>strpos($options['url'],'https://')===0?'manual':'fail','reason'=>strpos($options['url'],'https://')===0?'webhook.tls_proxy_unverified':'webhook.http_demo_only'];
                 if($options['protocol']==='standard-ed25519'){$sodium=extension_loaded('sodium')&&function_exists('sodium_crypto_sign_verify_detached');$checks[]=['check'=>$prefix.'ed25519','status'=>$sodium?'pass':'fail','reason'=>$sodium?'dependency.available':'dependency.sodium'];}
                 if($options['protocol']==='github-sha256'){$checks[]=['check'=>$prefix.'freshness','status'=>'manual','reason'=>'webhook.unsigned_freshness_unverified'];}
@@ -258,9 +274,10 @@ final class Inspector
         $accounts=$config->accounts();
         if($accounts===null){$checks[]=['check'=>'accounts','status'=>'not_configured','reason'=>'configuration.accounts'];}
         else{
-            foreach(['connection','repository','integrity_keys','outbox_keys','notifications','request_budget','registration_authority','request_guard','management_guard','delivery_guard','recovery_authority','recovery_factor','strong_recovery','mailbox_authority','mailbox_approval'] as $name){
+            foreach(['connection','repository','integrity_keys','outbox_keys','notifications','request_budget','registration_authority','request_guard','management_guard','delivery_guard','recovery_authority','recovery_factor','strong_recovery','mailbox_authority','mailbox_approval','state_request_guard'] as $name){
                 $service=$accounts[$name]===null?null:($services[$accounts[$name]] ?? null);$valid=false;$reason='configuration.accounts_dependencies';
                 if($name==='connection'){$valid=$service instanceof \PDO;}
+                elseif($name==='state_request_guard'){$valid=$service instanceof \SoSecurity\Account\StateRequestGuard;}
                 elseif($name==='repository'){$valid=$service instanceof \SoSecurity\Account\Repository&&(($accounts['request_guard']===null&&$accounts['recovery_authority']===null&&$accounts['mailbox_authority']===null)||$service instanceof \SoSecurity\Account\IdentityRepository);}
                 elseif($name==='recovery_factor'){$valid=$service instanceof \SoSecurity\Auth\SecondFactor;}
                 elseif(in_array($name,['integrity_keys','outbox_keys'],true)){$valid=$service instanceof \SoSecurity\Support\HmacKeys;}
@@ -298,6 +315,18 @@ final class Inspector
                     'reason' => $factor instanceof \SoSecurity\Auth\SecondFactor ? 'auth.factor_contract_unverified' : 'configuration.second_factor'];
             }
             $checks[] = ['check' => 'authentication.host_session', 'status' => 'manual', 'reason' => 'auth.host_session_rotation_unverified'];
+            $state=$authentication['state_boundary'];
+            if($state!==null){
+                $boundary=$services[$state['authority']]??null;$stateStore=$services[$state['store']]??null;
+                $fence=$factorOptions===null?null:($services[$factorOptions['fence']]??null);
+                $authority=$boundary instanceof \SoSecurity\Account\StateBoundary&&$boundary->semanticAuthority()&&$boundary->matches($config->site(),$state['scope'],$state['epoch']);
+                $covered=false;if($authority&&$stateStore instanceof \SoSecurity\Storage\FileStore){try{$covered=$boundary->coversStore($stateStore);}catch(\Throwable $error){$covered=false;}}
+                $states=['authority'=>$authority,'store'=>$stateStore instanceof \SoSecurity\Storage\FileStore,'coverage'=>$covered,
+                    'request_guard'=>$guard instanceof \SoSecurity\Account\StateRequestGuard,'identity'=>$provider instanceof \SoSecurity\Auth\PasswordIdentityProvider,
+                    'worker_fence'=>$authority&&$fence instanceof \SoSecurity\Account\LocalEpochFence&&$fence->boundToStateBoundary($boundary)];
+                foreach($states as $name=>$valid){$checks[]=['check'=>'authentication.state_boundary.'.$name,'status'=>$valid?'manual':'fail','reason'=>$valid?'auth.state_deployment_unverified':'configuration.state_boundary'];}
+                foreach(['persistence','all_writers','independent_backup','final_recovery'] as $name){$checks[]=['check'=>'authentication.state_boundary.'.$name,'status'=>'manual','reason'=>'auth.state_deployment_unverified'];}
+            }
         }
         $remember = $config->remember();
         if ($remember === null) { $checks[] = ['check' => 'authentication.remember', 'status' => 'not_configured', 'reason' => 'configuration.remember']; }

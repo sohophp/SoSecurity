@@ -8,7 +8,7 @@ use SoSecurity\Support\Guard;
 final class CredentialState
 {
     public static function hex($value,int $length):bool {return is_string($value)&&strlen($value)===$length&&preg_match('/\A[a-f0-9]+\z/D',$value)===1;}
-    public static function fields(array $value,array $fields):bool {$keys=array_keys($value);sort($keys);sort($fields);return $keys===$fields;}
+    public static function fields(array $value,array $fields):bool {if(count($value)!==count($fields)){return false;}$keys=array_keys($value);sort($keys);sort($fields);return $keys===$fields;}
     public static function root(string $site,string $scope,string $subject):string
     {
         foreach([$site,$scope,$subject] as $label){Guard::label($label);if(!preg_match('//u',$label)){throw new \SoSecurity\Exception\ConfigurationException('Credential labels must be UTF-8.','configuration.api_credentials');}}

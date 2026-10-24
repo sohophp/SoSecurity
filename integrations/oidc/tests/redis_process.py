@@ -51,10 +51,18 @@ def main():
                                            env=environment, check=False)
                 if available.returncode:
                     raise RuntimeError(runtime + " does not load ext-redis")
-                subprocess.run(["python3", str(tests / "process_race.py"), str(autoload), runtime],
+                subprocess.run([sys.executable, str(tests / "process_race.py"), str(autoload), runtime],
                                env=environment, check=True, timeout=30)
                 subprocess.run([runtime, str(tests / "sessions.php"), str(autoload), "redis"],
                                env=environment, check=True, timeout=30)
+                subprocess.run([runtime, str(tests / "batch-unlink.php"), str(autoload), "redis"], env=environment, check=True, timeout=30)
+                if subprocess.run([runtime, "-r", 'exit(extension_loaded("sodium") ? 0 : 1);'], env=environment).returncode == 0:
+                    subprocess.run([runtime, str(tests / "mfa-login.php"), str(autoload), "redis"], env=environment, check=True, timeout=30)
+                    subprocess.run([sys.executable, str(tests / "mfa_process.py"), str(autoload), runtime], env=environment, check=True, timeout=30)
+                else:
+                    print("NOT RUN encrypted OIDC MFA Redis: ext-sodium required", flush=True)
+                    if environment.get("SOSECURITY_REQUIRE_CRYPTO") == "1":
+                        raise RuntimeError("Required OIDC MFA test dependency unavailable")
         finally:
             if server.poll() is None:
                 cli("SHUTDOWN", "NOSAVE")

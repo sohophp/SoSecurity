@@ -14,7 +14,7 @@ final class RolePolicy implements PolicyProvider
         foreach ($rules as $action => $rule) {
             if (!is_string($action) || !is_array($rule)) { throw new ConfigurationException('Invalid role rule.', 'configuration.authorization'); }
             Shape::name($action);
-            if (array_diff(array_keys($rule), ['type', 'roles', 'fields', 'owner_attribute', 'match']) || !isset($rule['type'], $rule['roles'], $rule['fields'])
+            if (count($rule) > 5 || array_diff(array_keys($rule), ['type', 'roles', 'fields', 'owner_attribute', 'match']) || !isset($rule['type'], $rule['roles'], $rule['fields'])
                 || !is_string($rule['type']) || !is_array($rule['roles']) || !$rule['roles'] || count($rule['roles']) > 32 || !is_array($rule['fields'])) {
                 throw new ConfigurationException('Explicit type, roles and fields are required.', 'configuration.authorization');
             }
@@ -42,6 +42,8 @@ final class RolePolicy implements PolicyProvider
         }
         return Decision::allow($rule['fields']);
     }
+    /** Pure exact normalized rule configuration, including object and field restrictions. */
+    public function fingerprint():string{return hash('sha256','SoSecurity.Authorization.RolePolicy.1.'.json_encode($this->rules,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE));}
     public function __debugInfo(): array { return ['rule_count' => count($this->rules), 'rules' => '[redacted]']; }
     public function __sleep(): array { throw new ConfigurationException('Rebuild role policy configuration.', 'configuration.authorization_serialization'); }
 }

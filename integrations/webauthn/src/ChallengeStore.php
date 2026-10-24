@@ -46,7 +46,8 @@ final class ChallengeStore
         if (strlen($json) > 32768 || strlen($options->challenge) !== 32) {
             throw new InvalidArgumentException('WebAuthn options exceed challenge budget');
         }
-        $expires = $this->clock->now() + $this->ttl;
+        $now = $this->now();
+        $expires = $now + $this->ttl;
         $value = ['v' => 1, 'type' => $type, 'binding' => $binding, 'options' => $json, 'expires' => $expires];
         for ($attempt = 0; $attempt < 3; ++$attempt) {
             $handle = rtrim(strtr(base64_encode(random_bytes(32)), '+/', '-_'), '=');
@@ -59,6 +60,10 @@ final class ChallengeStore
                 }
                 return new Change($value, $expires, true);
             });
+            $now = $this->now($now);
+            if ($now >= $expires) {
+                throw new StorageException('WebAuthn challenge expired during storage.', 'webauthn.expired');
+            }
             if ($created === true) {
                 return $handle;
             }
@@ -74,8 +79,8 @@ final class ChallengeStore
             throw new InvalidArgumentException('Invalid challenge handle or type');
         }
         $binding = $this->binding($subject, $session);
-        $now = $this->clock->now();
-        $json = $this->store->transact('challenge:' . $handle, static function ($current) use ($type, $binding, $now): Change {
+        $now = $this->now();
+        $payload = $this->store->transact('challenge:' . $handle, static function ($current) use ($type, $binding, $now): Change {
             if ($current === null) {
                 return new Change(null, 0, null);
             }
@@ -92,17 +97,29 @@ final class ChallengeStore
             if ($current['type'] !== $type || !hash_equals($current['binding'], $binding)) {
                 return new Change($current, $current['expires'], null);
             }
-            return new Change(null, 0, $current['options']);
+            return new Change(null, 0, ['options' => $current['options'], 'expires' => $current['expires']]);
         });
-        if ($json === null) {
+        $now = $this->now($now);
+        if ($payload === null || $payload['expires'] <= $now) {
             return null;
         }
         $class = $type === 'register' ? PublicKeyCredentialCreationOptions::class : PublicKeyCredentialRequestOptions::class;
-        $options = $this->serializer->deserialize($json, $class, 'json');
+        $options = $this->serializer->deserialize($payload['options'], $class, 'json');
         if (!$options instanceof $class || strlen($options->challenge) !== 32) {
             throw new StorageException('Corrupt WebAuthn challenge options');
         }
+        if ($this->now($now) >= $payload['expires']) { return null; }
         return $options;
+    }
+
+    private function now(?int $seen = null): int
+    {
+        try { $now = $this->clock->now(); }
+        catch (\Throwable $error) { throw new StorageException('WebAuthn challenge clock unavailable.', 'webauthn.clock'); }
+        if ($now < 0 || $now > PHP_INT_MAX - $this->ttl || ($seen !== null && $now < $seen)) {
+            throw new StorageException('Invalid WebAuthn challenge clock.', 'webauthn.clock');
+        }
+        return $now;
     }
 
     private function type($options): string

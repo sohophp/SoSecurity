@@ -82,16 +82,14 @@ final class RecentEvents
         ($this->sink)($record);
     }
 
-    /** Newest first; authorization is rechecked before any storage access. */
+    /** Newest first; authorization is checked before storage access and again before returning data. */
     public function recent(int $limit = 32, ?string $event = null, ?string $scope = null): array
     {
         if (!$this->authorize instanceof \Closure || !$this->read instanceof \Closure
             || !$this->scopeBinding instanceof \Closure) {
             throw new ConfigurationException('Rebuild recent audit events from trusted configuration.', 'configuration.audit_serialization');
         }
-        try { $authorized = ($this->authorize)(); }
-        catch (\Throwable $error) { $authorized = false; }
-        if (!$authorized) { throw new SecurityException('Recent audit event access denied.', 'audit.recent_forbidden'); }
+        $this->authorizeRead();
         if ($limit < 1 || $limit > $this->capacity
             || ($event !== null && !preg_match('/\A[a-z][a-z0-9_.]{0,63}\z/D', $event))) {
             throw new ConfigurationException('Invalid recent-event query.', 'configuration.audit_recent_query');
@@ -105,6 +103,7 @@ final class RecentEvents
             $matches[] = $entry;
             if (count($matches) === $limit) { break; }
         }
+        $this->authorizeRead();
         return $matches;
     }
 
@@ -143,7 +142,7 @@ final class RecentEvents
 
     private static function recordShape(array $record): void
     {
-        if (array_keys($record) !== ['time', 'event', 'scope', 'subject', 'context']
+        if (count($record) !== 5 || array_keys($record) !== ['time', 'event', 'scope', 'subject', 'context']
             || !is_int($record['time']) || $record['time'] < 0
             || !is_string($record['event']) || !preg_match('/\A[a-z][a-z0-9_.]{0,63}\z/D', $record['event'])
             || !is_string($record['scope']) || $record['scope'] === '' || strlen($record['scope']) > 256
@@ -162,6 +161,13 @@ final class RecentEvents
                 || ($name === 'allowed' ? !is_bool($value) : (!is_int($value) || $value < 0))) { return false; }
         }
         return true;
+    }
+
+    private function authorizeRead(): void
+    {
+        try { $authorized = ($this->authorize)(); }
+        catch (\Throwable $error) { $authorized = false; }
+        if (!$authorized) { throw new SecurityException('Recent audit event access denied.', 'audit.recent_forbidden'); }
     }
 
     public function __debugInfo(): array { return ['audit_recent_events' => '[redacted]']; }

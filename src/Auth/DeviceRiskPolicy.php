@@ -9,6 +9,9 @@ final class DeviceRiskPolicy
 {
     public function decide(array $signals): DeviceRiskDecision
     {
+        if (count($signals) !== 4) {
+            throw new ConfigurationException('Provide every trusted-device risk signal.', 'configuration.device_risk');
+        }
         $expected = ['anomalous', 'changed', 'compromised', 'reauth_required'];
         $fields = array_keys($signals);
         sort($fields);

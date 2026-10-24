@@ -146,6 +146,11 @@ try {
         Check::same(true, $links->link('tenant', 'alice', $local->token(), $fresh));
         $third = $sessions->issue('tenant', $fresh);
         Check::same(true, $third !== null);
+        Check::same(true, $links->unlink('tenant', 'alice', $local->token(), $fresh));
+        Check::same(true, $links->link('tenant', 'alice', $local->token(), $fresh));
+        Check::same(null, $sessions->verify('tenant', 'alice', $third->token()));
+        $third = $sessions->issue('tenant', $fresh);
+        Check::same(true, $third !== null);
         Check::throws(SecurityException::class, static function () use ($links, $local): void {
             $links->recoverUnlink('tenant', 'alice', $local->token(), 'https://issuer.example.test', 'external-alice',
                 static function (): bool { return false; });

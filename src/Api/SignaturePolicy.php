@@ -11,7 +11,7 @@ final class SignaturePolicy
     public function __construct(array $options)
     {
         $defaults=['origin'=>null,'allow_http'=>false,'maximum_lifetime'=>300,'clock_skew'=>30,'maximum_body'=>1048576];
-        if (array_diff(array_keys($options),array_keys($defaults))) { throw new ConfigurationException('Unknown signature policy option.'); }
+        if (count($options) > count($defaults) || array_diff(array_keys($options),array_keys($defaults))) { throw new ConfigurationException('Unknown signature policy option.'); }
         $options+=$defaults;
         if (!is_string($options['origin']) || !is_bool($options['allow_http'])) { throw new ConfigurationException('Configure a trusted public API origin and explicit HTTP choice.'); }
         try { $origin=Uri::originValue($options['origin']); } catch (ValidationException $e) { throw new ConfigurationException('Invalid signature origin.','configuration.api',$e); }

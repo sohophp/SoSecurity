@@ -7,6 +7,8 @@ use InvalidArgumentException;
 use SoSecurity\Auth\SessionRegistry;
 use SoSecurity\Csrf\CsrfTokens;
 use SoSecurity\Exception\SecurityException;
+use SoSecurity\Exception\DependencyException;
+use SoSecurity\Storage\StorageException;
 use SoSecurity\Support\Clock;
 use SoSecurity\Support\Guard;
 use SoSecurity\Support\SystemClock;
@@ -41,11 +43,15 @@ final class SessionDeviceAuthority implements DeviceAuthority
     public function issueRemovalProof(string $userHandle, string $credentialId): string
     {
         $this->identity($userHandle, $credentialId);
-        $current = $this->current($userHandle, $this->clock->now());
+        $current = $this->current($userHandle, $this->now());
         if ($current === null) {
             throw new SecurityException('Recent WebAuthn device authority required', 'webauthn.denied');
         }
-        return $this->csrf->issue($this->proofScope($credentialId), $current['binding']);
+        $proof = $this->requestProof(function()use($credentialId,$current):string{return $this->csrf->issue($this->proofScope($credentialId), $current['binding']);});
+        if (!$this->live($current)) {
+            throw new SecurityException('Recent WebAuthn device authority expired', 'webauthn.denied');
+        }
+        return $proof;
     }
 
     public function allow(string $phase, string $scope, string $userHandle, string $credentialId,
@@ -53,7 +59,7 @@ final class SessionDeviceAuthority implements DeviceAuthority
     {
         $before = $this->before;
         $this->before = null;
-        if (($phase !== 'before' && $phase !== 'return') || $scope !== $this->scope ||
+        if (($phase !== 'before' && $phase !== 'current' && $phase !== 'return') || $scope !== $this->scope ||
             !is_string($proof) || $proof === '' || $userHandle === '' || strlen($userHandle) > 256 ||
             $credentialId === '' || strlen($credentialId) > 1024) {
             return false;
@@ -61,14 +67,15 @@ final class SessionDeviceAuthority implements DeviceAuthority
         $current = $this->current($userHandle, $now);
         if ($current === null) { return false; }
         if ($phase === 'before') {
-            if (!$this->csrf->verify($this->proofScope($credentialId), $current['binding'], $proof, true)) {
+            if (!$this->requestProof(function()use($credentialId,$current,$proof):bool{return $this->csrf->verify($this->proofScope($credentialId), $current['binding'], $proof, true);}) || !$this->live($current)) {
                 return false;
             }
-            $this->before = [$userHandle, $credentialId, $current['session'], hash('sha256', $proof)];
+            $this->before = [$userHandle, $credentialId, $current['session'], $current['binding'], hash('sha256', $proof)];
             return true;
         }
         $accepted = $before !== null && $before ===
-            [$userHandle, $credentialId, $current['session'], hash('sha256', $proof)];
+            [$userHandle, $credentialId, $current['session'], $current['binding'], hash('sha256', $proof)];
+        if ($accepted && $phase === 'current') { $this->before = $before; }
         return $accepted;
     }
 
@@ -87,18 +94,49 @@ final class SessionDeviceAuthority implements DeviceAuthority
 
     private function current(string $userHandle, int $now): ?array
     {
-        $reference = ($this->currentSession)();
+        try { $reference = ($this->currentSession)(); }
+        catch (\Throwable $error) { throw new DependencyException('WebAuthn session authority unavailable', 'webauthn.authority_unavailable'); }
         if (!is_array($reference) || !isset($reference['subject'], $reference['token'], $reference['binding']) ||
             !is_string($reference['subject']) || !hash_equals($userHandle, $reference['subject']) ||
             !is_string($reference['token']) || !is_string($reference['binding']) ||
             $reference['binding'] === '' || strlen($reference['binding']) > 256) {
             return null;
         }
-        $verified = $this->sessions->verify($this->scope, $userHandle, $reference['token'], 2);
-        if ($verified === null || !$verified->recent($this->recentSeconds, $now, 2)) {
+        try { $verified = $this->sessions->verify($this->scope, $userHandle, $reference['token'], 2); }
+        catch (\Throwable $error) { throw new DependencyException('WebAuthn session authority unavailable', 'webauthn.authority_unavailable'); }
+        $checkedAt = $this->now();
+        if ($checkedAt < $now || $verified === null || !$verified->recent($this->recentSeconds, $checkedAt, 2)) {
             return null;
         }
         $binding = hash('sha256', strlen($reference['binding']) . ':' . $reference['binding'] . $verified->id());
-        return ['session' => $verified->id(), 'binding' => $binding];
+        return ['session' => $verified->id(), 'binding' => $binding, 'checked_at' => $checkedAt,
+            'until' => min($verified->expiresAt(), $verified->authenticatedAt() + $this->recentSeconds)];
+    }
+
+    private function requestProof(callable $operation)
+    {
+        try { return $operation(); }
+        catch (\Throwable $error) {
+            if ($error instanceof StorageException && $error->reason() === 'csrf.clock') {
+                throw new StorageException('WebAuthn request proof clock unavailable', 'csrf.clock');
+            }
+            throw new DependencyException('WebAuthn request proof unavailable', 'webauthn.request_unavailable');
+        }
+    }
+
+    private function now(): int
+    {
+        try { $now = $this->clock->now(); }
+        catch (\Throwable $error) { throw new DependencyException('WebAuthn authority clock unavailable', 'webauthn.clock'); }
+        if ($now < 0 || $now > PHP_INT_MAX - 86400) {
+            throw new SecurityException('Invalid WebAuthn authority clock', 'webauthn.clock');
+        }
+        return $now;
+    }
+
+    private function live(array $current): bool
+    {
+        $now = $this->now();
+        return $now >= $current['checked_at'] && $now < $current['until'];
     }
 }

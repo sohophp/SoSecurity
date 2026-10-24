@@ -91,7 +91,7 @@ if ($action === 'begin-register') {
         public function allow(string $phase, string $scope, string $userHandle, string $credentialId,
             $proof, int $now): bool
         {
-            return ($phase === 'before' || $phase === 'return') && $scope === 'browser-test' &&
+            return ($phase === 'before' || $phase === 'current' || $phase === 'return') && $scope === 'browser-test' &&
                 $userHandle === 'alice-id' && $proof === 'browser-test-recent-proof';
         }
     };

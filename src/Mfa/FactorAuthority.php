@@ -28,7 +28,7 @@ final class FactorAuthority
         new Deadline($milliseconds);$this->fence=$fence;$this->guard=static function(...$args)use($guard){return $guard(...$args);};$this->clock=$clock;$this->milliseconds=$milliseconds;
     }
     public function registeredWith(\PDO $connection):bool {return $this->registered!==null&&$this->registered->matchesConnection($connection);}
-    public function enlistWorkers(\PDO $connection):void {if($this->registered!==null){$this->registered->assertCurrent($connection);}}
+    public function enlistWorkers(\PDO $connection,?\SoSecurity\Support\SqlTransaction $owner=null):void {if($this->registered!==null){$this->registered->assertCurrent($connection,$owner);}}
     public function boundTo(LocalEpochFence $fence):bool {return $this->fence->binding()===$fence->binding();}
     public function permits(string $key,?string $action=null):bool {return $this->active!==null&&$this->active[0]===$key&&($action===null||$this->active[1]===$action);}
     private function check(string $action,string $phase,string $scope,string $subject,array $metadata):void
@@ -39,7 +39,7 @@ final class FactorAuthority
     }
     private function now():int
     {
-        $now=$this->clock->now();if($now<0||$now>PHP_INT_MAX-86400){throw new SecurityException('Managed factor clock is invalid.','mfa.clock');}return $now;
+        try{$now=$this->clock->now();}catch(\Throwable $error){throw new DependencyException('Managed factor clock unavailable.','mfa.clock');}if($now<0||$now>PHP_INT_MAX-86400){throw new SecurityException('Managed factor clock is invalid.','mfa.clock');}return $now;
     }
     private static function metadata(string $action,array $metadata):void
     {
@@ -76,7 +76,7 @@ final class FactorAuthority
             if($this->now()<$observed){throw new SecurityException('Managed factor clock moved backwards.','mfa.clock');}
             $observed=$this->now();$this->active=[$key,$action,$metadata];try{$result=$operation();}finally{$this->active=null;}
             try{$this->check($action,'return',$scope,$subject,$metadata);$deadline->check('mfa.timeout');if($this->now()<$observed){throw new SecurityException('Managed factor clock moved backwards.','mfa.clock');}}
-            catch(\Throwable $error){throw new StorageException('Managed factor result withheld after possible storage effects.','mfa.completion_unknown',$error);}
+            catch(\Throwable $error){throw new StorageException('Managed factor result withheld after possible storage effects.','mfa.completion_unknown');}
             return $result;
         });}finally{$this->active=null;$this->busy=false;}
     }

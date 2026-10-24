@@ -1,0 +1,20 @@
+<?php
+declare(strict_types=1);
+$initial=$source->digest();$before=$witness->inspect(static function():bool{return true;});
+$binding=$policy->credentialAuditContext($auditLogger);Check::same(true,is_string($binding)&&strlen($binding)===64);Check::same($binding,$policy->credentialAuditContext($auditLogger));
+Check::same($initial,$source->digest());Check::same($before,$witness->inspect(static function():bool{return true;}));
+$context=$auditLogger->stateContext($pdo,'fresh-site',$clock);Check::same(4,$context['maximum_records']);Check::same('blob:4096',$context['tables']['sosecurity_audit_records']['columns']['record']);
+Check::same(null,$auditLogger->stateContext(new PDO('sqlite::memory:'),'fresh-site',$clock));Check::same(null,$auditLogger->stateContext($pdo,'other-site',$clock));Check::same(null,$auditLogger->stateContext($pdo,'fresh-site',new NativeMaintenanceClock()));
+$called=0;$arbitrary=new SoSecurity\Audit\AuditLogger(static function()use(&$called):void{++$called;},str_repeat('a',32));Check::same(null,$policy->credentialAuditContext($arbitrary));Check::same(0,$called);
+$wrapped=new SoSecurity\Audit\AuditLogger(static function(array $record)use($auditSink):void{$auditSink($record);},str_repeat('a',32));Check::same(null,$policy->credentialAuditContext($wrapped));
+$changed=new SoSecurity\Audit\AuditLogger($auditSink,str_repeat('b',32));Check::same(false,$binding===$policy->credentialAuditContext($changed));
+$tooLarge=new SoSecurity\Audit\AuditLogger(new SoSecurity\Audit\SqlSink($pdo,'fresh-site',5,3600,$clock,10000),str_repeat('a',32));Check::same(null,$policy->credentialAuditContext($tooLarge));
+$changedPolicy=new SoSecurity\Audit\AuditLogger(new SoSecurity\Audit\SqlSink($pdo,'fresh-site',4,3601,$clock,10000),str_repeat('a',32));Check::same(false,$binding===$policy->credentialAuditContext($changedPolicy));
+$changedBudget=new SoSecurity\Audit\AuditLogger(new SoSecurity\Audit\SqlSink($pdo,'fresh-site',4,3600,$clock,9000),str_repeat('a',32));Check::same(false,$binding===$policy->credentialAuditContext($changedBudget));
+Check::throws(SoSecurity\Storage\StorageException::class,static function()use($auditLogger):void{$auditLogger->record('authorization.allowed','tenant','private-subject',['allowed'=>true]);});
+Check::same('0',(string)$pdo->query('SELECT COUNT(*) FROM sosecurity_audit_records')->fetchColumn());
+$boundary->run('owned.audit.append',static function()use($auditLogger):void{$auditLogger->record('authorization.allowed','tenant','private-subject',['allowed'=>true]);});
+Check::same('1',(string)$pdo->query('SELECT COUNT(*) FROM sosecurity_audit_records')->fetchColumn());$record=json_decode($pdo->query('SELECT record FROM sosecurity_audit_records')->fetchColumn(),true);Check::same(hash_hmac('sha256','private-subject',str_repeat('a',32)),$record['subject']);Check::same(['allowed'=>true],$record['context']);
+Check::same($source->digest(),$witness->inspect(static function():bool{return true;})['digest']);
+$pdo->exec('DELETE FROM sosecurity_audit_records');$ran=false;Check::throws(SoSecurity\Storage\StorageException::class,static function()use($boundary,&$ran):void{$boundary->run('owned.audit.changed',static function()use(&$ran):void{$ran=true;});});Check::same(false,$ran);
+echo 'PASS native audit source '.Check::$assertions.' PHP '.PHP_VERSION.PHP_EOL;

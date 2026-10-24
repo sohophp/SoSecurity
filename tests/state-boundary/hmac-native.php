@@ -1,0 +1,9 @@
+<?php
+declare(strict_types=1);
+require __DIR__.'/hmac-native-support.php';
+hmacCase(static function(EntryEnvironment $x):void{
+    $v=nativeHmac($x);$r=hmacRequest($x);$before=$x->inspect();$expected=hmacExpected($x,'verify',$r,$before['digest']);$writes=[];apiIntentObserve($x,$writes);$id=hmacVerify($v,$r);$x->persistHook=null;Check::same('user',$id->subject());Check::same(2,count($writes));apiIntentCheck($expected,$writes[0]);Check::same($writes[0]['intent'],$writes[1]['intent']);Check::same('pending',$writes[0]['status']);Check::same('current',$writes[1]['status']);grantNoEffect($x,static function()use($v,$r){return hmacVerify($v,$r);});
+    $r=hmacRequest($x);$intent=grantIntent($x->e->pdo,'HMAC title');$expected=hmacExpected($x,'execute',$r,$x->inspect()['digest'],$intent);$writes=[];apiIntentObserve($x,$writes);Check::same(2,hmacExecute($x,$v,$r,'hmacWrite'));$x->persistHook=null;apiIntentCheck($expected,$writes[0]);Check::same($writes[0]['intent'],$writes[1]['intent']);grantNoEffect($x,static function()use($x,$v,$r){return hmacExecute($x,$v,$r,'hmacWrite');});Check::same('HMAC title',$x->e->pdo->query("SELECT title FROM state_example_documents WHERE id='owned'")->fetchColumn());
+    $before=permissionState($x);Check::throws(SoSecurity\Exception\ConfigurationException::class,static function()use($v,$r):void{$v->verify($r['method'],$r['url'],$r['body'],$r['headers']);});Check::same($before,permissionState($x));$dump=json_encode($x->inspect());foreach([$r['url'],$r['body'],$r['headers']['Signature'],hmacKey()->secret()] as $secret){Check::same(false,strpos($dump,$secret)!==false);}Check::same($x->source->digest(),$x->inspect()['digest']);
+});
+echo 'PASS native HMAC lifecycle: '.Check::$assertions.' assertions PHP '.PHP_VERSION."; covered real key material, strict nonce reuse, exact service identity/intent receipts, owned SQL, raw entry refusal and no secrets in witness\n";

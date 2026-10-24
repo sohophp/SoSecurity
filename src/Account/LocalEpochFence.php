@@ -8,7 +8,7 @@ use SoSecurity\Support\Deadline;
 use SoSecurity\Support\Guard;
 use SoSecurity\Support\HmacKeys;
 
-/** Candidate: one local lock authority, independent of business backups. Never unlink/rename/reopen an epoch. */
+/** one local lock authority, independent of business backups. Never unlink/rename/reopen an epoch. */
 final class LocalEpochFence
 {
     private $directory;
@@ -26,23 +26,29 @@ final class LocalEpochFence
     private $workOwner;
     private $workHandle;
     private $closedOwner;
+    private $stateBoundary;
 
     /** persist(resource): true MUST synchronously flush this exact inode to stable storage. */
-    public function __construct(string $directory,string $site,string $scope,string $epoch,HmacKeys $keys,callable $persist,int $milliseconds=1000)
+    public function __construct(string $directory,string $site,string $scope,string $epoch,HmacKeys $keys,callable $persist,int $milliseconds=1000,?StateBoundary $stateBoundary=null)
     {
         Guard::label($site);Guard::label($scope);
         if(preg_match('//u',$site)!==1||preg_match('//u',$scope)!==1){throw new ConfigurationException('Use UTF-8 fence context labels.','configuration.factor_fence');}
         if(!preg_match('/\A[a-f0-9]{64}\z/D',$epoch)){throw new ConfigurationException('Use a trusted epoch.','configuration.factor_fence');}
-        new Deadline($milliseconds);
+        new Deadline($milliseconds);if($stateBoundary!==null&&(!$stateBoundary->semanticAuthority()||!$stateBoundary->matches($site,$scope,$epoch))){throw new ConfigurationException('Use the exact independent state scope.','configuration.state_boundary');}$this->stateBoundary=$stateBoundary;
         $real=realpath($directory);$stat=@lstat($directory);
         if($real===false||$real!==$directory||!is_array($stat)||($stat['mode']&0170000)!==0040000||($stat['mode']&0077)!==0){throw new ConfigurationException('Use a canonical private local authority directory.','configuration.factor_fence');}
-        $this->directory=$real;$this->directoryStat=$stat;$this->context=json_encode(['SoSecurity.Account.LocalEpochFence.1',$site,$scope,$epoch]);
-        $this->path=$real.'/'.hash('sha256',$this->context).'.fence';$this->keys=$keys;
+        $this->directory=$real;$this->directoryStat=$stat;$this->context=$this->stateContext($site,$scope,$epoch);
+        $this->path=$real.'/'.hash('sha256',$this->context).'.fence';$this->keys=$keys;if($stateBoundary!==null&&!$stateBoundary->coversFence($this)){throw new ConfigurationException('Declare the complete actual worker authority directory in the same source.','configuration.state_coverage');}
         $this->persist=static function($handle)use($persist){return $persist($handle);};$this->milliseconds=$milliseconds;
     }
 
     /** Trusted first provisioning only. Never call to repair a missing deployed authority or reuse an old epoch. */
     public function initialize():void
+    {
+        $this->assertStateActive();
+        $this->provision();
+    }
+    private function provision():void
     {
         if($this->busy){throw new StorageException('Nested fence operation.','factor.fence_nested');}
         $this->checkDirectory();$owner=self::owner();$this->busy=true;$this->lockOwner=$owner;$handle=false;
@@ -58,6 +64,7 @@ final class LocalEpochFence
     /** Hold across the COMPLETE SQL/external-store operation, including callbacks and finally cleanup. */
     public function work(callable $operation)
     {
+        $this->assertStateActive();
         if($this->working){$this->assertContext($this->workOwner);if(!is_resource($this->workHandle)){throw new StorageException('Active fence handle has expired.','factor.fence_context');}$this->validateHandle($this->workHandle);if($this->read($this->workHandle)!=='open'){throw new StorageException('Epoch changed during nested work.','factor.fence_corrupt');}return $operation();}
         return $this->locked(LOCK_SH,function($handle)use($operation){
             if($this->read($handle)!=='open'){throw new StorageException('Epoch is permanently drained.','factor.fence_closed');}
@@ -72,6 +79,7 @@ final class LocalEpochFence
     /** Permanent close before cleanup. An exception never reopens the epoch; repeated cleanup must be idempotent. */
     public function drain(callable $cleanup,?callable $authorize=null)
     {
+        $this->assertStateActive();
         return $this->locked(LOCK_EX,function($handle)use($cleanup,$authorize){
             $state=$this->read($handle);
             if($authorize!==null&&$authorize()!==true){throw new StorageException('Current drain authority required.','factor.fence_denied');}
@@ -90,13 +98,44 @@ final class LocalEpochFence
     /** Only the active, durably closed EX drain callback can lend this context. Never opens or closes an authority. */
     public function closedWork(callable $operation)
     {
+        $this->assertStateActive();
         $handle=$this->closedHandle;
         if(!$this->busy||!is_resource($handle)||$this->working){throw new StorageException('An active closed drain context is required.','factor.fence_closed_context');}
         $this->assertContext($this->closedOwner);$this->validateHandle($handle);if($this->read($handle)!=='closed'){throw new StorageException('Closed authority changed.','factor.fence_corrupt');}
         try{return $operation();}finally{$this->validateHandle($handle);if($this->read($handle)!=='closed'){throw new StorageException('Closed authority changed during cleanup.','factor.fence_corrupt');}}
     }
 
-    public function matches(string $site,string $scope,string $epoch):bool {return $this->context===json_encode(['SoSecurity.Account.LocalEpochFence.1',$site,$scope,$epoch]);}
+    public function matches(string $site,string $scope,string $epoch):bool {if(strlen($site)>256||strlen($scope)>256||preg_match('//u',$site)!==1||preg_match('//u',$scope)!==1){return false;}return $this->context===$this->stateContext($site,$scope,$epoch);}
+    private function stateContext(string $site,string $scope,string $epoch):string {return $this->stateBoundary===null?json_encode(['SoSecurity.Account.LocalEpochFence.1',$site,$scope,$epoch]):json_encode(['SoSecurity.Account.LocalEpochFence.2',$site,$scope,$epoch,$this->stateBoundary->binding()]);}
+    public function assertStateActive():void {if($this->stateBoundary!==null){$this->stateBoundary->assertActive();}}
+    public function recoveryBoundary(LocalStateWitness $witness):bool{return $this->stateBoundary!==null&&$this->stateBoundary->recoveryAuthority($witness);}
+    public function requiresStateBoundary():bool {return $this->stateBoundary!==null;}
+    public function boundToStateBoundary(StateBoundary $boundary):bool {return $this->stateBoundary===$boundary;}
+    public function sameStateBoundary(self $next):bool {return $this->stateBoundary===null?$next->stateBoundary===null:($next->stateBoundary!==null&&$this->stateBoundary->binding()===$next->stateBoundary->binding());}
+    public function storageDomain():array{$this->checkDirectory();return StateStorageDomain::directory($this->directory,$this->directoryStat);}
+    public function usesKeys(HmacKeys $keys):bool{return $this->keys===$keys;}
+    /** Read-only authenticated recovery image. Never lends a normal work context. */
+    public function recoveryImage(LocalStateWitness $witness):?string
+    {
+        if(!$this->recoveryBoundary($witness)||!$witness->coversFence($this)){throw new ConfigurationException('Use the exact covered recovery authority.','configuration.worker_handoff');}
+        $this->checkDirectory();clearstatcache(true,$this->path);if(@lstat($this->path)===false){return null;}
+        return $this->locked(LOCK_SH,function($h):string{return $this->image($h);});
+    }
+    private function image($handle):string
+    {
+        $this->read($handle);if(!rewind($handle)){throw new StorageException('Cannot seek recovery fence.','factor.fence_io');}$raw=stream_get_contents($handle,129);$this->validateHandle($handle);if(!is_string($raw)||strlen($raw)>128){throw new StorageException('Invalid recovery fence image.','factor.fence_corrupt');}return $raw;
+    }
+    /** Fixed approved quarantine transition only: permanently close old before provisioning next. */
+    public function handoff(StateWorkerHandoff $plan,LocalStateWitness $witness,string $operation,LocalEpochFence $next):void
+    {
+        if(!$plan->usesFences($this,$next)){throw new ConfigurationException('Use the exact selected fence pair.','configuration.worker_handoff');}$plan->guard($witness,$operation);
+        $this->locked(LOCK_EX,function($h)use($plan,$witness,$operation,$next):void{
+            $plan->guard($witness,$operation);$plan->checkFrame($this,$this->image($h));$this->write($h,'closed');$plan->checkClosed($this,$this->image($h));$plan->guard($witness,$operation);
+            $next->checkDirectory();clearstatcache(true,$next->path);if(@lstat($next->path)===false){$next->provision();}
+            $next->locked(LOCK_EX,function($n)use($plan,$witness,$operation,$next):void{$plan->checkFrame($next,$next->image($n));$next->sync($n);$plan->guard($witness,$operation);});
+            $plan->checkClosed($this,$this->image($h));
+        });
+    }
     public function binding():string {return hash('sha256','SoSecurity.Account.LocalEpochFence.Authority.1.'.$this->context.$this->directory.':'.$this->directoryStat['dev'].':'.$this->directoryStat['ino']);}
 
     private function locked(int $mode,callable $operation)

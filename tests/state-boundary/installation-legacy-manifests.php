@@ -1,0 +1,7 @@
+<?php
+declare(strict_types=1);
+require __DIR__.'/installation-support.php';
+foreach([false,true] as $sessions){recoveryAuditCase(static function(EntryEnvironment $x,EntryEnvironment $op,SoSecurity\Account\StateRetirementControl $control)use($sessions):void{
+    list($next,$accounts,$plan)=installationSetup($x,$op,$control,null,$sessions);$legacy=$plan->manifest();unset($legacy['retirement']);$legacy['format']=$sessions?3:2;$before=$next->inspect('witnessBudget');$source=$x->source->digest();$resumed=SoSecurity\Account\StateCredentialInstallation::resume(...array_merge(installationArgs($x,$op,$next,$accounts),array_merge([$legacy],$sessions?[$x->sessions,$x->store]:[])));Check::same($legacy,$resumed->manifest());Check::same($source,$resumed->observed());Check::same(false,$resumed->initialFor($before));$token=$op->login()->credential()->token();witnessReason('account.credential_installation_changed',static function()use($next,$resumed,$control,$token):void{$next->credentialInstallationReview($resumed,$control,'user',$token,'witnessBudget');});Check::same($before,$next->inspect('witnessBudget'));Check::same($source,$x->source->digest());
+});}
+echo 'PASS bounded legacy installation images: '.Check::$assertions.' assertions PHP '.PHP_VERSION."; format2/3 encrypted row images decode without retirement guarantee, resumed descriptions cannot obtain fresh initial authority; no state writes\n";

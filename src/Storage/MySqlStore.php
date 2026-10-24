@@ -23,7 +23,20 @@ final class MySqlStore implements AtomicStore
         if ($pdo->getAttribute(\PDO::ATTR_DRIVER_NAME) !== 'mysql') { throw new ConfigurationException('MySqlStore requires PDO MySQL.'); }
         $this->pdo = $pdo; $this->namespace = hash('sha256', $namespace);
         $this->clock = $clock ?? new SystemClock(); $this->lockWait = $lockWaitSeconds;
-        $this->verifySchema();
+        // Construction may run inside a caller transaction. Change only its session policy,
+        // never its transaction boundary, and restore even when schema verification refuses.
+        $metadataTimeout=null;
+        try{
+            $metadataTimeout=$this->lockTimeout(true);
+            $this->execute('SET SESSION lock_wait_timeout = '.min($metadataTimeout,$this->lockWait));
+            $this->verifySchema();
+        }catch(StorageException $error){
+            if($error->reason()==='storage.database'){throw new StorageException('Cannot verify database security schema.','storage.schema');}
+            throw $error;
+        }finally{
+            if($metadataTimeout!==null&&!$this->failed){try{$this->execute('SET SESSION lock_wait_timeout = '.$metadataTimeout);}catch(\Throwable $error){$this->failed=true;}}
+            if($this->failed){throw new StorageException('Database constructor cleanup failed; rebuild the connection.','storage.cleanup');}
+        }
     }
     public static function schema(): string
     {
@@ -40,7 +53,7 @@ final class MySqlStore implements AtomicStore
         \SoSecurity\Support\SqlTransactionGuard::assertIdle($pdo,'mysql');
         try {
             if ($pdo->exec(self::schema()) === false) { throw new StorageException('Cannot install schema.', 'storage.schema'); }
-        } catch (\PDOException $e) { throw new StorageException('Cannot install schema.', 'storage.schema', $e); }
+        } catch (\PDOException $e) { throw new StorageException('Cannot install schema.', 'storage.schema'); }
         new self($pdo, 'schema-verification');
     }
     public function transact(string $key, callable $callback)
@@ -105,24 +118,32 @@ final class MySqlStore implements AtomicStore
         if ($this->failed) { throw new StorageException('Reconnect and rebuild after failed database cleanup.', 'storage.connection'); }
         if ($this->pdo->inTransaction()) { throw new ConfigurationException('Security storage cannot own an existing host transaction.', 'configuration.transaction'); }
         $owned = false;
-        $original = null;
+        $original = null;$metadataTimeout = null;
         try {
             \SoSecurity\Support\SqlTransactionGuard::assertIdle($this->pdo,'mysql');
-            $original = (int) $this->statement('SELECT @@SESSION.innodb_lock_wait_timeout')->fetchColumn();
+            $original = $this->lockTimeout(false);
+            $metadataTimeout = $this->lockTimeout(true);
             $this->execute('SET SESSION innodb_lock_wait_timeout = ' . $this->lockWait);
+            $this->execute('SET SESSION lock_wait_timeout = ' . min($metadataTimeout,$this->lockWait));
             if (!$this->pdo->beginTransaction()) { throw new StorageException('Cannot start database transaction.', 'storage.transaction'); }
             $owned = true;
-            $this->verifyDependencies();
+            // Pin the table before rechecking its full schema; never reuse constructor-time facts.
+            $this->statement(\SoSecurity\Support\SqlSchema::tableResolution('sosecurity_state'))->closeCursor();
+            $this->verifySchema();
             $result = $operation();
             if (!$this->pdo->commit()) { throw new StorageException('Database commit was not confirmed.', 'storage.commit'); }
             $owned = false;
             return $result;
         } catch (\PDOException $e) {
-            throw new StorageException('Database security operation failed.', 'storage.database', $e);
+            throw new StorageException('Database security operation failed.', 'storage.database');
         } finally {
             if ($owned && $this->pdo->inTransaction()) {
                 try { if (!$this->pdo->rollBack()) { $this->failed = true; } }
                 catch (\PDOException $ignored) { $this->failed = true; }
+            }
+            if ($metadataTimeout !== null && !$this->failed) {
+                try { $this->execute('SET SESSION lock_wait_timeout = ' . $metadataTimeout); }
+                catch (\Throwable $ignored) { $this->failed = true; }
             }
             if ($original !== null && !$this->failed) {
                 try { $this->execute('SET SESSION innodb_lock_wait_timeout = ' . $original); }
@@ -131,37 +152,79 @@ final class MySqlStore implements AtomicStore
             if ($this->failed) { throw new StorageException('Database cleanup could not restore the connection; rebuild it.', 'storage.cleanup'); }
         }
     }
+    /** Read the complete fixed session value and close its cursor before any SET or BEGIN. */
+    private function lockTimeout(bool $metadata):int
+    {
+        try{$query=$this->pdo->prepare($metadata?'SELECT @@SESSION.lock_wait_timeout':'SELECT @@SESSION.innodb_lock_wait_timeout');}catch(\Throwable $error){throw new StorageException('Database session policy unavailable.','storage.database');}
+        if($query===false){throw new StorageException('Database session policy unavailable.','storage.database');}
+        $failure=null;
+        try{if(!$query->execute()){throw new StorageException('Database session policy unavailable.','storage.database');}$rows=$query->fetchAll(\PDO::FETCH_NUM);}catch(\Throwable $error){$failure=$error;}
+        try{$closed=$query->closeCursor();}catch(\Throwable $error){$closed=false;}
+        if(!$closed){$this->failed=true;throw new StorageException('Database session cursor cleanup failed.','storage.cleanup');}
+        if($failure!==null){throw new StorageException('Database session policy unavailable.','storage.database');}
+        if(count($rows)!==1||!is_array($rows[0])||count($rows[0])!==1){throw new StorageException('Invalid database session policy.','storage.corrupt');}
+        try{$value=\SoSecurity\Support\SqlSchema::integer(reset($rows[0]));}catch(StorageException $error){throw new StorageException('Invalid database session policy.','storage.corrupt');}
+        if($value<1||($metadata&&$value>31536000)){throw new StorageException('Invalid database session policy.','storage.corrupt');}
+        return $value;
+    }
     private function verifyDependencies(): void
     {
         foreach(\SoSecurity\Support\SqlSchema::foreignKeyChecks('mysql','sosecurity_state') as $check){$q=$this->statement($check['sql'],$check['parameters']);$related=$q->fetchColumn()!==false;$q->closeCursor();if($related){throw new ConfigurationException('Private security tables must not have foreign-key dependencies.','configuration.schema');}}
+    }
+    /** Empty trigger metadata is trustworthy only with proven current-account visibility. */
+    private function verifyTriggers(): void
+    {
+        $identity=$this->statement('SELECT CASE WHEN OCTET_LENGTH(CURRENT_USER())<=288 THEN CURRENT_USER() ELSE NULL END')->fetchColumn();
+        if(!is_string($identity)||!preg_match('/\A([A-Za-z0-9_.-]{1,32})@([A-Za-z0-9_.:%\/-]{1,255})\z/D',$identity,$match)){throw new ConfigurationException('Cannot prove private storage metadata visibility.','configuration.schema');}
+        $grantee="'".$match[1]."'@'".$match[2]."'";
+        // Keep proof and trigger observation in one statement; table grants may be revoked between queries.
+        $visible=$this->statement("SELECT (EXISTS(SELECT 1 FROM information_schema.SCHEMA_PRIVILEGES WHERE BINARY GRANTEE=:schema_grantee AND BINARY TABLE_SCHEMA=BINARY DATABASE() AND PRIVILEGE_TYPE='TRIGGER') OR EXISTS(SELECT 1 FROM information_schema.TABLE_PRIVILEGES WHERE BINARY GRANTEE=:table_grantee AND BINARY TABLE_SCHEMA=BINARY DATABASE() AND BINARY TABLE_NAME='sosecurity_state' AND PRIVILEGE_TYPE='TRIGGER')) AS scoped,EXISTS(SELECT 1 FROM information_schema.USER_PRIVILEGES WHERE BINARY GRANTEE=:global_grantee AND PRIVILEGE_TYPE='TRIGGER') AS unrestricted,EXISTS(SELECT 1 FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA=DATABASE() AND EVENT_OBJECT_TABLE='sosecurity_state') AS has_trigger",['schema_grantee'=>$grantee,'table_grantee'=>$grantee,'global_grantee'=>$grantee])->fetch(\PDO::FETCH_ASSOC);
+        if(!is_array($visible)||((string)$visible['scoped']!=='1'&&((string)$visible['unrestricted']!=='1'||(string)$this->statement('SELECT @@GLOBAL.partial_revokes')->fetchColumn()!=='0'))){throw new ConfigurationException('Direct private storage trigger metadata visibility is required.','configuration.schema');}
+        if((string)$visible['has_trigger']!=='0'){throw new ConfigurationException('Private security tables must not have triggers.','configuration.schema');}
     }
     private function verifySchema(): void
     {
         try {
             $this->verifyDependencies();
-            $engine = $this->statement("SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='sosecurity_state'")->fetchColumn();
+            $this->verifyTriggers();
+            $engine = $this->statement("SELECT CASE WHEN OCTET_LENGTH(ENGINE)<=32 THEN ENGINE ELSE NULL END FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='sosecurity_state' LIMIT 1")->fetchColumn();
             if (!is_string($engine) || strtolower($engine) !== 'innodb') {
                 throw new ConfigurationException('Install the dedicated InnoDB schema before use.', 'configuration.schema');
             }
-            $columns = $this->statement("SELECT COLUMN_NAME,DATA_TYPE,COLUMN_TYPE,IS_NULLABLE,CHARACTER_MAXIMUM_LENGTH,COLUMN_DEFAULT FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='sosecurity_state'")->fetchAll(\PDO::FETCH_ASSOC);
+            $columns = $this->statement("SELECT COLUMN_NAME,DATA_TYPE,CASE WHEN OCTET_LENGTH(COLUMN_TYPE)<=128 THEN COLUMN_TYPE ELSE NULL END AS COLUMN_TYPE,IS_NULLABLE,CHARACTER_MAXIMUM_LENGTH,CASE WHEN COLUMN_NAME='expires_at' AND OCTET_LENGTH(COLUMN_DEFAULT)<=128 THEN COLUMN_DEFAULT ELSE NULL END AS COLUMN_DEFAULT FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='sosecurity_state' ORDER BY ORDINAL_POSITION LIMIT 5")->fetchAll(\PDO::FETCH_ASSOC);
             $byName = array_column($columns, null, 'COLUMN_NAME');
             if (count($byName) !== 4 || !isset($byName['namespace_hash'], $byName['state_key'], $byName['payload'], $byName['expires_at'])
                 || $byName['namespace_hash']['DATA_TYPE'] !== 'char' || (int) $byName['namespace_hash']['CHARACTER_MAXIMUM_LENGTH'] !== 64
                 || $byName['state_key']['DATA_TYPE'] !== 'char' || (int) $byName['state_key']['CHARACTER_MAXIMUM_LENGTH'] !== 64
                 || $byName['payload']['DATA_TYPE'] !== 'mediumtext' || $byName['payload']['IS_NULLABLE'] !== 'YES'
-                || $byName['expires_at']['DATA_TYPE'] !== 'bigint' || strpos($byName['expires_at']['COLUMN_TYPE'], 'unsigned') === false
+                || $byName['expires_at']['DATA_TYPE'] !== 'bigint' || !is_string($byName['expires_at']['COLUMN_TYPE']) || strpos($byName['expires_at']['COLUMN_TYPE'], 'unsigned') === false
                 || $byName['expires_at']['IS_NULLABLE'] !== 'NO' || (string) $byName['expires_at']['COLUMN_DEFAULT'] !== '0') {
                 throw new ConfigurationException('Existing security table schema is incompatible.', 'configuration.schema');
             }
-            $primary = $this->statement("SELECT COLUMN_NAME FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='sosecurity_state' AND INDEX_NAME='PRIMARY' ORDER BY SEQ_IN_INDEX")->fetchAll(\PDO::FETCH_COLUMN);
-            if ($primary !== ['namespace_hash', 'state_key']) { throw new ConfigurationException('Security table needs the specified unique primary key.', 'configuration.schema'); }
-            $expiry = $this->statement("SELECT COLUMN_NAME FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='sosecurity_state' AND INDEX_NAME='sosecurity_expiry' ORDER BY SEQ_IN_INDEX")->fetchAll(\PDO::FETCH_COLUMN);
-            if ($expiry !== ['namespace_hash', 'expires_at']) { throw new ConfigurationException('Security table needs its bounded cleanup index.', 'configuration.schema'); }
-        } catch (\PDOException $e) { throw new StorageException('Cannot verify database schema.', 'storage.schema', $e); }
+            $this->verifyIndexes();
+        } catch (\PDOException $e) { throw new StorageException('Cannot verify database schema.', 'storage.schema'); }
     }
+    /** Recheck after deployment changes, under the owned transaction's metadata lock. */
+    private function verifyIndexes():void
+    {
+        $this->statement(\SoSecurity\Support\SqlSchema::tableResolution('sosecurity_state'))->closeCursor();
+        // Only the full primary key may arbitrate ON DUPLICATE KEY UPDATE.
+        // An extra unique index could redirect a missing-key insert into another record.
+        $expected=['primary'=>['namespace_hash','state_key'],'sosecurity_expiry'=>['namespace_hash','expires_at']];$observed=['primary'=>[],'sosecurity_expiry'=>[]];
+        $rows=$this->statement("SELECT INDEX_NAME,COLUMN_NAME,SUB_PART,NON_UNIQUE,INDEX_TYPE FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='sosecurity_state' AND (INDEX_NAME IN ('PRIMARY','sosecurity_expiry') OR NON_UNIQUE=0) ORDER BY INDEX_NAME,SEQ_IN_INDEX LIMIT 5")->fetchAll(\PDO::FETCH_ASSOC);
+        foreach($rows as $row){
+            $name=strtolower($row['INDEX_NAME']);
+            if(!isset($expected[$name])||$row['SUB_PART']!==null||(string)$row['NON_UNIQUE']!==($name==='primary'?'0':'1')||$row['INDEX_TYPE']!=='BTREE'){throw new ConfigurationException('Security indexes must preserve complete keys and declared uniqueness.','configuration.schema');}
+            $observed[$name][]=$row['COLUMN_NAME'];
+        }
+        if($observed!==$expected){throw new ConfigurationException('Security table requires its exact private indexes.','configuration.schema');}
+    }
+
     private function execute(string $sql): void
     {
-        if ($this->pdo->exec($sql) === false) { throw new StorageException('Database statement failed.', 'storage.database'); }
+        try { $result=$this->pdo->exec($sql); }
+        catch (\Throwable $error) { throw new StorageException('Database statement failed.', 'storage.database'); }
+        if ($result === false) { throw new StorageException('Database statement failed.', 'storage.database'); }
     }
     private function statement(string $sql, array $parameters = []): \PDOStatement
     {

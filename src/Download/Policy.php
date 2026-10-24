@@ -8,9 +8,10 @@ final class Policy
     private $options;
     public function __construct(array $options=[])
     {
-        $detached=[];foreach($options as $name=>$value){$detached[$name]=$value;}$options=$detached;
         $defaults=['maximum_bytes'=>20971520,'maximum_response_bytes'=>null,'io_milliseconds'=>3000,'send_milliseconds'=>30000,'chunk_bytes'=>65536,'ranges'=>true];
-        if(array_diff(array_keys($options),array_keys($defaults))){throw new ConfigurationException('Unknown download policy option.','configuration.download');}$options+=$defaults;
+        if(count($options) > count($defaults) || array_diff(array_keys($options),array_keys($defaults))){throw new ConfigurationException('Unknown download policy option.','configuration.download');}
+        $detached=[];foreach($options as $name=>$value){$detached[$name]=$value;}$options=$detached;
+        $options+=$defaults;
         if($options['maximum_response_bytes']===null){$options['maximum_response_bytes']=$options['maximum_bytes'];}
         foreach(['maximum_bytes'=>[1,268435456],'maximum_response_bytes'=>[1,268435456],'io_milliseconds'=>[1,30000],'send_milliseconds'=>[1,30000],'chunk_bytes'=>[1024,262144]] as $key=>$bounds){
             if(!is_int($options[$key])||$options[$key]<$bounds[0]||$options[$key]>$bounds[1]){throw new ConfigurationException('Invalid bounded download policy.','configuration.download');}

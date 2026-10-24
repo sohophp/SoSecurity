@@ -1,0 +1,32 @@
+<?php
+declare(strict_types=1);
+use SoSecurity\Account as A;
+$rejectPhase=true;$originalToken=$claim->token();$beforeReject=$witness->inspect(static function():bool{return true;});$rowsBefore=$pdo->query('SELECT * FROM sosecurity_outbox_records ORDER BY order_no')->fetchAll(PDO::FETCH_ASSOC);
+$permissionReject=static function(string $lease,string $role='queue-worker')use($queue,$token):A\StatePermission{return new A\StatePermission('outbox.reject','tenant','fresh-user',$queue->rejectTarget('tenant','initial','worker',$lease,'smtp.recipient_refused'),$token,[$role],1,300,true,false,['password']);};
+$rejectPermission=$permissionReject($originalToken);$reject=static function()use($queue,$policy,$rejectPermission,$originalToken):bool{return $queue->rejectFor($policy,$rejectPermission,'tenant','initial','worker',$originalToken,'smtp.recipient_refused');};
+if($mode==='reject-expiry'){
+ $claimExpiry=true;Check::same(false,$reject());Check::same($beforeReject,$witness->inspect(static function():bool{return true;}));Check::same($rowsBefore,$pdo->query('SELECT * FROM sosecurity_outbox_records ORDER BY order_no')->fetchAll(PDO::FETCH_ASSOC));
+ echo 'PASS native rejection admission expiry: '.Check::$assertions.' assertions PHP '.PHP_VERSION.PHP_EOL;return;
+}
+if($mode==='reject-late-role'||$mode==='reject-late-expiry'){
+ $claimLate=$mode==='reject-late-role';$claimReturnExpiry=$mode==='reject-late-expiry';
+ try{$reject();throw new RuntimeException('Uncertain completion reported success');}catch(SoSecurity\Storage\StorageException $error){Check::same('account.completion_unknown',$error->reason());}
+ Check::same('pending',$witness->inspect(static function():bool{return true;})['status']);$rows=$pdo->query('SELECT * FROM sosecurity_outbox_records ORDER BY order_no')->fetchAll(PDO::FETCH_ASSOC);Check::same('dead',$rows[0]['status']);Check::same(1,(int)$rows[0]['payload_present']);Check::same($rowsBefore[0]['payload_body'],$rows[0]['payload_body']);Check::same('smtp.recipient_refused',$rows[0]['last_error']);Check::same(0,(int)$rows[0]['manual_retries']);Check::same(1,(int)$rows[0]['attempts']);Check::same(0,(int)$rows[0]['lease_until']);Check::same($rowsBefore[1],$rows[1]);Check::same($rowsBefore[2],$rows[2]);
+ echo 'PASS native rejection '.$mode.': '.Check::$assertions.' assertions PHP '.PHP_VERSION.'; committed state retained, no continuation'.PHP_EOL;return;
+}
+$calls=$claimCalls;Check::same(false,$queue->rejectFor($policy,$permissionReject($originalToken,'absent-role'),'tenant','initial','worker',$originalToken,'smtp.recipient_refused'));Check::same($calls,$claimCalls);
+Check::throws(SoSecurity\Storage\StorageException::class,static function()use($oldQueue,$originalToken):void{$oldQueue->fail('tenant','initial','worker',$originalToken,'smtp.recipient_refused',false);});
+Check::throws(SoSecurity\Exception\ConfigurationException::class,static function()use($queue):void{$queue->rejectTarget('tenant','initial','worker','invalid','smtp.recipient_refused');});
+foreach(['',str_repeat('x',65),"smtp.\nrefused"] as $badCode){Check::throws(SoSecurity\Exception\ConfigurationException::class,static function()use($queue,$originalToken,$badCode):void{$queue->rejectTarget('tenant','initial','worker',$originalToken,$badCode);});}
+$claimAllowed=false;Check::same(false,$reject());$claimAllowed=true;$claimError=true;
+try{$reject();throw new RuntimeException('Private authority failure accepted');}catch(SoSecurity\Exception\DependencyException $error){Check::same('outbox.authority',$error->reason());Check::same(null,$error->getPrevious());Check::same(false,strpos($error->getMessage(),'private-')!==false);}$claimError=false;
+$wrong=substr($originalToken,0,-1).(substr($originalToken,-1)==='0'?'1':'0');
+foreach([['tenant','other','worker',$originalToken,'smtp.recipient_refused'],['tenant','initial','other',$originalToken,'smtp.recipient_refused'],['tenant','initial','worker',$wrong,'smtp.recipient_refused'],['tenant','initial','worker',$originalToken,'smtp.other']] as $args){Check::throws(SoSecurity\Exception\ConfigurationException::class,static function()use($queue,$policy,$rejectPermission,$args){$queue->rejectFor($policy,$rejectPermission,...$args);});}
+Check::same(false,$queue->rejectFor($policy,$permissionReject($wrong),'tenant','initial','worker',$wrong,'smtp.recipient_refused'));Check::same($beforeReject,$witness->inspect(static function():bool{return true;}));Check::same($rowsBefore,$pdo->query('SELECT * FROM sosecurity_outbox_records ORDER BY order_no')->fetchAll(PDO::FETCH_ASSOC));
+$claimNested=static function()use($reject):void{Check::throws(SoSecurity\Exception\ConfigurationException::class,$reject);};Check::same(true,$reject());Check::same(null,$claimNested);
+$rows=$pdo->query('SELECT * FROM sosecurity_outbox_records ORDER BY order_no')->fetchAll(PDO::FETCH_ASSOC);Check::same('dead',$rows[0]['status']);Check::same(1,(int)$rows[0]['payload_present']);Check::same($rowsBefore[0]['payload_body'],$rows[0]['payload_body']);Check::same('smtp.recipient_refused',$rows[0]['last_error']);Check::same(0,(int)$rows[0]['manual_retries']);Check::same(1,(int)$rows[0]['attempts']);Check::same(1,(int)$rows[0]['generation']);Check::same(0,(int)$rows[0]['lease_until']);Check::same(0,(int)$rows[0]['sent_at']);Check::same($clock->time,(int)$rows[0]['available_at']);Check::same($rowsBefore[1],$rows[1]);Check::same($rowsBefore[2],$rows[2]);
+$current=$witness->inspect(static function():bool{return true;});Check::same('current',$current['status']);Check::same('outbox.reject',$current['intent']['action']);Check::same(false,strpos(json_encode($current),$originalToken)!==false);Check::same(false,strpos(json_encode($current),'private-owned-body')!==false);
+// Only inspect the already-terminated result: no new attempt or unknown receipt is resumed.
+Check::same(false,$reject());Check::same($current,$witness->inspect(static function():bool{return true;}));Check::same($rows,$pdo->query('SELECT * FROM sosecurity_outbox_records ORDER BY order_no')->fetchAll(PDO::FETCH_ASSOC));
+$rejectPhase=false;Check::same(null,$queue->claimInitialFor($policy,$permissionFor($id),'tenant','initial','worker',$id));Check::same($current,$witness->inspect(static function():bool{return true;}));Check::same($rows,$pdo->query('SELECT * FROM sosecurity_outbox_records ORDER BY order_no')->fetchAll(PDO::FETCH_ASSOC));
+echo 'PASS native known-rejection termination: '.Check::$assertions.' assertions PHP '.PHP_VERSION.'; no transport, takeover or continuation'.PHP_EOL;

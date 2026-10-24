@@ -14,7 +14,7 @@ final class QuarantineState
             'retry_seconds' => 60, 'lifetime_seconds' => 86400, 'scan_milliseconds' => 30000];
         $limits = ['maximum_entries' => [1, 64], 'maximum_total_bytes' => [1, 1073741824], 'maximum_attempts' => [1, 10], 'lease_seconds' => [2, 300],
             'retry_seconds' => [1, 86400], 'lifetime_seconds' => [60, 2592000], 'scan_milliseconds' => [1, 30000]];
-        if (array_diff(array_keys($values), array_keys($defaults))) { throw new ConfigurationException('Unknown quarantine option.', 'configuration.quarantine'); }
+        if (count($values) > count($defaults) || array_diff(array_keys($values), array_keys($defaults))) { throw new ConfigurationException('Unknown quarantine option.', 'configuration.quarantine'); }
         $values += $defaults; $result = [];
         foreach ($defaults as $name => $unused) {
             if (!is_int($values[$name]) || $values[$name] < $limits[$name][0] || $values[$name] > $limits[$name][1]) {

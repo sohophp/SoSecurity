@@ -29,7 +29,7 @@ final class SessionSecurity
         if (!extension_loaded('session')) {
             throw new \SoSecurity\Exception\DependencyException('Native session helpers require ext-session.', 'dependency.session');
         }
-        if (array_diff(array_keys($overrides), ['path', 'domain', 'lifetime'])) {
+        if (count($overrides) > 3 || array_diff(array_keys($overrides), ['path', 'domain', 'lifetime'])) {
             throw new \SoSecurity\Exception\ConfigurationException('Unknown session cookie setting.');
         }
         $params = array_merge(session_get_cookie_params(), $overrides);

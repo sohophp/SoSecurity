@@ -81,18 +81,31 @@ final class LinkRegistry
     /** Metadata check for an already authenticated federated session; never use this as login proof. */
     public function matchesCurrentLink(string $scope, string $issuer, string $remote, Account $account): bool
     {
+        return $this->currentBinding($scope, $issuer, $remote, $account) !== null;
+    }
+
+    /** Current exact link fingerprint, not an authentication proof. Changes after unlink/relink. */
+    public function currentBinding(string $scope, string $issuer, string $remote, Account $account): ?string
+    {
         Guard::label($scope);
         if ($account->scope() !== $scope || !$account->enabled() || $issuer === '' || strlen($issuer) > 2048
-            || $remote === '' || strlen($remote) > 255) { return false; }
-        $row = $this->store->transact($this->pairKey($scope, $issuer, $remote), function ($old) {
+            || $remote === '' || strlen($remote) > 255) { return null; }
+        $key = $this->pairKey($scope, $issuer, $remote);
+        $row = $this->store->transact($key, function ($old) {
             return new Change($old, 0, $this->read($old));
         });
         if ($row === null || $row['scope'] !== $scope || $row['issuer'] !== $issuer || $row['remote'] !== $remote
             || $row['subject'] !== $account->subject() || !hash_equals($row['fingerprint'], $account->fingerprint())) {
-            return false;
+            return null;
         }
         $current = $this->current($scope, $account->subject());
-        return $current !== null && hash_equals($current->fingerprint(), $account->fingerprint());
+        if ($current === null || !hash_equals($current->fingerprint(), $account->fingerprint())) { return null; }
+        $latest = $this->store->transact($key, function ($old) {
+            return new Change($old, 0, $this->read($old));
+        });
+        if ($latest !== $row) { return null; }
+        return hash('sha256', json_encode([$row['scope'], $row['issuer'], $row['remote'], $row['subject'],
+            $row['fingerprint'], $row['created'], $row['binding'] ?? null]));
     }
 
     /** Exact unlink still requires fresh local proof; recovery without the provider needs separate strong approval. */
@@ -138,12 +151,15 @@ final class LinkRegistry
             throw new SecurityException('External identity belongs to another local account.', 'federation.link_conflict');
         }
         // Approval is deliberately outside AtomicStore::transact(), whose callback may be retried.
-        if ($approveRecovery($scope, $subject, $issuer, $remoteSubject,
+        try { $approved = $approveRecovery($scope, $subject, $issuer, $remoteSubject,
             ['linked_at' => $original['created'], 'linked_fingerprint' => $original['fingerprint'],
                 'current_fingerprint' => $account->fingerprint(),
-                'binding_id' => $original['binding'] ?? null]) !== true) {
+                'binding_id' => $original['binding'] ?? null]) === true; }
+        catch (\Throwable $error) { $approved = false; }
+        if (!$approved) {
             throw new SecurityException('Independent federation recovery approval is required.', 'federation.recovery_denied');
         }
+        $this->guard('federation_recovery_unlink_current', $scope);
         $current = $this->localProof($scope, $subject, $localSessionToken);
         if (!hash_equals($account->fingerprint(), $current->fingerprint())) {
             throw new SecurityException('Local identity changed during federation recovery.', 'federation.local_proof');
@@ -155,6 +171,67 @@ final class LinkRegistry
             }
             return new Change(null, 0, true);
         });
+    }
+
+    /** Bounded exact-target unlink. All approval precedes writes; separate keys are NOT an atomic batch. */
+    public function unlinkBatch(string $scope, string $subject, $localSessionToken, array $targets, callable $approve): array
+    {
+        $this->guard('federation_unlink_batch', $scope);
+        Guard::label($subject);
+        if (count($targets) < 1 || count($targets) > 32 || array_keys($targets) !== range(0, count($targets) - 1)) {
+            throw new SecurityException('Use 1-32 explicit federation targets.', 'federation.batch_targets');
+        }
+        $pairs = []; $keys = [];
+        foreach ($targets as $target) {
+            if (!is_array($target) || count($target) !== 2 || !isset($target['issuer'], $target['subject'])
+                || !is_string($target['issuer']) || strlen($target['issuer']) > 2048
+                || preg_match('/\Ahttps:\/\/[^\x00-\x20\x7f]+\z/D', $target['issuer']) !== 1
+                || !is_string($target['subject']) || strlen($target['subject']) > 255
+                || preg_match('/\A[\x21-\x7e]+\z/D', $target['subject']) !== 1) {
+                throw new SecurityException('Invalid federation batch target.', 'federation.batch_targets');
+            }
+            // Explicit projection detaches caller references before any host callback can run.
+            $issuer = $target['issuer']; $remote = $target['subject'];
+            $key = $this->pairKey($scope, $issuer, $remote);
+            if (isset($keys[$key])) { throw new SecurityException('Duplicate federation batch target.', 'federation.batch_targets'); }
+            $keys[$key] = true; $pairs[] = ['key' => $key, 'issuer' => $issuer, 'remote' => $remote];
+        }
+        $account = $this->localProof($scope, $subject, $localSessionToken);
+        $originals = []; $manifest = [];
+        foreach ($pairs as $pair) {
+            $row = $this->store->transact($pair['key'], function ($old) { return new Change($old, 0, $this->read($old)); });
+            if ($row !== null && ($row['scope'] !== $scope || $row['subject'] !== $subject
+                || $row['issuer'] !== $pair['issuer'] || $row['remote'] !== $pair['remote'])) {
+                throw new SecurityException('Batch target belongs to another local account.', 'federation.link_conflict');
+            }
+            $originals[] = $row;
+            $manifest[] = ['issuer' => $pair['issuer'], 'subject' => $pair['remote'], 'exists' => $row !== null,
+                'linked_at' => $row['created'] ?? null, 'linked_fingerprint' => $row['fingerprint'] ?? null,
+                'binding_id' => $row['binding'] ?? null, 'current_fingerprint' => $account->fingerprint()];
+        }
+        try { $allowed = $approve($scope, $subject, $manifest) === true; }
+        catch (\Throwable $error) { $allowed = false; }
+        if (!$allowed) { throw new SecurityException('Independent approval of the exact federation batch is required.', 'federation.batch_denied'); }
+        // Detect known changes to ANY target before deleting the first. Each write also compares its exact row.
+        foreach ($pairs as $index => $pair) {
+            $row = $this->store->transact($pair['key'], function ($old) { return new Change($old, 0, $this->read($old)); });
+            if ($row !== $originals[$index]) { throw new SecurityException('Federation batch changed during approval.', 'federation.link_conflict'); }
+        }
+        $results = [];
+        foreach ($pairs as $index => $pair) {
+            $this->guard('federation_unlink_batch_current', $scope);
+            $current = $this->localProof($scope, $subject, $localSessionToken);
+            if (!hash_equals($account->fingerprint(), $current->fingerprint())) {
+                throw new SecurityException('Local identity changed during batch unlink.', 'federation.local_proof');
+            }
+            $original = $originals[$index];
+            $results[] = $this->store->transact($pair['key'], function ($old) use ($original) {
+                $row = $this->read($old);
+                if ($row !== $original) { throw new SecurityException('Federation batch target changed before unlink.', 'federation.link_conflict'); }
+                return new Change(null, 0, $row !== null);
+            });
+        }
+        return $results;
     }
 
     private function localProof(string $scope, string $subject, $token): Account
@@ -202,7 +279,7 @@ final class LinkRegistry
     private function read($value): ?array
     {
         if ($value === null) { return null; }
-        if (!is_array($value)) { throw new StorageException('Corrupt federation link.', 'storage.corrupt'); }
+        if (!is_array($value) || count($value) > 8) { throw new StorageException('Corrupt federation link.', 'storage.corrupt'); }
         $keys = array_keys($value); sort($keys);
         $legacy = $value['v'] ?? null;
         if (($legacy === 1 && $keys !== ['created', 'fingerprint', 'issuer', 'remote', 'scope', 'subject', 'v'])

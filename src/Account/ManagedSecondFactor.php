@@ -9,6 +9,9 @@ final class ManagedSecondFactor implements SecondFactor
 {
     private $read;
     public function __construct(FactorRegistry $registry) {$this->read=static function()use($registry):FactorRegistry{return $registry;};}
+    public function usesRegistry(FactorRegistry $registry):bool{return ($this->read)()===$registry;}
+    public function ledgerPolicy(\SoSecurity\Support\HmacKeys $keys):?Policy{return ($this->read)()->ledgerPolicy($keys);}
+    public function matchesStatePolicy(\SoSecurity\Mfa\TotpFactors $factors,\PDO $pdo,string $site,string $scope,string $epoch,\SoSecurity\Support\Clock $clock):bool{return ($this->read)()->matchesStatePolicy($factors,$pdo,$site,$scope,$epoch,$clock);}
     public function binding(string $scope,string $subject):?string {return ($this->read)()->binding($scope,$subject);}
     public function verify(string $scope,string $subject,string $expectedBinding,$proof):?string {return ($this->read)()->verify($scope,$subject,$expectedBinding,$proof);}
     public function __debugInfo():array {return ['managed_second_factor'=>'[redacted]'];}

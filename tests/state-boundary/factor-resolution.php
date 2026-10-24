@@ -1,0 +1,28 @@
+<?php
+declare(strict_types=1);
+require __DIR__.'/factor-resolution-support.php';
+$modes=['before','after','partial','repeat'];
+foreach($modes as $mode){factorContainmentCase(static function(EntryEnvironment $x,EntryEnvironment $op,SoSecurity\Account\StateRetirementControl $control)use($mode):void{
+    list($next,$token,$inventory)=factorContainmentSetup($x,$op,$control);$page=$inventory->page('user');$positions=[1];foreach($page['slots'] as $slot){if($slot['origin']==='recovery'&&$slot['scope']!=='tenant'){$positions[]=$slot['position'];break;}}Check::same(2,count($positions));
+    $original=$next->inspect('witnessBudget');$calls=0;$expected=$mode==='before'?1:($mode==='after'?2:3);
+    $plan=factorContainmentPlan($x,$next,$inventory,$positions,static function($h)use($x,&$calls,$expected):bool{++$calls;return $calls===$expected?false:witnessPersist($h,$x->e->directory.'/factors');});
+    $prepared=$plan->prepared();$review=$next->factorContainmentReview($plan,$control,'user',$token,'witnessBudget');list($token,$grant)=factorContainmentApproval($op,$control,$review,$token);
+    witnessReason('account.completion_unknown',static function()use($next,$plan,$review,$control,$token,$grant):void{$next->containFactors($review,$plan,$control,'user',$token,$grant,'witnessBudget');});
+    $pending=$next->inspect('witnessBudget');Check::same('pending',$pending['remediation']['phase']);Check::same($prepared['manifest'],$pending['remediation']['manifest']);Check::same(true,SoSecurity\Account\StateFactorManifest::valid($pending['remediation']['manifest']));Check::same(false,strpos(json_encode($pending['remediation']['manifest']),'enabled')!==false);
+    $manifest=$pending['remediation']['manifest'];$files=[];foreach($manifest['entries'] as $entry){$files[$entry['file']]=factorRaw($x,$entry['file']);}
+    unset($plan,$inventory,$prepared);$next=factorResolutionReload($x,$next);Check::same($pending,$next->inspect('witnessBudget'));
+    $plan=factorResolutionPlan($x,$next,$manifest);Check::throws(SoSecurity\Exception\ConfigurationException::class,static function()use($plan,$next):void{$plan->apply($next,str_repeat('a',64),new SoSecurity\Support\Deadline(30000));});
+    $resolution=$next->factorResolutionReview($plan,$control,'user',$token,'witnessBudget');Check::same('resolve_factors',$resolution->metadata()['purpose']);Check::same(1,$resolution->metadata()['sequence']);list($token,$freshGrant)=factorResolutionApproval($op,$control,$resolution,$token);
+    Check::throws(SoSecurity\Exception\SecurityException::class,static function()use($next,$resolution,$plan,$control,$token,$grant):void{$next->resolveFactors($resolution,$plan,$control,'user',$token,$grant,'witnessBudget');});Check::same($pending,$next->inspect('witnessBudget'));foreach($files as $file=>$bytes){Check::same($bytes,factorRaw($x,$file));}
+    if($mode==='repeat'){
+        $attempts=0;$failing=factorResolutionPlan($x,$next,$manifest,static function($h)use($x,&$attempts):bool{++$attempts;return $attempts===3?false:witnessPersist($h,$x->e->directory.'/factors');});
+        witnessReason('account.completion_unknown',static function()use($next,$resolution,$failing,$control,$token,$freshGrant):void{$next->resolveFactors($resolution,$failing,$control,'user',$token,$freshGrant,'witnessBudget');});$again=$next->inspect('witnessBudget');Check::same('pending',$again['remediation']['phase']);Check::same(1,$again['remediation']['resolution']['review']['sequence']);
+        witnessReason('account.factor_resolution_changed',static function()use($next,$resolution,$plan,$control,$token,$freshGrant):void{$next->resolveFactors($resolution,$plan,$control,'user',$token,$freshGrant,'witnessBudget');});
+        $next=factorResolutionReload($x,$next);$plan=factorResolutionPlan($x,$next,$manifest);$resolution=$next->factorResolutionReview($plan,$control,'user',$token,'witnessBudget');Check::same(2,$resolution->metadata()['sequence']);list($token,$freshGrant)=factorResolutionApproval($op,$control,$resolution,$token);
+    }
+    $receipt=$next->resolveFactors($resolution,$plan,$control,'user',$token,$freshGrant,'witnessBudget');Check::same('quarantined',$receipt['status']);Check::same('complete',$receipt['remediation']['phase']);Check::same($original['digest'],$receipt['digest']);Check::same($original['intent'],$receipt['intent']);Check::same($original['successor'],$receipt['successor']);Check::same($manifest,$receipt['remediation']['manifest']);Check::same($review->metadata(),$receipt['remediation']['review']);Check::same($resolution->metadata(),$receipt['remediation']['resolution']['review']);Check::same($x->source->digest(),$receipt['remediation']['after']);
+    foreach($manifest['entries'] as $entry){Check::same($entry['after'],factorRaw($x,$entry['file']));Check::same(null,json_decode(factorRaw($x,$entry['file']),true)['value']['payload']);}
+    witnessReason('account.factor_resolution_state',static function()use($next,$resolution,$plan,$control,$token,$freshGrant):void{$next->resolveFactors($resolution,$plan,$control,'user',$token,$freshGrant,'witnessBudget');});Check::same($receipt,$next->inspect('witnessBudget'));
+    $called=0;witnessReason('account.witness_pending',static function()use($next,&$called):void{$next->work(static function()use(&$called):void{++$called;},'witnessBudget',$next->internalOperation('owned.not.activated'));});Check::same(0,$called);Check::same([],glob($x->e->directory.'/factors/.contain-*'));
+});}
+echo 'PASS independently approved durable physical resolution: '.Check::$assertions.' assertions PHP '.PHP_VERSION."; exact manifests, partial effects, fresh reader, new approvals, repeated unknown attempts, quarantine retained\n";

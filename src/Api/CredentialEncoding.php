@@ -10,7 +10,7 @@ final class CredentialEncoding
 {
     public static function scopes(array $scopes,bool $empty=false):array
     {
-        if(array_values($scopes)!==$scopes||(!$empty&&!$scopes)||count($scopes)>32){throw new ValidationException('Expected a bounded credential-scope list.','api_credentials.scopes');}
+        if(count($scopes)>32||(!$empty&&!$scopes)||array_values($scopes)!==$scopes){throw new ValidationException('Expected a bounded credential-scope list.','api_credentials.scopes');}
         try{$copy=Identity::validateScopes($scopes);}catch(\InvalidArgumentException $error){throw new ValidationException('Invalid credential scope.','api_credentials.scopes');}
         if(count($copy)!==count($scopes)){throw new ValidationException('Duplicate credential scopes.','api_credentials.scopes');}sort($copy);return $copy;
     }

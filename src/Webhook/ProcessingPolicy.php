@@ -9,9 +9,11 @@ final class ProcessingPolicy
     private $options;
     public function __construct(array $options=[])
     {
-        $copy=[];foreach($options as $name=>$value){if($name==='backoff'&&is_array($value)){$steps=[];foreach($value as $index=>$step){$steps[$index]=$step;}$copy[$name]=$steps;}else{$copy[$name]=$value;}}$options=$copy;
         $defaults=['maximum_attempts'=>5,'maximum_manual_retries'=>3,'lease_seconds'=>60,'backoff'=>[1,5,30,120],'io_milliseconds'=>10000];
-        if(array_diff(array_keys($options),array_keys($defaults))){throw new ConfigurationException('Unknown webhook processing policy.','configuration.webhook_processing');}$options+=$defaults;
+        if(count($options) > count($defaults) || array_diff(array_keys($options),array_keys($defaults))){throw new ConfigurationException('Unknown webhook processing policy.','configuration.webhook_processing');}
+        if(isset($options['backoff']) && is_array($options['backoff']) && count($options['backoff']) > 20){throw new ConfigurationException('Provide bounded retry delays.','configuration.webhook_processing');}
+        $copy=[];foreach($options as $name=>$value){if($name==='backoff'&&is_array($value)){$steps=[];foreach($value as $index=>$step){$steps[$index]=$step;}$copy[$name]=$steps;}else{$copy[$name]=$value;}}$options=$copy;
+        $options+=$defaults;
         foreach(['maximum_attempts'=>[1,20],'maximum_manual_retries'=>[0,8],'lease_seconds'=>[1,900],'io_milliseconds'=>[1,30000]] as $key=>$bounds){if(!is_int($options[$key])||$options[$key]<$bounds[0]||$options[$key]>$bounds[1]){throw new ConfigurationException('Invalid bounded webhook processing policy.','configuration.webhook_processing');}}
         if(!is_array($options['backoff'])||!$options['backoff']||count($options['backoff'])>20||array_values($options['backoff'])!==$options['backoff']){throw new ConfigurationException('Provide bounded retry delays.','configuration.webhook_processing');}
         $last=0;foreach($options['backoff'] as $step){if(!is_int($step)||$step<1||$step>86400||$step<$last){throw new ConfigurationException('Retry delays must be increasing positive seconds.','configuration.webhook_processing');}$last=$step;}

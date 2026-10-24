@@ -23,10 +23,14 @@ final class CompositeStateSnapshot implements StateStoreSource
     }
     /** @return never */
     private static function configuration():void{throw new ConfigurationException('Use fixed named state sources on the exact same PDO.','configuration.state_snapshot');}
-    public function storageDomains():array{$d=($this->dependencies)();$domains=[];foreach($d[1] as $source){if(!$source instanceof SqlStateSnapshot&&!$source instanceof FileStateSnapshot){self::configuration();}foreach($source->storageDomains() as $v){$domains[]=$v;}}return $domains;}
+    public function storageDomains():array{$d=($this->dependencies)();$domains=[];foreach($d[1] as $source){if(!$source instanceof SqlStateSnapshot&&!$source instanceof FileStateSnapshot&&!$source instanceof KeyRingStateSnapshot&&!$source instanceof WebhookStateSnapshot&&!$source instanceof FenceStateSnapshot&&!$source instanceof QuarantineStateSnapshot){self::configuration();}foreach($source->storageDomains() as $v){$domains[]=$v;}}return $domains;}
     public function connection():PDO{return (($this->dependencies)())[0];}
     public function fingerprint():string{return $this->fingerprint;}
     public function contains(string $name,StateSnapshot $source):bool{$d=($this->dependencies)();return isset($d[1][$name])&&$d[1][$name]===$source&&$source->connection()===$d[0]&&$source->fingerprint()===$d[2][$name];}
+    public function coversFence(LocalEpochFence $fence):bool
+    {
+        foreach((($this->dependencies)())[1] as $source){if($source instanceof FenceStateSnapshot&&$source->coversFence($fence)){return true;}}return false;
+    }
     public function coversStore(\SoSecurity\Storage\AtomicStore $store):bool
     {
         $d=($this->dependencies)();foreach($d[1] as $name=>$source){if($source->connection()!==$d[0]||$source->fingerprint()!==$d[2][$name]){self::configuration();}if($source instanceof StateStoreSource&&$source->coversStore($store)){return true;}}return false;
@@ -50,7 +54,7 @@ final class CompositeStateSnapshot implements StateStoreSource
     {
         if($this->busy){throw new StorageException('State snapshot is already active.','account.snapshot_busy');}
         if(count($selectors)<1||count($selectors)>4){self::configuration();}$d=($this->dependencies)();$copy=[];
-        foreach($d[1] as $name=>$source){if(!$source instanceof SqlStateSnapshot&&!$source instanceof FileStateSnapshot){self::configuration();}}
+        foreach($d[1] as $name=>$source){if(!$source instanceof SqlStateSnapshot&&!$source instanceof FileStateSnapshot&&!$source instanceof KeyRingStateSnapshot&&!$source instanceof WebhookStateSnapshot&&!$source instanceof FenceStateSnapshot&&!$source instanceof QuarantineStateSnapshot){self::configuration();}}
         // Normalize every child before opening any SQL snapshot or scratch directory.
         foreach($selectors as $name=>$request){if(!is_string($name)||!isset($d[1][$name])||!is_array($request)){self::configuration();}$source=$d[1][$name];if(!$source instanceof SqlStateSnapshot&&!$source instanceof FileStateSnapshot){self::configuration();}$copy[$name]=$source->selections($request);}
         $this->busy=true;

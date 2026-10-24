@@ -17,9 +17,10 @@ final class Captcha
     private $ttl;
     private $attempts;
     private $capacity;
+    private $state;
 
     public function __construct(AtomicStore $store, int $ttl = 300, int $attempts = 3,
-        int $capacity = 4, ?Clock $clock = null)
+        int $capacity = 4, ?Clock $clock = null, ?\SoSecurity\Account\StateProofConnection $state = null)
     {
         Guard::duration($ttl);
         if ($attempts < 1 || $attempts > 10 || $capacity < 1 || $capacity > 16) {
@@ -30,6 +31,14 @@ final class Captcha
         $this->attempts = $attempts;
         $this->capacity = $capacity;
         $this->clock = $clock ?? new SystemClock();
+        if ($state !== null) { $state->validate($store, $this->clock); }
+        $this->state = $state;
+    }
+
+    private function transact(string $action,string $scope,string $binding,callable $callback,int &$until)
+    {
+        return $this->state === null ? $this->store->transact(Guard::key('captcha',$scope,$binding),$callback)
+            : $this->state->transact('captcha',$action,$scope,$binding,$callback,$until);
     }
 
     public function arithmetic(string $scope, string $binding, string $operation = 'add'): Challenge
@@ -105,11 +114,12 @@ final class Captcha
     {
         $key = Guard::key('captcha', $scope, $binding);
         $id = bin2hex(random_bytes(16));
-        $now = $this->clock->now();
+        $now = $this->state === null ? $this->clock->now() : $this->state->now();
+        $until = $now + $this->ttl;
         $record = ['digest' => hash('sha256', $id . ':' . $answer),
             'expires' => $now + $this->ttl, 'remaining' => $this->attempts];
         if ($accepted) { $record['alternatives'] = array_map(function (string $candidate) use ($id): string { return hash('sha256', $id . ':' . $candidate); }, $accepted); }
-        $this->store->transact($key, function (?array $state) use ($id, $record, $now) {
+        $this->transact('issue', $scope, $binding, function (?array $state) use ($id, $record, $now) {
             $this->validateState($state);
             $state = array_filter($state ?? [], function ($item) use ($now) { return $item['expires'] > $now; });
             while (count($state) >= $this->capacity) {
@@ -117,7 +127,7 @@ final class Captcha
             }
             $state[$id] = $record;
             return new Change($state, max(array_column($state, 'expires')), null);
-        });
+        }, $until);
         return new Challenge($id, $prompt, $image, $record['expires'], $presentation);
     }
 
@@ -128,8 +138,10 @@ final class Captcha
             return false;
         }
         $answer = is_string($answer) && strlen($answer) <= 32 ? strtoupper(trim($answer)) : '';
-        $now = $this->clock->now();
-        return $this->store->transact($key, function (?array $state) use ($id, $answer, $now) {
+        $now = $this->verificationTime();
+        $matchedExpiry = 0;
+        $valid = $this->transact('verify', $scope, $binding, function (?array $state) use ($id, $answer, $now, &$matchedExpiry) {
+            $matchedExpiry = 0;
             $this->validateState($state);
             $state = array_filter($state ?? [], function ($item) use ($now) { return $item['expires'] > $now; });
             $valid = false;
@@ -137,20 +149,36 @@ final class Captcha
                 $digest = hash('sha256', $id . ':' . $answer);
                 $valid = hash_equals($state[$id]['digest'], $digest);
                 foreach ($state[$id]['alternatives'] ?? [] as $candidate) { $valid = hash_equals($candidate, $digest) || $valid; }
+                if ($valid) { $matchedExpiry = $state[$id]['expires']; }
                 if ($valid || --$state[$id]['remaining'] <= 0) {
                     unset($state[$id]);
                 }
             }
             return new Change($state ?: null, $state ? max(array_column($state, 'expires')) : 0, $valid);
-        });
+        }, $matchedExpiry);
+        $completed = $this->verificationTime();
+        if ($completed < $now) {
+            throw new StorageException('CAPTCHA verification clock moved backwards.', 'captcha.clock');
+        }
+        return $valid === true && $matchedExpiry > $completed;
+    }
+
+    private function verificationTime(): int
+    {
+        if ($this->state !== null) { return $this->state->now(); }
+        try { $now = $this->clock->now(); }
+        catch (\Throwable $error) { throw new StorageException('CAPTCHA verification clock unavailable.', 'captcha.clock'); }
+        if ($now < 0) { throw new StorageException('Invalid CAPTCHA verification time.', 'captcha.clock'); }
+        return $now;
     }
 
     /** Refresh invalidates all existing challenges for this binding and scope. */
     public function revoke(string $scope, string $binding): void
     {
-        $this->store->transact(Guard::key('captcha', $scope, $binding), function () {
+        $until = 0;
+        $this->transact('revoke', $scope, $binding, function () {
             return new Change(null, 0, null);
-        });
+        }, $until);
     }
 
     private function validateState(?array $state): void

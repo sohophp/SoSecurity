@@ -5,6 +5,8 @@ const assert=require('node:assert/strict');
   const browser=await chromium.launch({headless:true});
   const context=await browser.newContext({viewport:{width:390,height:844}});const page=await context.newPage();
   const base=process.argv[2] || 'http://72.rocky.wsl/SoSecurity/';const origin=new URL(base).origin;const external=[];const errors=[];
+  // Never send malformed-output requests to an external host during this local test.
+  await context.route('**/*',route=>new URL(route.request().url()).origin===origin?route.continue():route.abort());
   page.on('request',request=>{if(!request.url().startsWith(origin+'/')&&!request.url().startsWith('data:'))external.push(request.url());});
   page.on('pageerror',error=>errors.push(error.message));
   try {

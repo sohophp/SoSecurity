@@ -1,0 +1,12 @@
+<?php
+declare(strict_types=1);
+require __DIR__.'/admission-capacity-support.php';
+foreach(['links'=>'link.capacity','reset'=>'reset.capacity','grants'=>'operation.capacity','api'=>'api_credentials.capacity'] as $kind=>$reason){
+    capacityCase(static function(EntryEnvironment $x,string $session)use($kind,$reason):void{
+        $allowed=false;$issue=capacityIssuer($x,$session,$kind,static function()use(&$allowed):bool{return $allowed;});$fill=capacityFill($x);$before=permissionState($x);$persists=0;$x->persistHook=static function()use(&$persists):bool{++$persists;return true;};$error=null;try{$issue();}catch(SoSecurity\Exception\SecurityException $caught){$error=$caught;}finally{$x->persistHook=null;}Check::same(true,$error instanceof SoSecurity\Exception\SecurityException);Check::same(false,$error->reason()===$reason);Check::same(0,$persists);Check::same($before,permissionState($x));$allowed=true;grantNoEffect($x,$issue,$reason);Check::same(8,count(glob($x->e->directory.'/factors/*.json')));$filler=$x->store->snapshotReference($fill[0]);$expired=file_get_contents($x->e->directory.'/factors/'.$filler['file']);Check::same(1,json_decode($expired,true)['expires']);capacityRelease($x,$fill[0]);Check::same(7,count(glob($x->e->directory.'/factors/*.json')));Check::same(false,$issue()===null);Check::same(8,count(glob($x->e->directory.'/factors/*.json')));Check::same('current',$x->inspect()['status']);Check::same($x->source->digest(),$x->inspect()['digest']);
+    });
+    capacityCase(static function(EntryEnvironment $x,string $session)use($kind):void{
+        $issue=capacityIssuer($x,$session,$kind);Check::same(false,$issue()===null);$fill=capacityFill($x);$before=businessRows($x);$revision=$x->inspect()['revision'];$expired=$x->store->snapshotReference($fill[0]);$bytes=file_get_contents($x->e->directory.'/factors/'.$expired['file']);Check::same(false,$issue()===null);Check::same(8,count(glob($x->e->directory.'/factors/*.json')));Check::same('current',$x->inspect()['status']);Check::same($revision+1,$x->inspect()['revision']);Check::same($bytes,file_get_contents($x->e->directory.'/factors/'.$expired['file']));Check::same($before,businessRows($x));Check::same($x->source->digest(),$x->inspect()['digest']);
+    });
+}
+echo 'PASS native physical admission capacity: '.Check::$assertions.' assertions PHP '.PHP_VERSION."; four actual services, permission first, expired physical bytes count, no pending on new-file refusal, release/retry and existing-ledger updates at full capacity\n";

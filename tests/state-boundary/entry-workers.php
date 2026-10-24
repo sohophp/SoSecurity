@@ -1,0 +1,31 @@
+<?php
+declare(strict_types=1);
+require __DIR__.'/entry-support.php';
+entryCase(static function(EntryEnvironment $x):void{
+    $e=$x->e;$login=$x->login();$dir=$e->directory.'/entry-next-fence';if(!is_dir($dir)){mkdir($dir,0700);}$next=new SoSecurity\Account\LocalEpochFence($dir,'managed-test','tenant',str_repeat('e',64),$e->keys,static function($h)use($dir):bool{return witnessPersist($h,$dir);},5000,$x->boundary);
+    Check::same(true,$next->requiresStateBoundary());Check::same(true,$next->matches('managed-test','tenant',str_repeat('e',64)));Check::same(false,$x->fence->sameStateBoundary($next));
+    $queries=$e->pdo->queries;$called=false;
+    witnessReason('account.state_required',static function()use($next):void{$next->initialize();});
+    witnessReason('account.state_required',static function()use($next,&$called):void{$next->work(static function()use(&$called):void{$called=true;});});
+    witnessReason('account.state_required',static function()use($next,&$called):void{$next->drain(static function()use(&$called):void{$called=true;});});
+    Check::same(false,$called);Check::same($queries,$e->pdo->queries);
+    $trusted=workerWitness($e,$x->fence);$approvalPhases=[];$audit=static function(array $context,string $operation)use($e):bool{$q=$e->pdo->prepare('INSERT INTO entry_worker_audit VALUES(?,?)');$q->execute([$operation,hash('sha256',json_encode($context))]);$q->closeCursor();return true;};
+    $result=$x->boundary->run('workers.handoff',static function()use($x,$next,$trusted,$audit,&$approvalPhases):array{$next->initialize();return $x->recovery->rotateWorkers($next,$trusted,'owned-entry-operator',static function(string $phase)use(&$approvalPhases):bool{$approvalPhases[]=$phase;return true;},$audit);});
+    Check::same(true,$result['changed']);Check::same(1,(int)$e->observer->query('SELECT COUNT(*) FROM entry_worker_audit')->fetchColumn());Check::same(true,in_array('authorize',$approvalPhases,true));Check::same(true,in_array('commit',$approvalPhases,true));
+    witnessReason('factor.fence_closed',static function()use($x):void{$x->fence->work(static function():bool{return true;});});
+    $migration=lifecycleRebind($e,$next,lifecycleRaw($e));$queries=$e->pdo->queries;
+    witnessReason('account.state_required',static function()use($e):void{$e->registry->current('user');});
+    witnessReason('account.state_required',static function()use($e):void{$e->factors->status('tenant','user');});Check::same($queries,$e->pdo->queries);
+    $receipts=[];$rawRecovery=workerService($e,$next,$receipts);
+    witnessReason('account.state_required',static function()use($rawRecovery):void{$rawRecovery->initialize();});witnessReason('account.state_required',static function()use($rawRecovery):void{$rawRecovery->begin('user','owned-source');});
+    $ops=$e->registry->operations($next,static function():bool{return true;},static function():bool{return true;},static function():bool{return true;},static function():bool{return true;});
+    witnessReason('account.state_required',static function()use($ops):void{$ops->review('regenerate','user','owned-source');});
+    $restoration=$e->registry->restoration($next,static function():bool{return true;},static function():bool{return true;},static function():bool{return true;},static function():bool{return true;},static function():bool{return true;});
+    witnessReason('account.state_required',static function()use($restoration):void{$restoration->review('user','owned-source');});
+    $authority=registeredProvider($e,$next);witnessReason('account.state_required',static function()use($authority,$e):void{$authority->assertCurrent($e->pdo);});Check::same($queries,$e->pdo->queries);
+    $slot=$x->boundary->run('factors.current',static function()use($e){return $e->registry->current('user');});Check::same(true,$slot->enabled());
+    $sessions=new SoSecurity\Auth\SessionRegistry($x->store,$x->provider,$e->registry->secondFactor(),$e->clock,1800,28800,16,$x->boundary);Check::same(true,$sessions->verify('tenant','user',$login->credential()->token(),2)!==null);
+    $receipts=[];$nextService=workerService($e,$next,$receipts);$unboundDir=$e->directory.'/entry-unbound';mkdir($unboundDir,0700);$unbound=new SoSecurity\Account\LocalEpochFence($unboundDir,'managed-test','tenant',str_repeat('e',64),$e->keys,static function($h)use($unboundDir):bool{return witnessPersist($h,$unboundDir);});
+    $before=$x->inspect();$queries=$e->pdo->queries;Check::throws(SoSecurity\Exception\ConfigurationException::class,static function()use($nextService,$unbound,$result,$audit):void{$nextService->rotateWorkers($unbound,$result['checkpoint'],'owned-entry-operator',static function():bool{return true;},$audit);});Check::same($queries,$e->pdo->queries);Check::same($before,$x->inspect());Check::same(false,$x->boundary->active());
+});
+echo 'PASS mandatory worker boundary: '.Check::$assertions.' assertions PHP '.PHP_VERSION."; strong approved legacy-to-bound handoff, old authority permanently closed, factor APIs blocked before SQL outside active witness and no downgrade to unbound authority\n";

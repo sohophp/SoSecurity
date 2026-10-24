@@ -19,6 +19,7 @@ final class SqlAccounts implements FactorMigrationRepository
     public function connection():PDO {return ($this->read)();}
     private function query(string $sql,array $values=[]):\PDOStatement
     {
+        \SoSecurity\Support\SqlStateAccess::assertActive($this->connection());
         $q=$this->connection()->prepare($sql);foreach($values as $name=>$value){$q->bindValue(':'.$name,$value,is_int($value)?PDO::PARAM_INT:($value===null?PDO::PARAM_NULL:PDO::PARAM_STR));}$q->execute();return $q;
     }
     private function select(string $where,array $values):?AccountRecord

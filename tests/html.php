@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 require __DIR__.'/bootstrap.php';
-require dirname(__DIR__).'/integrations/htmlpurifier/vendor/autoload.php';
+require $argv[1] ?? dirname(__DIR__).'/integrations/htmlpurifier/vendor/autoload.php';
 use SoSecurity\Output\HtmlCleaner;
 use SoSecurity\Output\HtmlPolicy;
 use SoSecurity\Output\HtmlPurifierSanitizer;

@@ -24,21 +24,49 @@ final class AuthenticationFlow
     private $ttl;
     private $lease;
     private $attempts;
+    private $boundary;
+    private $busy = false;
 
     public function __construct(AtomicStore $store, IdentityProvider $provider, SessionRegistry $sessions, callable $requestGuard,
-        ?SecondFactor $factor = null, ?Clock $clock = null, int $challengeTtl = 300, int $claimSeconds = 10, int $attempts = 5)
+        ?SecondFactor $factor = null, ?Clock $clock = null, int $challengeTtl = 300, int $claimSeconds = 10, int $attempts = 5, ?\SoSecurity\Account\StateBoundary $boundary = null)
     {
+        if($boundary===null&&($sessions->requiresStateBoundary()||$store instanceof \SoSecurity\Account\WitnessedStore||\SoSecurity\Storage\FileStateBoundary::protects($store))){throw new ConfigurationException('Protected authentication requires its exact state authority.','configuration.state_boundary');}
         if ($challengeTtl < 30 || $challengeTtl > 600 || $claimSeconds < 1 || $claimSeconds > 30
             || $attempts < 1 || $attempts > 10) { throw new ConfigurationException('Invalid authentication challenge budget.', 'configuration.authentication'); }
-        $this->store = $store; $this->provider = $provider; $this->sessions = $sessions; $this->guard = $requestGuard;
+        if($boundary!==null&&(!$sessions->boundTo($boundary)||!$requestGuard instanceof \SoSecurity\Account\StateRequestGuard)){throw new ConfigurationException('Authentication and sessions require one exact state authority.','configuration.state_boundary');}
+        $this->boundary=$boundary; $this->store = $boundary===null?$store:$boundary->protect($store); $this->provider = $provider; $this->sessions = $sessions; $this->guard = $requestGuard;
         $this->factor = $factor; $this->identities = new IdentityState($provider, $factor); $this->clock = $clock ?? new SystemClock();
         $this->ttl = $challengeTtl; $this->lease = $claimSeconds; $this->attempts = $attempts;
     }
 
-    /** Optional currentToken requests reauthentication of exactly that session, not a second independent login. */
-    public function password(string $scope, string $binding, $identifier, $password, string $label = '', $currentToken = null): LoginResult
+    public function password(string $scope,string $binding,$identifier,$password,string $label='',$currentToken=null): LoginResult
     {
-        $key = Guard::key('auth-pending', $scope, $binding); $this->guard('password', $scope);
+        if($this->boundary===null){return $this->passwordInternal($scope,$binding,$identifier,$password,$label,$currentToken);}
+        Guard::key('auth-pending',$scope,$binding);$this->boundary->assertScope($scope);$deadline=new \SoSecurity\Support\Deadline(30000);$this->publicGuard('password',$scope);
+        if(!is_string($identifier)||$identifier===''||strlen($identifier)>256||!preg_match('//u',$identifier)||preg_match('/[\x00-\x1f\x7f]/',$identifier)||!is_string($password)||$password===''||strlen($password)>4096||strpos($password,"\0")!==false){return new LoginResult('denied');}
+        if(strlen($label)>128||!preg_match('//u',$label)||preg_match('/[\x00-\x1f\x7f]/',$label)){throw new ConfigurationException('Invalid device label.','configuration.auth_sessions');}
+        if($currentToken!==null&&SessionRegistry::reference($currentToken)===null){return new LoginResult('denied');}
+        return $this->native('password',$scope,$deadline,function()use($scope,$binding,$identifier,$password,$label,$currentToken){return $this->passwordInternal($scope,$binding,$identifier,$password,$label,$currentToken,true);});
+    }
+    public function secondFactor(string $scope,string $binding,$challenge,$proof): LoginResult
+    {
+        if($this->boundary===null){return $this->secondFactorInternal($scope,$binding,$challenge,$proof);}
+        Guard::key('auth-pending',$scope,$binding);$this->boundary->assertScope($scope);$deadline=new \SoSecurity\Support\Deadline(30000);$this->publicGuard('second_factor',$scope);
+        if(!is_string($challenge)||!preg_match('/\A[a-f0-9]{64}\z/D',$challenge)){return new LoginResult('denied');}
+        if($this->factor===null){throw new ConfigurationException('No second-factor adapter is configured.','configuration.second_factor');}
+        return $this->native('second_factor',$scope,$deadline,function()use($scope,$binding,$challenge,$proof){return $this->secondFactorInternal($scope,$binding,$challenge,$proof,true);});
+    }
+    public function cancel(string $scope,string $binding): void
+    {
+        if($this->boundary===null){$this->cancelInternal($scope,$binding);return;}
+        Guard::key('auth-pending',$scope,$binding);$this->boundary->assertScope($scope);$deadline=new \SoSecurity\Support\Deadline(30000);$this->publicGuard('cancel',$scope);
+        $this->native('cancel',$scope,$deadline,function()use($scope,$binding):void{$this->cancelInternal($scope,$binding,true);});
+    }
+
+    /** Optional currentToken requests reauthentication of exactly that session, not a second independent login. */
+    private function passwordInternal(string $scope, string $binding, $identifier, $password, string $label = '', $currentToken = null,bool $admitted=false): LoginResult
+    {
+        $key = Guard::key('auth-pending', $scope, $binding); if(!$admitted){$this->guard('password', $scope);}
         if (!is_string($identifier) || $identifier === '' || strlen($identifier) > 256 || !preg_match('//u', $identifier)
             || preg_match('/[\x00-\x1f\x7f]/', $identifier) || !is_string($password) || $password === ''
             || strlen($password) > 4096 || strpos($password, "\0") !== false) { return new LoginResult('denied'); }
@@ -69,9 +97,9 @@ final class AuthenticationFlow
         return new LoginResult('mfa_required', $token, $pending['expires']);
     }
 
-    public function secondFactor(string $scope, string $binding, $challenge, $proof): LoginResult
+    private function secondFactorInternal(string $scope, string $binding, $challenge, $proof,bool $admitted=false): LoginResult
     {
-        $key = Guard::key('auth-pending', $scope, $binding); $this->guard('second_factor', $scope);
+        $key = Guard::key('auth-pending', $scope, $binding); if(!$admitted){$this->guard('second_factor', $scope);}
         if (!is_string($challenge) || !preg_match('/\A[a-f0-9]{64}\z/D', $challenge)) { return new LoginResult('denied'); }
         if ($this->factor === null) { throw new ConfigurationException('No second-factor adapter is configured.', 'configuration.second_factor'); }
         $now = $this->now(); $claim = bin2hex(random_bytes(16)); $digest = hash('sha256', $challenge);
@@ -110,9 +138,9 @@ final class AuthenticationFlow
         }
     }
 
-    public function cancel(string $scope, string $binding): void
+    private function cancelInternal(string $scope, string $binding,bool $admitted=false): void
     {
-        $key = Guard::key('auth-pending', $scope, $binding); $this->guard('cancel', $scope); $now = $this->now();
+        $key = Guard::key('auth-pending', $scope, $binding); if(!$admitted){$this->guard('cancel', $scope);} $now = $this->now();
         $this->store->transact($key, function ($state) use ($now) { $this->state($state, $now); return new Change(null, 0, null); });
     }
 
@@ -141,9 +169,36 @@ final class AuthenticationFlow
             return $this->change($state, null, $now);
         });
     }
+    /** Completion is a read-only capture: never repeat login effects or refund a used proof. */
+    private function native(string $phase,string $scope,\SoSecurity\Support\Deadline $deadline,callable $work)
+    {
+        $this->busy=true;
+        try{
+            $start=$this->now();
+            $result=$this->boundary->run('authentication.'.$phase,$work,function()use($phase,$scope):void{$this->currentGuard($phase,$scope);},null,$deadline);
+            $this->boundary->run('authentication.'.$phase.'_check',static function():void{throw new ConfigurationException('Authentication completion is read only.','configuration.state_business');},function()use($phase,$scope):bool{$this->currentGuard($phase,$scope);return false;},null,$deadline);
+            $deadline->check('account.operation_timeout');$now=$this->now();
+            if($now<$start){throw new SecurityException('Authentication clock moved backwards.','auth.clock');}
+            if($result instanceof LoginResult){$expires=$result->expiresAt();$credential=$result->credential();if($credential!==null){$expires=$credential->expiresAt();}if($expires!==null&&$expires<=$now){throw new SecurityException('Authentication result expired before return.','auth.expired');}}
+            return $result;
+        }finally{$this->busy=false;}
+    }
+    private function currentGuard(string $phase,string $scope):void
+    {
+        try{$allowed=($this->guard)->current($phase,$scope);}catch(\Throwable $error){throw new \SoSecurity\Exception\DependencyException('Current authentication admission unavailable.','auth.request_unavailable');}
+        if($allowed!==true){throw new SecurityException('Current request admission denied.','auth.request_denied');}
+    }
+    private function publicGuard(string $phase,string $scope):void
+    {
+        if($this->busy||$this->boundary->active()){throw new ConfigurationException('Enter native authentication once.','configuration.state_request_nested');}
+        $this->busy=true;
+        try{try{$allowed=($this->guard)($phase,$scope);}catch(\Throwable $error){throw new \SoSecurity\Exception\DependencyException('Authentication admission unavailable.','auth.request_unavailable');}if($allowed!==true){throw new SecurityException('Host request protection was not confirmed.','auth.request_denied');}}
+        finally{$this->busy=false;}
+    }
     private function guard(string $phase, string $scope): void
     {
-        if (($this->guard)($phase, $scope) !== true) { throw new SecurityException('Host request protection was not confirmed.', 'auth.request_denied'); }
+        $allowed=$this->boundary!==null&&$this->boundary->active()?($this->guard)->current($phase,$scope):($this->guard)($phase,$scope);
+        if ($allowed !== true) { throw new SecurityException('Host request protection was not confirmed.', 'auth.request_denied'); }
     }
     private function state($state, int $now): ?array
     {
@@ -182,7 +237,7 @@ final class AuthenticationFlow
     private function fields(array $value, array $fields): bool { $keys = array_keys($value); sort($keys); sort($fields); return $keys === $fields; }
     private function now(): int
     {
-        $now = $this->clock->now();
+        try{$now = $this->clock->now();}catch(\Throwable $error){throw new \SoSecurity\Exception\DependencyException('Authentication clock unavailable.','auth.clock');}
         if ($now < 0 || $now > PHP_INT_MAX - 31536000) { throw new ConfigurationException('Authentication clock out of range.', 'configuration.clock'); }
         return $now;
     }

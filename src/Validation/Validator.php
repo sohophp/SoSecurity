@@ -46,7 +46,7 @@ final class Validator
         if (in_array($type, ['integer', 'number', 'list'], true)) { $allowed = array_merge($allowed, ['min', 'max']); }
         if ($type === 'object') { $allowed[] = 'fields'; }
         if ($type === 'list') { $allowed[] = 'items'; }
-        if (array_diff(array_keys($spec), $allowed)) { throw new ConfigurationException('Unknown or misplaced validation option.'); }
+        if (count($spec) > count($allowed) || array_diff(array_keys($spec), $allowed)) { throw new ConfigurationException('Unknown or misplaced validation option.'); }
         $copy = ['type' => $type, 'required' => true, 'nullable' => false];
         foreach (['required', 'nullable'] as $option) {
             if (array_key_exists($option, $spec)) {

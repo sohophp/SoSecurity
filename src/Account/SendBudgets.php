@@ -17,6 +17,7 @@ use SoSecurity\Support\SystemClock;
 final class SendBudgets
 {
     private $reserve;
+    private $fingerprint;
     private $configuration;
     private $transition;
     public function __construct(AtomicStore $store,string $site,string $pseudonymKey,array $policies,?Clock $clock=null,int $maximumSends=3)
@@ -25,9 +26,9 @@ final class SendBudgets
         if(preg_match('//u',$site)!==1||$names!==['site','subject','target','transport']||strlen($pseudonymKey)<32||strlen($pseudonymKey)>128||$maximumSends<1||$maximumSends>30){throw new ConfigurationException('Configure four explicit send budgets, a dedicated stable key and bounded per-notice sends.','configuration.account_send_budget');}
         $clock=$clock ?? new SystemClock();$limits=[];$fingerprints=[];$horizon=1;
         foreach(['site','transport','target','subject'] as $name){$policy=$policies[$name];if(!$policy instanceof BudgetPolicy){throw new ConfigurationException('Use explicit send budget policies.','configuration.account_send_budget');}$limits[$name]=new BudgetLimiter($store,$policy,$clock);$fingerprints[$name]=$policy->fingerprint();$n=$policy->capacity()*$policy->window();$horizon=max($horizon,$policy->window(),intdiv($n,$policy->limit())+($n%$policy->limit()===0?0:1));}
-        $namespace=hash('sha256',json_encode(['SoSecurity.Account.SendBudgets.1',$site]));$config=hash_hmac('sha256',json_encode([$namespace,$fingerprints,$maximumSends]),$pseudonymKey);$limiter=new CompositeLimiter($limits,$clock);$observed=0;
+        $namespace=hash('sha256',json_encode(['SoSecurity.Account.SendBudgets.1',$site]));$config=hash_hmac('sha256',json_encode([$namespace,$fingerprints,$maximumSends]),$pseudonymKey);$limiter=new CompositeLimiter($limits,$clock);$observed=0;$this->fingerprint=$config;
         $this->configuration=static function()use($site,$store,$clock):array{return [$site,$store,$clock];};
-        $this->reserve=static function(DispatchNotice $delivery,MailMessage $message,string $transport,string $deliveryId,int $attempt)use($store,$clock,$namespace,$config,$limiter,$horizon,$pseudonymKey,$maximumSends,&$observed):?int{
+        $this->reserve=static function(DispatchNotice $delivery,MailMessage $message,string $transport,string $deliveryId,int $attempt,bool $rejectedOnly=false)use($store,$clock,$namespace,$config,$limiter,$horizon,$pseudonymKey,$maximumSends,&$observed):?int{
             Guard::label($transport);if(preg_match('//u',$transport)!==1||!preg_match('/\A[a-f0-9]{64}\z/D',$deliveryId)||$attempt<1||$attempt>100){throw new ValidationException('Use the authenticated delivery and original attempt.','account.send_budget');}
             $notice=$delivery->notice();if(!$message->recipient()->equals($notice->recipient())){throw new ValidationException('Send recipient differs from its authenticated notice.','account.send_budget');}$now=self::now($clock,$observed);$until=$notice->expiresAt();if($notice->issuedAt()>$now||$until<=$now){return null;}
             // Fixed namespace prevents key/policy rotation from selecting fresh global counters while old ones may live.
@@ -40,18 +41,20 @@ final class SendBudgets
             });
             if(self::now($clock,$observed)>=$now+$horizon){return null;}
             $key=Guard::key('account-send-notice',$namespace,hash('sha256',json_encode([$notice->scope(),$notice->id()])));$binding=hash_hmac('sha256',json_encode([$config,$delivery->fingerprint(),$deliveryId,hash('sha256',$message->wire())]),$pseudonymKey);
-            $ready=$store->transact($key,static function($state)use($now,$until,$attempt,$binding,$maximumSends,$pseudonymKey):Change{
+            $ready=$store->transact($key,static function($state)use($now,$until,$attempt,$binding,$maximumSends,$pseudonymKey,$rejectedOnly):Change{
                 $secret=$pseudonymKey;
                 if($state===null){if($attempt!==1){throw new StorageException('Prior send budget state is missing; no automatic retry reset.','account.send_budget_missing');}$state=self::seal(['format'=>1,'binding'=>$binding,'used'=>0,'attempt'=>0,'phase'=>'prepared','until'=>$until,'seen'=>$now],$secret);}
                 else{self::state($state,$binding,$until,$now,$maximumSends,$secret);}
+                if($rejectedOnly&&($state['phase']!=='rejected'||$state['attempt']>=$attempt)){throw new StorageException('An authenticated known rejection is required; do not resume an uncertain attempt.','account.send_budget_rejection');}
                 $ready=self::available($state,$attempt,$maximumSends);$state['seen']=$now;return new Change(self::seal($state,$secret),$until,$ready);
             });
             if(!$ready||self::now($clock,$observed)>=$until){return null;}
             $tag=static function(string $purpose,array $values)use($pseudonymKey,$namespace):string{return hash_hmac('sha256',json_encode([$namespace,$purpose,$values],JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES),$pseudonymKey);};
             $decision=$limiter->consume($namespace,['site'=>'all','transport'=>$tag('transport',[$transport]),'target'=>$tag('target',[$notice->recipient()->value()]),'subject'=>$tag('subject',[$notice->scope(),$delivery->subject()])]);
             if(!$decision->allowed()){return null;}$reserved=min($until,$decision->reservedUntil(),$now+$horizon);$current=self::now($clock,$observed);if($current>=$reserved){return null;}
-            $admitted=$store->transact($key,static function($state)use($binding,$until,$current,$maximumSends,$attempt,$pseudonymKey):Change{
+            $admitted=$store->transact($key,static function($state)use($binding,$until,$current,$maximumSends,$attempt,$pseudonymKey,$rejectedOnly):Change{
                 if($state===null){throw new StorageException('Prepared send budget state disappeared.','account.send_budget_missing');}self::state($state,$binding,$until,$current,$maximumSends,$pseudonymKey);
+                if($rejectedOnly&&($state['phase']!=='rejected'||$state['attempt']>=$attempt)){throw new StorageException('Known rejection changed before reservation.','account.send_budget_rejection');}
                 $allowed=self::available($state,$attempt,$maximumSends);if($allowed){++$state['used'];$state['attempt']=$attempt;$state['phase']='reserved';}$state['seen']=$current;return new Change(self::seal($state,$pseudonymKey),$until,$allowed);
             });
             return $admitted&&self::now($clock,$observed)<$reserved?$reserved:null;
@@ -80,13 +83,23 @@ final class SendBudgets
         try{$now=$clock->now();}catch(\Throwable $error){throw new StorageException('Send budget clock unavailable.','account.send_budget_clock');}
         if($now<0||$now>PHP_INT_MAX-31536001||$now<$observed){throw new StorageException('Invalid send budget clock.','account.send_budget_clock');}$observed=$now;return $now;
     }
+    public function fingerprint():string{return $this->fingerprint;}
     public function reserve(DispatchNotice $notice,MailMessage $message,string $transport,string $deliveryId,int $attempt):?int {return ($this->reserve)($notice,$message,$transport,$deliveryId,$attempt);}
+    public function reserveRejected(DispatchNotice $notice,MailMessage $message,string $transport,string $deliveryId,int $attempt):?int {return ($this->reserve)($notice,$message,$transport,$deliveryId,$attempt,true);}
     public function started(DispatchNotice $notice,MailMessage $message,string $deliveryId,int $attempt):bool {return ($this->transition)($notice,$message,$deliveryId,$attempt,'started');}
     public function settle(DispatchNotice $notice,MailMessage $message,string $deliveryId,int $attempt,MailResult $result):bool {return ($this->transition)($notice,$message,$deliveryId,$attempt,$result->state());}
     public function validateConfiguration(string $site,?Clock $clock=null,bool $requireShared=true):void
     {
         list($expected,$store,$source)=($this->configuration)();if(!hash_equals($expected,$site)||($clock!==null&&$source!==$clock&&!($source instanceof SystemClock&&$clock instanceof SystemClock))){throw new ConfigurationException('Send budgets must match the dispatcher site and clock.','configuration.account_send_budget');}
         if($requireShared){$depth=0;while($store instanceof \SoSecurity\Storage\NamespacedStore){if(++$depth>8){throw new ConfigurationException('Send budget store nesting exceeds its bound.','configuration.account_send_budget');}$store=$store->underlying();}if($store instanceof \SoSecurity\Storage\MemoryStore||$store instanceof \SoSecurity\Storage\SessionStore){throw new ConfigurationException('Send budgets require shared atomic storage.','configuration.account_send_budget');}}
+    }
+    /** Protected dispatch requires the exact wrapped store and the same operation clock. */
+    public function validateState(StateBoundary $boundary,string $site,Clock $clock):void
+    {
+        list($expected,$store,$source)=($this->configuration)();
+        if($expected!==$site||$source!==$clock){throw new ConfigurationException('Protected send budgets must match the exact site and clock.','configuration.account_send_budget');}
+        $depth=0;while($store instanceof \SoSecurity\Storage\NamespacedStore){if(++$depth>8){throw new ConfigurationException('Send budget store nesting exceeds its bound.','configuration.account_send_budget');}$store=$store->underlying();}
+        if(!$store instanceof WitnessedStore||!$store->boundTo($boundary)){throw new ConfigurationException('Use send budgets wrapped by the exact complete state boundary.','configuration.account_send_budget');}
     }
     public function __debugInfo():array {return ['account_send_budgets'=>'[redacted]'];}
     public function __sleep():array {throw new ConfigurationException('Rebuild private send budget configuration.','configuration.account_serialization');}

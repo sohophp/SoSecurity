@@ -30,6 +30,12 @@ final class KeySet
         foreach($keys as $id=>$value){if(!is_string($value)||strlen($value)>128||substr($value,0,strlen($prefix))!==$prefix){throw new ConfigurationException('Invalid Standard webhook key prefix.','configuration.webhook_keys');}$encoded=substr($value,strlen($prefix));$raw=base64_decode($encoded,true);if(!is_string($raw)||base64_encode($raw)!==$encoded){throw new ConfigurationException('Invalid Standard webhook key encoding.','configuration.webhook_keys');}$decoded[$id]=$raw;}
         return new self($endpoint,$decoded);
     }
+    /** Preserve verification preference order as well as endpoint, IDs and actual key material. */
+    public function stateDigest():string
+    {
+        $rows=[];foreach($this->keys as $id=>$read){if(!$read instanceof \Closure){throw new ConfigurationException('Reload webhook verification keys.','configuration.webhook_keys');}$rows[]=[$id,hash_hmac('sha256','SoSecurity.Webhook.KeySet.Material.1.',$read())];}
+        return hash('sha256','SoSecurity.Webhook.KeySet.State.1.'.json_encode([$this->endpoint,$this->protocol,$rows],JSON_UNESCAPED_SLASHES));
+    }
     public function matches(Endpoint $endpoint):bool {return hash_equals($this->endpoint,$endpoint->fingerprint());}
     public function verify(string $message,array $signatures):?string
     {

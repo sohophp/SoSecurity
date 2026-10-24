@@ -1,0 +1,18 @@
+<?php
+declare(strict_types=1);
+require __DIR__.'/api-business-support.php';
+use SoSecurity\Account\Example\StateDocuments;
+businessCase(static function(EntryEnvironment $x,SoSecurity\Api\CredentialRegistry $api,string $header):void{
+    $proof=$api->fromAuthorization('tenant',$header,'records:write');$source=$x->source->digest();$identity=apiIntentIdentity($x,'user',null);$intent=businessIntent($x->e->pdo,$proof);
+    $expected=apiIntentExpected($x,$api,'execute','user','user',$identity['fingerprint'],$identity['fingerprint'],['digest'=>hash('sha256',substr($header,7))],['required_scope'=>'records:write','intent'=>$intent->fingerprint(),'business_policy'=>StateDocuments::policy()->fingerprint(),'tables'=>['state_example_documents']],['records:read','records:write'],$source);
+    $writes=[];apiIntentObserve($x,$writes);$calls=0;Check::same(2,businessRun($x,$api,$header,static function(PDO $pdo,SoSecurity\Api\VerifiedCredential $proof,SoSecurity\Operation\Intent $intent)use($x,&$calls):int{++$calls;Check::same(true,$pdo===$x->e->pdo);Check::same(true,$x->boundary->active());Check::same('user',$proof->account()->subject());return businessWrite($pdo,$proof,$intent);}));$x->persistHook=null;
+    Check::same(1,$calls);Check::same(2,count($writes));Check::same('pending',$writes[0]['status']);Check::same('current',$writes[1]['status']);apiIntentCheck($expected,$writes[0]);apiIntentCheck($expected,$writes[1]);Check::same($x->source->digest(),$x->inspect()['digest']);
+    Check::same(3,StateDocuments::rename($api,$x->e->pdo,'tenant',$header,'owned',2,'标题更新'));$row=$x->e->observer->query("SELECT title,version FROM state_example_documents WHERE scope='tenant' AND id='owned'")->fetch(PDO::FETCH_ASSOC);Check::same('标题更新',$row['title']);Check::same('3',(string)$row['version']);Check::same('Foreign',$x->e->observer->query("SELECT title FROM state_example_documents WHERE id='foreign'")->fetchColumn());
+    $rows=businessRows($x);nativeApiNoEffect($x,static function()use($x,$api,$header){StateDocuments::rename($api,$x->e->pdo,'tenant',$header,'foreign',1,'Denied');},'authorization.denied');nativeApiNoEffect($x,static function()use($x,$api,$header){StateDocuments::rename($api,$x->e->pdo,'tenant',$header,'owned',1,'Stale');},'documents.conflict');nativeApiNoEffect($x,static function()use($x,$api){return StateDocuments::rename($api,$x->e->pdo,'tenant','Bearer invalid','owned',3,'Denied');});Check::same($rows,businessRows($x));
+    $x->boundary->run('owned.remove.editor',static function()use($x):void{$x->e->pdo->exec('UPDATE account_example SET roles=\'[]\'');});nativeApiNoEffect($x,static function()use($x,$api,$header){return StateDocuments::rename($api,$x->e->pdo,'tenant',$header,'owned',3,'Old authority');});Check::same($rows,businessRows($x));
+    $beforeRows=businessRows($x);$x->boundary->run('owned.business.change',static function()use($x):void{$x->e->pdo->exec("UPDATE state_example_documents SET title='Latest' WHERE scope='tenant' AND id='owned'");});
+    $q=$x->e->pdo->prepare('UPDATE state_example_documents SET title=? WHERE scope=? AND id=?');foreach($beforeRows as $r){$q->execute([$r['title'],$r['scope'],$r['id']]);}$q->closeCursor();$callbacks=0;
+    nativeApiNoEffect($x,static function()use($x,$api,$header,&$callbacks){return businessRun($x,$api,$header,static function()use(&$callbacks):void{++$callbacks;});},'account.witness_stale');Check::same(0,$callbacks);
+
+});
+echo 'PASS native business transaction and exact receipt: '.Check::$assertions.' assertions PHP '.PHP_VERSION."; one witness, real PDO and CAS, object/role/version denials before effects\n";

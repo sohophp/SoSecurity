@@ -37,10 +37,10 @@ try {
     Check::same(['authentication'], $snapshot['alerts']);
     Check::same(['allowed' => true, 'remaining' => 1, 'retry_after' => 0], $snapshot['budget']);
     Check::same(false, strpos(json_encode($snapshot), 'private') !== false);
-    Check::same(2, $checks);
+    Check::same(3, $checks);
     $audit->record('login.failed', 'tenant', 'another');
     Check::same(['allowed' => false, 'remaining' => 0, 'retry_after' => 60], $diagnostics->inspect()['budget']);
-    Check::same(3, $checks);
+    Check::same(5, $checks);
     Check::same(2, count($records));
     $broken = new class implements AtomicStore {
         public function transact(string $key, callable $callback) { throw new StorageException('private backend fault', 'storage.io'); }

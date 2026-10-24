@@ -32,25 +32,44 @@ final class DeviceManager
             $credentialId === '' || strlen($credentialId) > 1024) {
             throw new InvalidArgumentException('Invalid WebAuthn device identity');
         }
-        $now = $this->clock->now();
+        $now = $this->now();
         try {
             $allowed = $this->authority->allow('before', $this->repository->scope(),
                 $userHandle, $credentialId, $proof, $now);
         } catch (\Throwable $e) {
-            throw new RuntimeException('WebAuthn removal authority unavailable', 0, $e);
+            throw new RuntimeException('WebAuthn removal authority unavailable');
         }
         if ($allowed !== true) { return false; }
         $stored = $this->repository->find($credentialId, $userHandle);
-        if ($stored === null || !$this->repository->revokeKeepingOne($stored, $now)) { return false; }
+        if ($stored === null) { return false; }
+        try {
+            $now = $this->now($now);
+            $allowed = $this->authority->allow('current', $this->repository->scope(),
+                $userHandle, $credentialId, $proof, $now);
+            $now = $this->now($now);
+        } catch (\Throwable $e) {
+            throw new RuntimeException('WebAuthn removal authority unavailable');
+        }
+        if ($allowed !== true || !$this->repository->revokeKeepingOne($stored, $now)) { return false; }
         try {
             if ($this->authority->allow('return', $this->repository->scope(),
-                $userHandle, $credentialId, $proof, $this->clock->now()) !== true) {
+                $userHandle, $credentialId, $proof, $this->now($now)) !== true) {
                 throw new RuntimeException('WebAuthn removal authority changed');
             }
             ($this->notice)($userHandle, $credentialId, $now);
         } catch (\Throwable $e) {
-            throw new RuntimeException('WebAuthn removal outcome requires reconciliation', 0, $e);
+            throw new RuntimeException('WebAuthn removal outcome requires reconciliation');
         }
         return true;
     }
+    private function now(?int $seen = null): int
+    {
+        try { $now = $this->clock->now(); }
+        catch (\Throwable $error) { throw new RuntimeException('WebAuthn removal clock unavailable'); }
+        if ($now < 0 || ($seen !== null && $now < $seen)) {
+            throw new RuntimeException('Invalid WebAuthn removal clock');
+        }
+        return $now;
+    }
+
 }

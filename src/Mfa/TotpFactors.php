@@ -39,6 +39,44 @@ final class TotpFactors
         $this->ttl = $enrollmentTtl; $this->attempts = $attempts; $this->cooldown = $cooldown; $this->totp = $totp ?? new Totp();
     }
 
+    public function statePolicy(string $site,string $scope,string $epoch,\SoSecurity\Support\HmacKeys $keys):?array{if($this->authority===null||!$this->store instanceof ManagedFactorStore||!$this->store->usesKeys($keys)){return null;}$context=hash('sha256',json_encode(['SoSecurity.Mfa.ManagedContext.1',$site,$scope,$epoch],JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE));$reference=$this->store->snapshotReference(Guard::key('mfa-totp',$scope,'state-policy-check'),$context);return $reference===null?null:['clock'=>$this->clock,'context'=>$context,'reference'=>$reference];}
+    /** Explicit bootstrap binding; never initializes or mutates factor records. */
+    public function bindStateBoundary(\SoSecurity\Account\StateBoundary $boundary):void
+    {
+        if(!$boundary->semanticAuthority()){throw new ConfigurationException('Protected factors require semantic state authority.','configuration.state_boundary');}
+        if($this->authority!==null||!$this->store instanceof \SoSecurity\Storage\FileStore){throw new ConfigurationException('Bind only the covered raw FileStore factor service.','configuration.state_coverage');}
+        $boundary->protect($this->store);
+    }
+    /** @internal Fixed approved destruction bypasses ordinary closed workers, never an arbitrary callback. */
+    public function containState(string $scope,string $subject,\SoSecurity\Account\StateFactorContainment $plan,\SoSecurity\Account\LocalStateWitness $witness,string $operation):void
+    {
+        if(!$plan->usesFactors($this)||$this->authority===null||!$this->store instanceof ManagedFactorStore){throw new ConfigurationException('Use exact managed factor containment.','configuration.factor_containment');}
+        $this->store->containState(Guard::key('mfa-totp',$scope,$subject),$plan,$witness,$operation);
+    }
+    public function resolveState(string $key,\SoSecurity\Account\StateFactorResolution $plan,\SoSecurity\Account\LocalStateWitness $witness,string $operation):void
+    {
+        if(!$plan->usesFactors($this)||$this->authority===null||!$this->store instanceof ManagedFactorStore){throw new ConfigurationException('Use exact managed factor resolution.','configuration.factor_resolution');}
+        $this->store->resolveState($key,$plan,$witness,$operation);
+    }
+    public function coveredBy(\SoSecurity\Account\LocalStateWitness $witness):bool{return $this->authority!==null&&$this->store instanceof ManagedFactorStore&&$this->store->coveredBy($witness);}
+    /** Candidate preparation only; no target store, worker or factor registration is changed. */
+    public function recoveryCredentialDraft(string $scope,string $subject,string $generation,string $accountLabel):array
+    {
+        if($this->authority===null||!preg_match('/\A[a-f0-9]{32}\z/D',$generation)){throw new ConfigurationException('Use the exact managed factor profile and fresh generation.','configuration.state_credentials');}Guard::label($scope);Guard::label($subject);$now=$this->now();$key=Guard::key('mfa-totp',$scope,$subject);$secret=$this->totp->generateSecret();$uri=$this->totp->provisioningUri($secret,$this->issuer,$accountLabel);
+        $state=['v'=>1,'enabled'=>null,'pending'=>['id'=>$generation,'secret'=>$this->cipher->encrypt($secret,$key.':'.$generation),'profile'=>$this->totp->profile(),'last_step'=>-1,'expires'=>$now+300],'recovery'=>[],'failures'=>0,'blocked_until'=>0,'updated'=>$now];return ['state'=>$state,'enrollment'=>new Enrollment($generation,$uri,$now+300)];
+    }
+    /** Pure possession proof over a prepared candidate, never an active factor or recovery-code shortcut. */
+    public function confirmRecoveryCredential(string $scope,string $subject,array $state,$code):?array
+    {
+        if($this->authority===null){throw new ConfigurationException('Use a managed factor preparation profile.','configuration.state_credentials');}$now=$this->now();$state=$this->state($state,$now);if($state===null||$state['enabled']!==null||$state['pending']===null||$state['recovery']!==[]||$state['failures']!==0||$state['blocked_until']!==0||$state['pending']['expires']>$now+300){return null;}$step=$this->step($state['pending'],Guard::key('mfa-totp',$scope,$subject),$code,$now);if($step===null){return null;}$enabled=$state['pending'];unset($enabled['expires']);$enabled['last_step']=$step;$state['enabled']=$enabled;$state['pending']=null;$state['updated']=$now;return $state;
+    }
+    public function sealCredentialInstallation(string $binding,array $packet):string{return $this->cipher->encrypt(json_encode($packet,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES),'state-credential-install:'.$binding);}
+    public function openCredentialInstallation(string $binding,string $packet):array{$raw=$this->cipher->decrypt($packet,'state-credential-install:'.$binding);$v=json_decode($raw,true,16);if(!is_array($v)||json_encode($v,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)!==$raw){throw new StorageException('Invalid credential installation packet.','account.installation_corrupt');}return $v;}
+    public function installCredentialState(string $key,\SoSecurity\Account\StateCredentialInstallation $plan,\SoSecurity\Account\LocalStateWitness $witness,string $operation):void
+    {
+        if(!$plan->usesFactors($this)||$this->authority===null||!$this->store instanceof ManagedFactorStore){throw new ConfigurationException('Use the exact managed installation factor service.','configuration.credential_installation');}$this->store->installCredentialState($key,$plan,$witness,$operation);
+    }
+    public function stateReference(string $scope,string $subject,string $context):?array{return $this->authority!==null&&$this->store instanceof ManagedFactorStore?$this->store->snapshotReference(Guard::key('mfa-totp',$scope,$subject),$context):null;}
     /** SQL-registered mode retains the typed provider and its explicit SQL I/O budget. No automatic provisioning. */
     public function managedRegistered(string $site,string $scope,string $epoch,\SoSecurity\Support\HmacKeys $keys,\SoSecurity\Account\LocalEpochFence $fence,\SoSecurity\Account\FactorWorkerAuthority $authority):self
     {
@@ -104,7 +142,7 @@ final class TotpFactors
     /** Internal directory lock ordering; authorization still runs for every physical method. */
     /** Pure capability check; no root initialization, SQL or authority callbacks. */
     public function registeredWith(\PDO $connection):bool {return $this->authority!==null&&$this->authority->registeredWith($connection);}
-    public function enlistWorkers(\PDO $connection):void {if($this->authority!==null){$this->authority->enlistWorkers($connection);}}
+    public function enlistWorkers(\PDO $connection,?\SoSecurity\Support\SqlTransaction $owner=null):void {if($this->authority!==null){$this->authority->enlistWorkers($connection,$owner);}}
     public function boundTo(\SoSecurity\Account\LocalEpochFence $fence):bool {return $this->authority!==null&&$this->authority->boundTo($fence);}
     private function access(string $action,string $scope,string $subject,array $metadata,callable $operation)
     {
@@ -399,48 +437,9 @@ final class TotpFactors
         return new Change($state, $state['enabled'] === null ? max($state['pending']['expires'], $state['blocked_until']) : 0, $result);
     }
 
-    private function state($state, int $now): ?array
-    {
-        if ($state === null) { return null; }
-        if (!is_array($state) || !$this->fields($state, ['v', 'enabled', 'pending', 'recovery', 'failures', 'blocked_until', 'updated'])
-            || $state['v'] !== 1 || !is_array($state['recovery']) || count($state['recovery']) > 10
-            || !is_int($state['failures']) || $state['failures'] < 0 || $state['failures'] > 10
-            || !is_int($state['blocked_until']) || $state['blocked_until'] < 0 || !is_int($state['updated']) || $state['updated'] < 0) {
-            throw new StorageException('Corrupt MFA state.', 'storage.corrupt');
-        }
-        if ($state['updated'] > $now) { throw new SecurityException('MFA clock moved backwards.', 'mfa.clock'); }
-        foreach ($state['recovery'] as $digest) {
-            if (!is_string($digest) || !preg_match('/\A[a-f0-9]{64}\z/D', $digest)) { throw new StorageException('Corrupt recovery codes.', 'storage.corrupt'); }
-        }
-        if (array_values($state['recovery']) !== $state['recovery'] || count(array_unique($state['recovery'])) !== count($state['recovery'])
-            || ($state['enabled'] === null && $state['recovery'] !== [])) { throw new StorageException('Corrupt recovery state.', 'storage.corrupt'); }
-        foreach (['enabled', 'pending'] as $field) {
-            $factor = $state[$field];
-            if ($factor === null) { continue; }
-            $fields = ['id', 'secret', 'profile', 'last_step']; if ($field === 'pending') { $fields[] = 'expires'; }
-            if (!is_array($factor) || !$this->fields($factor, $fields) || !is_string($factor['id']) || !preg_match('/\A[a-f0-9]{32}\z/D', $factor['id'])
-                || !is_string($factor['secret']) || strlen($factor['secret']) < 60 || strlen($factor['secret']) > 2048
-                || !is_int($factor['last_step']) || $factor['last_step'] < -1 || !is_array($factor['profile'])
-                || ($field === 'pending' && (!is_int($factor['expires']) || $factor['expires'] < 0))) {
-                throw new StorageException('Corrupt MFA factor.', 'storage.corrupt');
-            }
-            $this->profile($factor['profile']);
-        }
-        if ($state['pending'] !== null && $state['pending']['expires'] <= $now) { $state['pending'] = null; }
-        if ($state['blocked_until'] !== 0 && $state['blocked_until'] <= $now) { $state['failures'] = 0; $state['blocked_until'] = 0; }
-        return $state;
-    }
+    private function state($state,int $now):?array{return TotpFactorState::read($state,$now);}
+    private function profile(array $profile):Totp{return TotpFactorState::profile($profile);}
 
-    private function profile(array $profile): Totp
-    {
-        if (!$this->fields($profile, ['algorithm', 'digits', 'period']) || !is_string($profile['algorithm']) || !is_int($profile['digits']) || !is_int($profile['period'])) {
-            throw new StorageException('Corrupt MFA profile.', 'storage.corrupt');
-        }
-        try { return new Totp($profile['algorithm'], $profile['digits'], $profile['period']); }
-        catch (ConfigurationException $e) { throw new StorageException('Corrupt MFA profile.', 'storage.corrupt', $e); }
-    }
-
-    private function fields(array $record, array $fields): bool { $keys = array_keys($record); sort($keys); sort($fields); return $keys === $fields; }
     private function codes(): array
     {
         $codes = [];

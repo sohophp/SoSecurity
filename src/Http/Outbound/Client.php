@@ -27,12 +27,14 @@ final class Client
             $this->budget($deadline); $this->policy->check($uri);
             if (isset($seen[$uri->url()])) { throw new RequestException('Redirect loop detected.', 'http.redirect_loop'); }
             $seen[$uri->url()] = true;
-            $addresses = filter_var($uri->hostName(), FILTER_VALIDATE_IP) !== false ? [$uri->hostName()] : $this->resolver->resolve($uri->hostName(), $deadline);
+            try { $addresses = filter_var($uri->hostName(), FILTER_VALIDATE_IP) !== false ? [$uri->hostName()] : $this->resolver->resolve($uri->hostName(), $deadline); }
+            catch (\Throwable $error) { throw $this->failure($error, 'http.dns'); }
             $this->budget($deadline);
             if (!$addresses || count($addresses) > 16) { throw new RequestException('DNS address set is invalid.', 'http.dns'); }
             foreach ($addresses as $address) { if (!is_string($address) || !PublicAddress::allows($address)) { throw new ValidationException('Resolved address set contains a non-public target.', 'http.address'); } }
             $addresses = array_values($addresses); $pin = $addresses[0];
-            $response = $this->transport->send($uri, $pin, $method, $headers, $body, $deadline, $bodyRemaining, $headersRemaining);
+            try { $response = $this->transport->send($uri, $pin, $method, $headers, $body, $deadline, $bodyRemaining, $headersRemaining); }
+            catch (\Throwable $error) { throw $this->failure($error, 'http.transport'); }
             $this->budget($deadline);
             if (@inet_pton($response->peer()) !== @inet_pton($pin)) { throw new RequestException('Transport peer does not match its pin.', 'http.peer'); }
             $bodyRemaining -= strlen($response->body()); $headersRemaining -= $response->headerBytes();
@@ -48,6 +50,13 @@ final class Client
             if ($next->origin() !== $uri->origin()) { $headers = []; } // No application headers or credentials forwarded across origins.
             $uri = $next;
         }
+    }
+    /** Preserve only fixed protocol reasons, never adapter text, arbitrary reason data or exception chains. */
+    private function failure(\Throwable $error, string $fallback): RequestException
+    {
+        $reason = $error instanceof RequestException ? $error->reason() : $fallback;
+        if (!in_array($reason, ['http.dns','http.timeout','http.address','http.configuration','http.headers','http.header_limit','http.peer','http.request','http.response_limit','http.transport'], true)) { $reason = $fallback; }
+        return new RequestException('Outbound dependency unavailable.', $reason);
     }
     private function budget(Deadline $deadline): void { if ($deadline->remaining() <= 0) { throw new RequestException('Overall request budget expired.', 'http.timeout'); } }
 }

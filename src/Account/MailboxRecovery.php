@@ -21,14 +21,17 @@ use SoSecurity\Support\SystemClock;
 final class MailboxRecovery
 {
     private $scope;
+    private $maintenanceState;
+    private $stateGuard;
+    private $native;
     private $context;
     private $dependencies;
     private $dispatchFactory;
     public function __construct(PDO $connection,string $site,string $scope,string $epoch,HmacKeys $integrityKeys,HmacKeys $outboxKeys,
         IdentityRepository $accounts,Notifications $notifications,callable $authority,callable $budget,callable $strongApproval,
-        ?Policy $policy=null,?Clock $clock=null,?callable $managementGuard=null,?callable $deliveryGuard=null,?\SoSecurity\Auth\SecondFactor $recoveryFactors=null)
+        ?Policy $policy=null,?Clock $clock=null,?callable $managementGuard=null,?callable $deliveryGuard=null,?\SoSecurity\Auth\SecondFactor $recoveryFactors=null,?StateAccountConnection $state=null,?StateRequestGuard $requests=null)
     {
-        $policy=$policy ?? new Policy();$clock=$clock ?? new SystemClock();$notifications->validateConfiguration($clock,$policy->allowsSmtpUtf8());$unit=new SqlTransaction($connection,$clock,$policy->ioMilliseconds());
+        $policy=$policy ?? new Policy();$clock=$clock ?? new SystemClock();if($requests!==null&&$state===null){throw new ConfigurationException('Native lifecycle admission requires an exact protected connection.','configuration.state_request');}$this->native=$requests===null?null:$state->requestHandler('mailbox_recovery',$requests);$this->maintenanceState=$state;$this->stateGuard=\SoSecurity\Support\SqlStateAccess::entryGuard($connection,$accounts,$site,$scope,$epoch,$clock,$policy,$state);$notifications->validateConfiguration($clock,$policy->allowsSmtpUtf8());$unit=new SqlTransaction($connection,$clock,$policy->ioMilliseconds());
         try{$same=$accounts->connection()===$connection;}catch(\Throwable $error){$same=false;}
         if(!$same){throw new ConfigurationException('Use exactly the host account transaction connection.','configuration.account_connection');}
         $ledger=new Ledger($unit,'account-mailbox-recovery:'.hash('sha256',$site),$scope,$epoch,$integrityKeys,$policy);$this->scope=$scope;$this->context=hash('sha256',self::json(['SoSecurity.Account.MailboxRecovery.Context.1',$site,$scope,$epoch]));
@@ -47,9 +50,9 @@ final class MailboxRecovery
             if($deliveryGuard===null){throw new ConfigurationException('Explicit current notification authority is required for dispatch.','configuration.account_dispatch');}
             $producer='account-mailbox-recovery';$age=max($policy->lifetime('recover_address'),$policy->lifetime('address_recovered'));
             $authority=static function(string $action,string $phase,string $currentScope,string $currentProducer,string $actor,array $metadata)use($scope,$producer,$worker,$workerAuthority):bool{
-                return $currentScope===$scope&&$currentProducer===$producer&&$actor===$worker&&in_array($action,['claim','current_claim','acknowledge','fail'],true)&&$workerAuthority($action,$phase,$currentScope,$currentProducer,$actor,$metadata)===true;
+                return $currentScope===$scope&&$currentProducer===$producer&&$actor===$worker&&in_array($action,['claim','claim_initial','claim_rejected','current_claim','acknowledge','fail'],true)&&$workerAuthority($action,$phase,$currentScope,$currentProducer,$actor,$metadata)===true;
             };
-            $queue=new SqlOutbox($connection,$site,$epoch,$outboxKeys,$authority,new OutboxPolicy(['message_age'=>$age,'recovery_age'=>$age,'maximum_entries'=>$policy->maximumEntries(),'maximum_payload_bytes'=>64,'io_milliseconds'=>$policy->ioMilliseconds()]),$clock);
+            $queue=new SqlOutbox($connection,$site,$epoch,$outboxKeys,$authority,new OutboxPolicy(['message_age'=>$age,'recovery_age'=>$age,'maximum_entries'=>$policy->maximumEntries(),'maximum_payload_bytes'=>64,'io_milliseconds'=>$policy->ioMilliseconds()]),$clock,null,$this->maintenanceState);
             return new Dispatcher($site,$scope,$worker,$queue,$this,$budgets,$templates,$transport,$clock,$budgetMilliseconds,$transportMilliseconds);
         };
         $this->dependencies=static function()use($unit,$ledger,$queue,$accounts,$notifications,$authority,$budget,$policy,$managementGuard,$deliveryGuard,$recoveryFactors,$strongApproval,$clock):array{return [$unit,$ledger,$queue,$accounts,$notifications,$authority,$budget,$policy,$managementGuard,$deliveryGuard,$recoveryFactors,$strongApproval,$clock];};
@@ -87,7 +90,7 @@ final class MailboxRecovery
         if($phase==='public'){
             try{$result=call_user_func_array($this->budgets(),$arguments);}catch(\Throwable $error){throw new DependencyException('Account request budget unavailable.','account.budget');}
         }else{$result=$this->unit()->invoke($this->budgets(),$arguments,'account.budget');}
-        if($result!==true){throw new SecurityException('Account request budget refused.','account.budget');}
+        if($result!==true){$refusal=$phase==='public'?null:StateBudgetRefusal::fromTransaction($this->unit());throw $refusal??new SecurityException('Account request budget refused.','account.budget');}
     }
     private function host(string $method,array $arguments):?AccountRecord
     {
@@ -156,7 +159,7 @@ final class MailboxRecovery
         $this->queue()->enqueue(new Message($this->scope,'account-mailbox-recovery',Message::identifier('account-notice-'.$id,$now),'mail','account.notice',$id,$id),'account-system');return $id;
     }
     public function initialize():void
-    {
+    {($this->stateGuard)();
         $this->authority('initialize');
         $this->queue()->initialize($this->scope,'account-mailbox-recovery','account-system');
         $this->unit()->run(function():void{$this->authorize('initialize','before');$this->ledger()->initialize();},null,function():void{$this->authorize('initialize','commit');});
@@ -164,7 +167,14 @@ final class MailboxRecovery
     /** Uniform accepted outcome; no selectors, subjects or token secrets are returned. Source is supplied by trusted host routing. */
     public function request(string $currentAddress,string $newAddress,string $source):void
     {
-        $current=new Address($currentAddress,$this->policy()->allowsSmtpUtf8());$target=new Address($newAddress,$this->policy()->allowsSmtpUtf8());self::source($source);$budgetId=bin2hex(random_bytes(16));$this->charge('request','public',$source,$target,null,$budgetId);
+        if($this->native===null){$this->requestInternal($currentAddress,$newAddress,$source);return;}
+        ($this->native)('request',function()use($currentAddress,$newAddress,$source):array{
+            new Address($currentAddress,$this->policy()->allowsSmtpUtf8());$address=new Address($newAddress,$this->policy()->allowsSmtpUtf8());StateLifecycleInput::source($source);$budgetId=bin2hex(random_bytes(16));$this->charge('request','public',$source,$address,null,$budgetId);return [$budgetId];
+        },function(array $admission)use($currentAddress,$newAddress,$source):void{$this->requestInternal($currentAddress,$newAddress,$source,$admission[0]);});
+    }
+    private function requestInternal(string $currentAddress,string $newAddress,string $source,?string $admission=null):void
+    {($this->stateGuard)();
+        $current=new Address($currentAddress,$this->policy()->allowsSmtpUtf8());$target=new Address($newAddress,$this->policy()->allowsSmtpUtf8());self::source($source);$budgetId=$admission??bin2hex(random_bytes(16));if($admission===null){$this->charge('request','public',$source,$target,null,$budgetId);}
         $this->unit()->run(function()use($current,$target,$source,$budgetId):?array{
             $this->ledger()->checkpoint();$this->authorize('request','before');$record=$this->byAddress($current);if($record===null){return null;}
             $subject=$record->account()->subject();$this->charge('request','subject',$source,$target,$subject,$budgetId);if(!$this->eligible($record)||$target->equals($record->address())){return null;}$facts=$this->facts($record);
@@ -208,7 +218,7 @@ final class MailboxRecovery
     }
     /** Private management review; no proof secret, grant consumption, account write or implicit approval. */
     public function approvalRequest(string $selector,string $source):?RecoveryApproval
-    {
+    {($this->stateGuard)();
         self::id($selector);self::source($source);$this->authority('review');$budgetId=bin2hex(random_bytes(16));$this->charge('confirm','public',$source,null,null,$budgetId);
         $state=$this->unit()->run(function()use($selector,$source,$budgetId):?array{
             $this->ledger()->checkpoint();$this->authorize('review','before');$row=$this->ledger()->read($selector);if($row===null||$row['kind']!=='recover'){return null;}$flow=$this->flow($row);
@@ -221,9 +231,16 @@ final class MailboxRecovery
     /** New-mailbox proof is necessary, never sufficient; independent strong approval is mandatory. */
     public function confirm(string $selector,string $token,string $source,array $approvalProof):bool
     {
+        if($this->native===null){return $this->confirmInternal($selector,$token,$source,$approvalProof);}
+        return ($this->native)('confirm',function()use($selector,$token,$source,$approvalProof):array{
+            StateLifecycleInput::id($selector);StateLifecycleInput::id($token);StateLifecycleInput::source($source);$proof=StateLifecycleInput::proof($approvalProof,true);$budgetId=bin2hex(random_bytes(16));$this->charge('confirm','public',$source,null,null,$budgetId);return [$budgetId,$proof];
+        },function(array $admission)use($selector,$token,$source):bool{return $this->confirmInternal($selector,$token,$source,$admission[1],$admission[0]);});
+    }
+    private function confirmInternal(string $selector,string $token,string $source,array $approvalProof,?string $admission=null):bool
+    {($this->stateGuard)();
         self::id($selector);self::id($token);self::source($source);$keys=array_keys($approvalProof);sort($keys);
         if($keys!==['code','type']||$approvalProof['type']!=='approved'||!is_string($approvalProof['code'])||$approvalProof['code']===''||strlen($approvalProof['code'])>512||preg_match('/[\x00-\x1f\x7f]/',$approvalProof['code'])){throw new ValidationException('Explicit bounded strong approval required.','account.recovery_proof');}
-        $deadline=new \SoSecurity\Support\Deadline($this->policy()->ioMilliseconds());$budgetId=bin2hex(random_bytes(16));$this->charge('confirm','public',$source,null,null,$budgetId);
+        $deadline=new \SoSecurity\Support\Deadline($this->policy()->ioMilliseconds());$budgetId=$admission??bin2hex(random_bytes(16));if($admission===null){$this->charge('confirm','public',$source,null,null,$budgetId);}
         $proof=$this->unit()->run(function()use($selector,$token,$source,$budgetId):?array{
             $this->ledger()->checkpoint();$this->authorize('confirm','before');$row=$this->ledger()->read($selector);if($row===null||$row['kind']!=='recover'){return null;}$flow=$this->flow($row);
             if($flow['state']!=='pending'||$flow['valid_until']<=$this->unit()->now()||$flow['attempts']>=$this->policy()->maximumAttempts()){return null;}
@@ -264,7 +281,14 @@ final class MailboxRecovery
     /** Consume this recovery proof to cancel, without changing the host account or granting a session. */
     public function cancel(string $selector,string $token,string $source):bool
     {
-        self::id($selector);self::id($token);self::source($source);$budgetId=bin2hex(random_bytes(16));$this->charge('cancel','public',$source,null,null,$budgetId);
+        if($this->native===null){return $this->cancelInternal($selector,$token,$source);}
+        return ($this->native)('cancel',function()use($selector,$token,$source):array{
+            StateLifecycleInput::id($selector);StateLifecycleInput::id($token);StateLifecycleInput::source($source);$budgetId=bin2hex(random_bytes(16));$this->charge('cancel','public',$source,null,null,$budgetId);return [$budgetId];
+        },function(array $admission)use($selector,$token,$source):bool{return $this->cancelInternal($selector,$token,$source,$admission[0]);});
+    }
+    private function cancelInternal(string $selector,string $token,string $source,?string $admission=null):bool
+    {($this->stateGuard)();
+        self::id($selector);self::id($token);self::source($source);$budgetId=$admission??bin2hex(random_bytes(16));if($admission===null){$this->charge('cancel','public',$source,null,null,$budgetId);}
         try{
             $result=$this->unit()->run(function()use($selector,$token,$source,$budgetId):?array{
                 $this->ledger()->checkpoint();$this->authorize('cancel','before');$row=$this->ledger()->read($selector);if($row===null||$row['kind']!=='recover'){return null;}$flow=$this->flow($row);$now=$this->unit()->now();
@@ -301,8 +325,22 @@ final class MailboxRecovery
     private static function pageInput(int $limit,string $after):void {if($limit<1||$limit>50||($after!==''&&!preg_match('/\A[a-f0-9]{64}\z/D',$after))){throw new ConfigurationException('Use a bounded account maintenance cursor and page.','configuration.account_maintenance');}}
     private static function progress(array $headers,int $limit,array $counts):array {$size=count($headers);return ['examined'=>$size]+$counts+['after'=>$size===$limit?$headers[$size-1]['record_id']:'','done'=>$size<$limit];}
     /** At most limit headers plus their current-pointer partner (maximum 2*limit rows). Host accounts/Outbox are never deleted. */
-    public function maintain(int $limit=20,string $after=''):array
+    /** Native management requires explicit current account roles and the exact page target. */
+    public function maintainFor(StateAccountPolicy $policy,StatePermission $permission,int $limit=20,string $after=''):?array
+    {return $this->nativeMaintenance('maintain',$policy,$permission,$limit,$after);}
+    public function rotateFor(StateAccountPolicy $policy,StatePermission $permission,int $limit=20,string $after=''):?array
+    {return $this->nativeMaintenance('rotate',$policy,$permission,$limit,$after);}
+    private function nativeMaintenance(string $action,StateAccountPolicy $policy,StatePermission $permission,int $limit,string $after):?array
     {
+        if($this->maintenanceState===null){throw new ConfigurationException('Declare the complete native account maintenance graph.','configuration.state_connection');}
+        self::pageInput($limit,$after);$guard=$this->authority($action);$scope=$this->scope;
+        return $this->maintenanceState->maintenance('mailbox_recovery',$action,$policy,$permission,$limit,$after,function()use($guard,$action,$scope):bool{
+            // Host admission is outside SQL observation units; the witness checks the full source before effects.
+            $phase='admission';$record=null;try{return $guard($action,$phase,$scope,$record)===true;}catch(\Throwable $error){throw new \SoSecurity\Exception\DependencyException('Account maintenance admission unavailable.','account.authority');}
+        },function()use($action,$limit,$after):array{return $this->$action($limit,$after);});
+    }
+    public function maintain(int $limit=20,string $after=''):array
+    {($this->stateGuard)();
         self::pageInput($limit,$after);$this->authority('maintain');$state=$this->unit()->run(function()use($limit,$after):array{
             $this->ledger()->checkpoint();$this->authorize('maintain','before');$headers=$this->ledger()->page($limit,$after);$remove=[];$expected=[];$now=$this->unit()->now();
             foreach($headers as $header){
@@ -320,12 +358,15 @@ final class MailboxRecovery
         },null,function(array $state):void{
             $this->authorize('maintain','commit');foreach($state['rows'] as $id=>$row){if($this->ledger()->read($id)!==$row){throw new StorageException('Retained recovery body changed before commit.','account.changed');}}
             if($this->ledger()->checkpoint()!==$state['checkpoint']){throw new StorageException('Recovery maintenance changed before commit.','account.changed');}
+        },function(array $state):void{
+            try{$this->authorize('maintain','complete');}
+            catch(\Throwable $error){throw new StorageException('Account request history maintenance completion is uncertain; committed changes are not rolled back.','account.completion_unknown');}
         });
         return $state['result'];
     }
     /** Bounded reseal/reencryption. Pause old writers before retiring any keys; done is a page boundary only. */
     public function rotate(int $limit=20,string $after=''):array
-    {
+    {($this->stateGuard)();
         self::pageInput($limit,$after);$this->authority('rotate');$state=$this->unit()->run(function()use($limit,$after):array{
             $this->ledger()->checkpoint();$this->authorize('rotate','before');$headers=$this->ledger()->page($limit,$after);$root=$this->ledger()->rotateRoot();$resealed=0;$reencrypted=0;$expected=[];
             foreach($headers as $header){
@@ -339,6 +380,9 @@ final class MailboxRecovery
         },null,function(array $state):void{
             $this->authorize('rotate','commit');foreach($state['rows'] as $id=>$row){if($this->ledger()->read($id)!==$row){throw new StorageException('Recovery rotation body changed before commit.','account.changed');}}
             if($this->ledger()->checkpoint()!==$state['checkpoint']){throw new StorageException('Recovery rotation state changed before commit.','account.changed');}
+        },function(array $state):void{
+            try{$this->authorize('rotate','complete');}
+            catch(\Throwable $error){throw new StorageException('Account request history maintenance completion is uncertain; committed changes are not rolled back.','account.completion_unknown');}
         });
         return $state['result'];
     }
@@ -374,9 +418,9 @@ final class MailboxRecovery
         });
         return $state;
     }
-    public function notification(string $id):?MailboxRecoveryDelivery {$state=$this->notificationRead($id);return $state===null?null:$state['delivery'];}
+    public function notification(string $id):?MailboxRecoveryDelivery {($this->stateGuard)();$state=$this->notificationRead($id);return $state===null?null:$state['delivery'];}
     public function notificationForDispatch(string $id):?DispatchNotice
-    {
+    {($this->stateGuard)();
         $state=$this->notificationRead($id);if($state===null){return null;}$flow=$this->flow($state['flow_row']);return new DispatchNotice($state['delivery']->notice(),$state['delivery']->selector(),$flow['subject']);
     }
     /** Explicit worker factory; queue authority and current private-notice authority remain independently required. */

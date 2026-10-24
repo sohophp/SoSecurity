@@ -13,7 +13,7 @@ final class StateStorageDomain
     public static function directory(string $path,array $stat):array{return ['kind'=>'file','identity'=>$stat['dev'].':'.$stat['ino'],'path'=>$path];}
     public static function sql(PDO $pdo,int $milliseconds):array
     {
-        $u=new SqlTransaction($pdo,new SystemClock(),$milliseconds);
+        $u=SqlTransaction::forObservation($pdo,new SystemClock(),$milliseconds);
         return $u->run(static function()use($u):array{
             if($u->driver()==='mysql'){
                 $q=$u->query('SELECT CASE WHEN OCTET_LENGTH(@@server_uuid)=36 THEN @@server_uuid ELSE NULL END AS server_id,CASE WHEN OCTET_LENGTH(DATABASE())<=64 THEN DATABASE() ELSE NULL END AS database_name');$v=$q->fetch(PDO::FETCH_ASSOC);$q->closeCursor();

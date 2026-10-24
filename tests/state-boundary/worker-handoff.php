@@ -1,0 +1,12 @@
+<?php
+declare(strict_types=1);
+require __DIR__.'/worker-handoff-support.php';
+recoveryAuditCase(static function(EntryEnvironment $x,EntryEnvironment $op,SoSecurity\Account\StateRetirementControl $control):void{
+    list($w,$token,$plan,$args,$old,$next,$boundary)=workerHandoffSetup($x,$op,$control);$m=$plan->manifest();$files=entryFiles($x);$account=$x->e->pdo->query('SELECT * FROM account_example')->fetchAll(PDO::FETCH_ASSOC);$before=$w->inspect('witnessBudget');
+    Check::same(true,SoSecurity\Account\StateWorkerManifest::valid($m));Check::same(null,$next->recoveryImage($w));Check::throws(SoSecurity\Exception\ConfigurationException::class,static function()use($plan,$w):void{$plan->apply($w,str_repeat('a',64),new SoSecurity\Support\Deadline(30000));});Check::same($before,$w->inspect('witnessBudget'));
+    $review=$w->workerHandoffReview($plan,$control,'user',$token,'witnessBudget');list($token,$grant)=workerHandoffApproval($op,$control,$review,$token);$done=$w->handoffWorkers($review,$plan,$control,'user',$token,$grant,'witnessBudget');
+    Check::same('quarantined',$done['status']);Check::same('complete',$done['remediation']['phase']);Check::same($m,$done['remediation']['manifest']);Check::same($m['closed_frame'],$old->recoveryImage($w));Check::same($m['next_frame'],$next->recoveryImage($w));Check::same($files,entryFiles($x));Check::same($account,$x->e->pdo->query('SELECT * FROM account_example')->fetchAll(PDO::FETCH_ASSOC));
+    $q=$x->e->pdo->prepare('SELECT * FROM sosecurity_account_roots WHERE namespace=?');$q->execute([$m['namespace']]);$raw=$q->fetch(PDO::FETCH_ASSOC);$q->closeCursor();Check::same($m['next_root'],SoSecurity\Account\LedgerState::metadata($raw,true,$m['namespace'],$x->e->keys));$marker=0;witnessReason('account.witness_pending',static function()use($boundary,&$marker):void{$boundary->run('owned.premature.worker',static function()use(&$marker):void{++$marker;});});Check::same(0,$marker);
+    witnessReason('account.worker_changed',static function()use($w,$review,$plan,$control,$token,$grant):void{$w->handoffWorkers($review,$plan,$control,'user',$token,$grant,'witnessBudget');});Check::same($done,$w->inspect('witnessBudget'));Check::same(4,recoveryAuditCount($w));
+});
+echo 'PASS approved cross-generation worker handoff: '.Check::$assertions.' assertions PHP '.PHP_VERSION."; durable old close, new fence and exact signed root CAS, no account/file changes, quarantine remains\n";

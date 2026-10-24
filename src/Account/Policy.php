@@ -11,7 +11,7 @@ final class Policy
     public function __construct(array $options=[])
     {
         $defaults=['registration_seconds'=>86400,'address_change_seconds'=>1800,'recovery_seconds'=>900,'notification_seconds'=>86400,'maximum_attempts'=>5,'resend_seconds'=>60,'maximum_resends'=>3,'maximum_entries'=>1000,'io_milliseconds'=>10000,'smtp_utf8'=>false];
-        if(array_diff(array_keys($options),array_keys($defaults))){throw new ConfigurationException('Unknown account lifecycle policy.','configuration.account_policy');}
+        if(count($options) > count($defaults) || array_diff(array_keys($options),array_keys($defaults))){throw new ConfigurationException('Unknown account lifecycle policy.','configuration.account_policy');}
         foreach($defaults as $name=>$default){$value=array_key_exists($name,$options)?$options[$name]:$default;$this->values[$name]=$value;}
         foreach(['registration_seconds','address_change_seconds','recovery_seconds','notification_seconds'] as $name){$this->integer($name,1,604800);}
         $this->integer('maximum_attempts',1,10);$this->integer('resend_seconds',1,86400);$this->integer('maximum_resends',0,10);$this->integer('maximum_entries',1,100000);$this->integer('io_milliseconds',1,30000);

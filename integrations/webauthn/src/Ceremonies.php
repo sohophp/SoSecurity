@@ -55,6 +55,7 @@ final class Ceremonies
     /** @param array<mixed> $existing */
     public function beginRegistration(PublicKeyCredentialUserEntity $user, array $existing): PublicKeyCredentialCreationOptions
     {
+        if (count($existing) > 32) { throw new InvalidArgumentException('Too many existing credentials'); }
         $exclude = [];
         foreach ($existing as $record) {
             if (!$record instanceof CredentialRecord || $record->userHandle !== $user->id) {
@@ -93,8 +94,8 @@ final class Ceremonies
     /** @param array<mixed> $registered */
     public function beginAuthentication(string $userHandle, array $registered): PublicKeyCredentialRequestOptions
     {
-        if ($userHandle === '' || $registered === []) {
-            throw new InvalidArgumentException('At least one credential is required');
+        if ($userHandle === '' || $registered === [] || count($registered) > 32) {
+            throw new InvalidArgumentException('Provide 1-32 registered credentials');
         }
         $allow = [];
         foreach ($registered as $record) {

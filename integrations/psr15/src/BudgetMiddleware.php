@@ -13,11 +13,7 @@ use SoSecurity\RateLimit\BudgetLimiter;
 /** Request budget before the application handler, with no implicit identity or response factory. */
 final class BudgetMiddleware implements MiddlewareInterface
 {
-    private $limiter;
-    private $scope;
-    private $subject;
-    private $denied;
-    private $cost;
+    private $read;
 
     public function __construct(BudgetLimiter $limiter, string $scope, callable $subject, ResponseInterface $denied, int $cost = 1)
     {
@@ -25,25 +21,35 @@ final class BudgetMiddleware implements MiddlewareInterface
             || $cost < 1 || $cost > 1000000 || $denied->getStatusCode() < 400 || $denied->getStatusCode() > 599) {
             throw new ConfigurationException('Invalid PSR-15 budget scope, cost or denial response.', 'configuration.budget');
         }
-        $this->limiter = $limiter;
-        $this->scope = $scope;
-        $this->subject = $subject;
-        $this->denied = $denied;
-        $this->cost = $cost;
+        // Keep retained host services and denial bodies out of object export/debug output.
+        $this->read = static function () use ($limiter, $scope, $subject, $denied, $cost): array {
+            return [$limiter, $scope, $subject, $denied, $cost];
+        };
     }
 
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
-        $subject = ($this->subject)($request);
+        [$limiter, $scope, $resolve, $denied, $cost] = ($this->read)();
+        $subject = $resolve($request);
         if (!is_string($subject)) {
             throw new ConfigurationException('PSR-15 subject resolver must return a string.', 'configuration.budget');
         }
-        $decision = $this->limiter->consume($this->scope, $subject, $this->cost);
+        $decision = $limiter->consume($scope, $subject, $cost);
         if (!$decision->allowed()) {
             return $decision->retryAfter() > 0
-                ? $this->denied->withHeader('Retry-After', (string) $decision->retryAfter())
-                : $this->denied;
+                ? $denied->withHeader('Retry-After', (string) $decision->retryAfter())
+                : $denied;
         }
         return $handler->handle($request);
+    }
+
+    public function __debugInfo(): array { return ['budget_middleware' => '[redacted]']; }
+    public function __sleep(): array
+    {
+        throw new ConfigurationException('Rebuild PSR-15 middleware from trusted services.', 'configuration.budget_serialization');
+    }
+    public function __wakeup(): void
+    {
+        throw new ConfigurationException('Rebuild PSR-15 middleware from trusted services.', 'configuration.budget_serialization');
     }
 }

@@ -43,3 +43,4 @@ with tempfile.TemporaryDirectory(prefix="sosecurity-psr15-") as temp:
     autoload = str(project / "vendor" / "autoload.php")
     for runtime in php_runtimes:
         subprocess.run([runtime, str(root / "tests" / "psr15-budget.php"), autoload], check=True)
+        subprocess.run([runtime, str(root / "tests" / "psr15-privacy.php"), autoload], check=True)

@@ -43,6 +43,9 @@ with tempfile.TemporaryDirectory(prefix='sosecurity-archive-') as directory:
         assert all('src/Idempotency/'+name+'.php' in names for name in ['Policy','Request','Response','Outcome','SqlExecutor','State','Schema'])
         assert all('src/Support/'+name+'.php' in names for name in ['SqlTransaction','SqlSchema'])
         assert all('resources/sql/idempotency-'+driver+'.sql' in names for driver in ['sqlite','mysql'])
+        assert 'src/Audit/SqlSink.php' in names
+        assert all(name in names for name in ['examples/audit-sql.php','docs/audit-sql.md','docs/audit-sql.en.md'])
+        assert all('resources/sql/audit-'+driver+'.sql' in names for driver in ['sqlite','mysql'])
         assert 'docs/idempotency.md' in names
         assert all('src/Outbox/'+name+'.php' in names for name in ['Policy','Message','Status','Claim','SqlOutbox','State','Schema'])
         assert all('resources/sql/outbox-'+driver+'.sql' in names for driver in ['sqlite','mysql'])
@@ -87,4 +90,5 @@ with tempfile.TemporaryDirectory(prefix='sosecurity-archive-') as directory:
         unexpected = [name for name in names if name.startswith(('vendor/', 'tools/', 'integrations/', 'resources/api/', 'tests/', 'bin/', 'demo/', '.git/', '.github/', '.phpstan-cache/', 'var/'))]
         assert not unexpected, unexpected[:10]
         assert not any(name.endswith(('.env', '.log', 'composer.lock')) for name in names)
+        assert not any(name.startswith('docs/') and any('-evidence-' in part for part in Path(name).parts) for name in names), 'Development evidence directories must not ship'
         print(f'PASS archive: {len(names)} package files; no vendor/development artifacts/private configuration filenames')

@@ -20,6 +20,12 @@ final class HmacKeys
         if (!isset($this->keys[$current])) { throw new ConfigurationException('Current HMAC key is missing.','configuration.keys'); }
         $this->current=$current;
     }
+    /** Domain-separated configuration digest; no raw signing material is returned. */
+    public function stateDigest():string
+    {
+        $rows=[];foreach($this->keys as $id=>$read){$rows[$id]=hash_hmac('sha256','SoSecurity.Support.HmacKeys.Material.1.',$this->secret($id));}ksort($rows,SORT_STRING);
+        return hash('sha256','SoSecurity.Support.HmacKeys.State.1.'.json_encode([$this->current,$rows],JSON_UNESCAPED_SLASHES));
+    }
     public function currentId(): string { return $this->current; }
     public function sign(string $message): string
     {

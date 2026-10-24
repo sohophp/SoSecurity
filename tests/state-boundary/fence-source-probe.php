@@ -1,0 +1,6 @@
+<?php
+declare(strict_types=1);
+require __DIR__.'/permission-support.php';
+$record=[];entryCase(static function(EntryEnvironment $x)use(&$record):void{
+    $fence=entryPromote($x);$paths=glob($x->e->directory.'/entry-bound-fence/*.fence');Check::same(1,count($paths));$path=$paths[0];$open=file_get_contents($path);$before=$x->source->digest();$x->boundary->run('owned.worker.close',static function()use($fence):void{$fence->drain(static function():void{});});$closed=file_get_contents($path);$after=$x->source->digest();$w=$x->inspect();file_put_contents($path,$open);$ran=0;$caught=null;try{$x->boundary->run('owned.worker.restored',static function()use($fence,&$ran):void{$fence->work(static function()use(&$ran):void{++$ran;});});}catch(Throwable $error){$caught=$error;}$record=['runtime'=>PHP_VERSION,'source_changed_on_close'=>$before!==$after,'open_closed_bytes_differ'=>$open!==$closed,'before_status'=>$w['status'],'after_status'=>$x->inspect()['status'],'restored_worker_calls'=>$ran,'reason'=>$caught instanceof SoSecurity\Exception\SecurityException?$caught->reason():null,'passed'=>$ran===0&&$caught instanceof SoSecurity\Exception\SecurityException&&$caught->reason()==='account.witness_stale'&&$before!==$after];
+});echo json_encode($record,JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES)."\n";if(!$record['passed']){exit(1);}

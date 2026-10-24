@@ -1,0 +1,15 @@
+<?php
+declare(strict_types=1);
+require_once __DIR__.'/crash-load.php';
+require_once __DIR__.'/api-intent-support.php';
+$action=$argv[2]??'';$mode=$argv[3]??'';$transport=$argv[4]??'';if(!in_array($action,['produce','resume'],true)||!in_array($mode,['after-pending','after-effects'],true)||!is_dir(dirname($transport))||(fileperms(dirname($transport))&0077)!==0){throw new RuntimeException('Use the owned private API intent crash controller.');}
+if($action==='produce'){
+    entryCase(static function(EntryEnvironment $x)use($transport,$mode,$argv):void{
+        $token=$x->login()->credential()->token();$api=nativeApi($x);$before=$x->inspect();$identity=apiIntentIdentity($x,'user',$token);$expected=apiIntentExpected($x,$api,'issue','user','user',$identity['fingerprint'],$identity['fingerprint'],SoSecurity\Auth\SessionRegistry::reference($token),['owner'=>'user','name'=>'Crash exact intent','scopes'=>['records:read'],'ttl'=>86400],['records:read','records:write'],$before['digest']);$reference=$x->store->snapshotReference(SoSecurity\Support\Guard::key('api-credentials','managed-test',hash('sha256',json_encode(['api-credential-root-v1','managed-test','tenant','user']))));
+        file_put_contents($transport,json_encode(['producer_pid'=>getmypid(),'target'=>crashMeta($x,$argv[1]),'before'=>$before,'expected'=>$expected,'reference'=>$reference]));chmod($transport,0600);
+        $x->persistHook=static function($h)use($mode):bool{if($mode==='after-pending'){crashStop();}return true;};$x->budgetHook=static function(string $phase)use($mode):bool{if($mode==='after-effects'&&$phase==='final'){crashStop();}return true;};$api->issue('tenant','user',$token,'Crash exact intent',['records:read']);throw new RuntimeException('Writer must be killed at the fixed durable point.');
+    });exit(2);
+}
+$m=json_decode(file_get_contents($transport),true);Check::same(false,$m['producer_pid']===getmypid());$x=crashLoad($m['target'],false);$pending=$x->inspect();Check::same('pending',$pending['status']);apiIntentCheck($m['expected'],$pending);Check::same($m['before']['digest'],$pending['digest']);Check::same($m['before']['revision']+1,$pending['revision']);$file=$x->e->directory.'/factors/'.$m['reference']['file'];Check::same($mode==='after-effects',is_file($file));if(is_file($file)){$ledger=json_decode(file_get_contents($file),true);Check::same(1,count($ledger['value']['entries']));}
+$callbacks=0;$api=nativeApi($x,static function()use(&$callbacks):bool{++$callbacks;return true;});$files=entryFiles($x);witnessReason('account.witness_pending',static function()use($api):void{$api->authenticate('tenant','bad-token','records:read');});Check::same(0,$callbacks);Check::same($pending,$x->inspect());Check::same($files,entryFiles($x));Check::same([],glob($x->e->directory.'/factors/stage-*'));
+echo 'PASS real native API intent SIGKILL '.$mode.': '.Check::$assertions.' assertions PHP '.PHP_VERSION."; fresh PDOs/services, original authorized parameters retained, actual before/after ledger, no implicit replay or activation\n";

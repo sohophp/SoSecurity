@@ -9,9 +9,12 @@ final class IpRules
 
     public function __construct(array $rules = [])
     {
+        if (count($rules) > 1024) {
+            throw new \SoSecurity\Exception\ConfigurationException('Too many IP rules.');
+        }
         foreach ($rules as $rule) {
-            if (!is_string($rule)) {
-                throw new \SoSecurity\Exception\ConfigurationException('IP rules must be strings.');
+            if (!is_string($rule) || strlen($rule) > 49) {
+                throw new \SoSecurity\Exception\ConfigurationException('IP rules must be bounded strings.');
             }
             $parts = explode('/', $rule);
             $bytes = @inet_pton($parts[0]);
@@ -26,6 +29,7 @@ final class IpRules
 
     public function contains(string $ip): bool
     {
+        if (strlen($ip) > 45) { return false; }
         $address = @inet_pton($ip);
         if ($address === false) {
             return false;

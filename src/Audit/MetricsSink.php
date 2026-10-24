@@ -26,6 +26,7 @@ final class MetricsSink
     private $retained;
     private $sink;
     private $siteBinding;
+    private $archiveProfile;
 
     public function __construct(AtomicStore $store, string $site, array $eventClasses, array $alertThresholds,
         int $maximumEvents, int $windowSeconds, callable $sink, ?Clock $clock = null, int $retainedWindows = 0)
@@ -58,6 +59,13 @@ final class MetricsSink
         if ($retainedWindows > 0) { $policy = hash('sha256', $policy . ':retained:' . $retainedWindows); }
         $key = Guard::key('audit-metrics', $site, 'fixed-window');
         $clock = $clock ?? new SystemClock();
+        $profile = ['policy' => $policy, 'site_binding' => $this->siteBinding,
+            'maximum_events' => $maximumEvents, 'window_seconds' => $windowSeconds,
+            'thresholds' => $alertThresholds, 'retained_windows' => $retainedWindows];
+        $this->archiveProfile = static function (Clock $expected) use ($clock, $profile): ?array {
+            if ($expected !== $clock && !($expected instanceof SystemClock && $clock instanceof SystemClock)) { return null; }
+            return $profile;
+        };
         if ($retainedWindows > 0) {
             $this->write = static function (string $class) use ($store, $key, $clock, $policy, $windowSeconds, $maximumEvents, $retainedWindows): void {
                 $now = $clock->now();
@@ -161,6 +169,15 @@ final class MetricsSink
 
     /** Stable, non-secret binding for durable alert identities; never exposes the site label. */
     public function siteBinding(): string { return $this->siteBinding; }
+
+    /** Pure fixed-policy metadata for an archive sharing the source's expiry clock. */
+    public function archiveProfile(Clock $clock): ?array
+    {
+        if (!$this->archiveProfile instanceof \Closure) {
+            throw new ConfigurationException('Rebuild audit metrics from trusted configuration.', 'configuration.audit_serialization');
+        }
+        return ($this->archiveProfile)($clock);
+    }
 
     private static function window(int $now, int $seconds): array
     {
@@ -288,7 +305,7 @@ final class MetricsSink
 
     private static function recordShape(array $record): void
     {
-        if (array_keys($record) !== ['time', 'event', 'scope', 'subject', 'context']
+        if (count($record) !== 5 || array_keys($record) !== ['time', 'event', 'scope', 'subject', 'context']
             || !is_int($record['time']) || $record['time'] < 0
             || !is_string($record['event']) || !preg_match('/\A[a-z][a-z0-9_.]{0,63}\z/D', $record['event'])
             || !is_string($record['scope']) || $record['scope'] === '' || strlen($record['scope']) > 256

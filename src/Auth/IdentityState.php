@@ -11,6 +11,15 @@ final class IdentityState
     private $provider;
     private $factor;
     public function __construct(IdentityProvider $provider, ?SecondFactor $factor) { $this->provider = $provider; $this->factor = $factor; }
+    public function matchesStatePolicy(\SoSecurity\Account\ManagedSecondFactor $factor):bool{return $this->provider instanceof PasswordIdentityProvider&&$this->factor===$factor;}
+    public function matchesRecoveryRegistry(\SoSecurity\Account\FactorRegistry $registry):bool{return $this->provider instanceof PasswordIdentityProvider&&$this->factor instanceof \SoSecurity\Account\ManagedSecondFactor&&$this->factor->usesRegistry($registry);}
+    public function matchesProviders(IdentityProvider $provider,?SecondFactor $factor):bool{return $this->provider===$provider&&$this->factor===$factor;}
+    public function operationRolePolicy(\SoSecurity\Authorization\Authorizer $authorizer):?\SoSecurity\Authorization\RolePolicy{return $authorizer->stateRolePolicy($this->provider);}
+    /** Pure exact identity/source match; effectful audit is not supported by these native proof paths. */
+    public function operationSnapshotPolicy(\SoSecurity\Authorization\Authorizer $authorizer,\SoSecurity\Account\StateAccountPolicy $state):?\SoSecurity\Authorization\SnapshotPolicy
+    {
+        $declared=$authorizer->stateSnapshotPolicy($this->provider,$state);return $declared!==null&&$declared['audit']===null?$declared['policy']:null;
+    }
     public function load(string $scope, string $subject): ?array
     {
         $account = $this->provider->find($scope, $subject);

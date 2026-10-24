@@ -1,0 +1,56 @@
+{
+    "rows": [
+        {
+            "driver": "mysql",
+            "types": {
+                "counter": "int",
+                "fingerprint": "digest",
+                "key_id": "id",
+                "label": "bytes:16",
+                "large_label": "bytes:4096"
+            },
+            "alias": null,
+            "prefix": "",
+            "expected": "CASE WHEN counter>=0 AND counter<=9223372036854775807 THEN counter ELSE NULL END AS counter,CASE WHEN octet_length(fingerprint)<=64 THEN fingerprint ELSE NULL END AS fingerprint,CASE WHEN octet_length(key_id)<=32 THEN key_id ELSE NULL END AS key_id,CASE WHEN octet_length(label)<=16 THEN label ELSE NULL END AS label,CASE WHEN octet_length(large_label)<=4096 THEN large_label ELSE NULL END AS large_label"
+        },
+        {
+            "driver": "mysql",
+            "types": {
+                "counter": "int",
+                "fingerprint": "digest",
+                "key_id": "id",
+                "label": "bytes:16",
+                "large_label": "bytes:4096"
+            },
+            "alias": "r",
+            "prefix": "r_",
+            "expected": "CASE WHEN r.counter>=0 AND r.counter<=9223372036854775807 THEN r.counter ELSE NULL END AS r_counter,CASE WHEN octet_length(r.fingerprint)<=64 THEN r.fingerprint ELSE NULL END AS r_fingerprint,CASE WHEN octet_length(r.key_id)<=32 THEN r.key_id ELSE NULL END AS r_key_id,CASE WHEN octet_length(r.label)<=16 THEN r.label ELSE NULL END AS r_label,CASE WHEN octet_length(r.large_label)<=4096 THEN r.large_label ELSE NULL END AS r_large_label"
+        },
+        {
+            "driver": "sqlite",
+            "types": {
+                "counter": "int",
+                "fingerprint": "digest",
+                "key_id": "id",
+                "label": "bytes:16",
+                "large_label": "bytes:4096"
+            },
+            "alias": null,
+            "prefix": "",
+            "expected": "CASE WHEN typeof(counter)='integer' AND counter>=0 THEN counter ELSE NULL END AS counter,CASE WHEN typeof(fingerprint)='text' AND length(CAST(fingerprint AS BLOB))<=64 THEN fingerprint ELSE NULL END AS fingerprint,CASE WHEN typeof(key_id)='text' AND length(CAST(key_id AS BLOB))<=32 THEN key_id ELSE NULL END AS key_id,CASE WHEN typeof(label)='text' AND length(CAST(label AS BLOB))<=16 THEN label ELSE NULL END AS label,CASE WHEN typeof(large_label)='text' AND length(CAST(large_label AS BLOB))<=4096 THEN large_label ELSE NULL END AS large_label"
+        },
+        {
+            "driver": "sqlite",
+            "types": {
+                "counter": "int",
+                "fingerprint": "digest",
+                "key_id": "id",
+                "label": "bytes:16",
+                "large_label": "bytes:4096"
+            },
+            "alias": "r",
+            "prefix": "r_",
+            "expected": "CASE WHEN typeof(r.counter)='integer' AND r.counter>=0 THEN r.counter ELSE NULL END AS r_counter,CASE WHEN typeof(r.fingerprint)='text' AND length(CAST(r.fingerprint AS BLOB))<=64 THEN r.fingerprint ELSE NULL END AS r_fingerprint,CASE WHEN typeof(r.key_id)='text' AND length(CAST(r.key_id AS BLOB))<=32 THEN r.key_id ELSE NULL END AS r_key_id,CASE WHEN typeof(r.label)='text' AND length(CAST(r.label AS BLOB))<=16 THEN r.label ELSE NULL END AS r_label,CASE WHEN typeof(r.large_label)='text' AND length(CAST(r.large_label AS BLOB))<=4096 THEN r.large_label ELSE NULL END AS r_large_label"
+        }
+    ]
+}

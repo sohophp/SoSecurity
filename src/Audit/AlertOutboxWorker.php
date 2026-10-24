@@ -50,7 +50,7 @@ final class AlertOutboxWorker
         try { $accepted = ($this->deliver)($fresh->status()->deliveryId(), $alert); }
         catch (\Throwable $error) {
             $this->settleFailure($claim, 'audit.alert_delivery', true);
-            throw new DependencyException('Alert transport did not confirm durable acceptance.', 'audit.alert_delivery', $error);
+            throw new DependencyException('Alert transport did not confirm durable acceptance.', 'audit.alert_delivery');
         }
         if ($accepted !== true) {
             $this->settleFailure($claim, 'audit.alert_delivery', true);

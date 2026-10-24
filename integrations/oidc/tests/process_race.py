@@ -34,7 +34,8 @@ def main():
         raise RuntimeError("Only one owned OIDC test backend may be selected")
     worker = str(Path(__file__).with_name("process-worker.php"))
     checks = 0
-    for action in ("issue_race", "verify_race"):
+    for action, mutation in (("issue_race", "logout"), ("verify_race", "logout"),
+                             ("issue_race", "relink"), ("verify_race", "relink")):
         with tempfile.TemporaryDirectory(prefix="sosecurity-oidc-process-") as directory:
             base = [runtime, worker, autoload, directory]
             if run(base + ["setup"]) != "ready":
@@ -48,8 +49,8 @@ def main():
             try:
                 wait_for(Path(directory) / "ready", process)
                 checks += 1
-                if run(base + ["logout"]) != "logged_out":
-                    raise AssertionError("Concurrent logout did not commit")
+                if run(base + [mutation]) != ("logged_out" if mutation == "logout" else "relinked"):
+                    raise AssertionError("Concurrent authority change did not commit")
                 checks += 1
             finally:
                 (Path(directory) / "go").write_text("1")

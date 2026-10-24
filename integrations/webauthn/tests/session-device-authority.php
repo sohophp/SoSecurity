@@ -40,10 +40,10 @@ $credential = $sessions->register('host-test', 'alice', $fingerprint, $epoch, 'w
 if ($credential === null) { throw new RuntimeException('Cannot establish trusted test session'); }
 $current = ['subject' => 'alice', 'token' => $credential->token(), 'binding' => 'host-session-binding'];
 $calls = 0;
-$revokeOnReturn = false;
-$reference = static function () use (&$current, &$calls, &$revokeOnReturn, $sessions): array {
+$revokeOnCall = 0;
+$reference = static function () use (&$current, &$calls, &$revokeOnCall, $sessions): array {
     ++$calls;
-    if ($revokeOnReturn && $calls === 2) {
+    if ($revokeOnCall > 0 && $calls === $revokeOnCall) {
         $sessions->revoke('host-test', 'alice', SessionRegistry::reference($current['token'])['id']);
     }
     return $current;
@@ -122,7 +122,7 @@ $current['token'] = $replacement->token();
 $repository->register($record('third'), 1300, 1);
 $proof = $authority->issueRemovalProof('alice', 'third');
 $calls = 0;
-$revokeOnReturn = true;
+$revokeOnCall = 3; // before, current, then the post-mutation return phase.
 try {
     $manager->remove('alice', 'third', $proof);
     throw new RuntimeException('Revoked session reported a certain outcome');
@@ -134,4 +134,22 @@ if ($repository->find('third', 'alice') !== null || count($notices) !== 1) {
     throw new RuntimeException('Unknown outcome was not preserved for reconciliation');
 }
 ++ $checks;
+$revokeOnCall = 0;
+$replacement = $sessions->register('host-test', 'alice', $fingerprint,
+    $sessions->epoch('host-test', 'alice'), 'webauthn');
+if ($replacement === null) { throw new RuntimeException('Cannot renew trusted session for current-phase test'); }
+$current['token'] = $replacement->token();
+$repository->register($record('fourth'), 1300, $repository->generation('alice'));
+$proof = $authority->issueRemovalProof('alice', 'fourth');
+$calls = 0;
+$revokeOnCall = 2;
+if ($manager->remove('alice', 'fourth', $proof) || $repository->find('fourth', 'alice') === null ||
+    count($repository->forUser('alice')) !== 2 || count($notices) !== 1) {
+    throw new RuntimeException('Current-phase session withdrawal changed devices');
+}
+++$checks;
+if ($authority->allow('return', 'host-test', 'alice', 'fourth', $proof, $clock->now())) {
+    throw new RuntimeException('Denied current-phase authority retained a return grant');
+}
+++$checks;
 echo "WebAuthn host session device authority: {$checks} checks passed\n";

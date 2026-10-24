@@ -193,7 +193,7 @@ final class Config
         $this->authentication = null;
         if (array_key_exists('authentication', $config)) {
             $options = self::options($config['authentication'], ['identity_provider' => null, 'request_guard' => null, 'second_factor' => null, 'managed_factors' => false,
-                'idle' => 1800, 'absolute' => 28800, 'capacity' => 16, 'challenge_ttl' => 300, 'claim_seconds' => 10, 'attempts' => 5], 'authentication');
+                'idle' => 1800, 'absolute' => 28800, 'capacity' => 16, 'challenge_ttl' => 300, 'claim_seconds' => 10, 'attempts' => 5, 'state_boundary'=>null], 'authentication');
             self::text($options['identity_provider'], 'authentication.identity_provider');
             foreach (['request_guard', 'second_factor'] as $service) { if ($options[$service] !== null) { self::text($options[$service], 'authentication.' . $service); } }
             if (!is_bool($options['managed_factors']) || ($options['managed_factors'] && $options['second_factor'] !== null)) { throw new ConfigurationException('Select either the managed factor directory or one explicit second-factor service.','configuration.authentication_factor'); }
@@ -201,6 +201,13 @@ final class Config
             if ($options['idle'] > $options['absolute']) { throw new ConfigurationException('Authentication idle timeout must not exceed absolute timeout.', 'configuration.authentication'); }
             self::range($options['capacity'], 1, 32, 'authentication.capacity'); self::range($options['challenge_ttl'], 30, 600, 'authentication.challenge_ttl');
             self::range($options['claim_seconds'], 1, 30, 'authentication.claim_seconds'); self::range($options['attempts'], 1, 10, 'authentication.attempts');
+            if($options['state_boundary']!==null){
+                $state=self::options($options['state_boundary'],['authority'=>null,'store'=>null,'scope'=>null,'epoch'=>null],'authentication.state_boundary');
+                foreach(['authority','store','scope','epoch'] as $field){self::text($state[$field],'authentication.state_boundary.'.$field);}
+                Guard::label($state['scope']);
+                if(!$options['managed_factors']||preg_match('//u',$state['scope'])!==1||!preg_match('/\A[a-f0-9]{64}\z/D',$state['epoch'])||$options['request_guard']===null){throw new ConfigurationException('Protected authentication needs an explicit managed factor graph, request guard and exact state context.','configuration.state_boundary');}
+                $options['state_boundary']=$state;
+            }
             $this->authentication = self::copy($options);
         }
         $this->authorization = null;
@@ -232,8 +239,9 @@ final class Config
         $this->webhooks=[];$endpoints=self::copy(self::map(self::provided($config,'webhooks',[]),'webhooks'));if(count($endpoints)>32){throw new ConfigurationException('Configure at most 32 webhook endpoints.','configuration.webhook');}
         foreach($endpoints as $name=>$definition){
             if(!is_string($name)||!preg_match('/\A[a-z][a-z0-9_.-]{0,63}\z/D',$name)){throw new ConfigurationException('Invalid webhook endpoint name.','configuration.webhook');}
-            $options=self::options($definition,['scope'=>null,'account'=>null,'url'=>null,'protocol'=>null,'key_provider'=>null,'request_guard'=>null,'policy'=>[],'inbox'=>null,'processing'=>null],'webhooks.'.$name);
+            $options=self::options($definition,['scope'=>null,'account'=>null,'url'=>null,'protocol'=>null,'key_provider'=>null,'request_guard'=>null,'policy'=>[],'inbox'=>null,'processing'=>null,'state_connection'=>null],'webhooks.'.$name);
             foreach(['scope','account','url','protocol'] as $field){self::text($options[$field],'webhooks.'.$name.'.'.$field);}
+            if($options['state_connection']!==null){self::text($options['state_connection'],'webhooks.'.$name.'.state_connection');}
             if(!is_array($options['policy'])){throw new ConfigurationException('Webhook policy must be an array.','configuration.webhook');}
             $endpoint=new \SoSecurity\Webhook\Endpoint($name,$options['scope'],$options['account'],$options['url'],$options['protocol'],$options['policy']);$options['policy']=$endpoint->options();
             if($options['inbox']!==null){$inbox=self::options($options['inbox'],['connection'=>null,'integrity_keys'=>null,'association_guard'=>null],'webhooks.'.$name.'.inbox');foreach(['connection','integrity_keys','association_guard'] as $field){self::text($inbox[$field],'webhooks.'.$name.'.inbox.'.$field);}$options['inbox']=$inbox;}
@@ -269,10 +277,10 @@ final class Config
         }
         $this->accounts=null;
         if(array_key_exists('accounts',$config)){
-            $options=self::copy(self::options($config['accounts'],['connection'=>null,'scope'=>null,'epoch'=>null,'repository'=>null,'integrity_keys'=>null,'outbox_keys'=>null,'notifications'=>null,'request_budget'=>null,'registration_authority'=>null,'request_guard'=>null,'management_guard'=>null,'delivery_guard'=>null,'recovery_authority'=>null,'recovery_factor'=>null,'strong_recovery'=>null,'mailbox_authority'=>null,'mailbox_approval'=>null,'policy'=>[]],'accounts'));
+            $options=self::copy(self::options($config['accounts'],['connection'=>null,'scope'=>null,'epoch'=>null,'repository'=>null,'integrity_keys'=>null,'outbox_keys'=>null,'notifications'=>null,'request_budget'=>null,'registration_authority'=>null,'request_guard'=>null,'management_guard'=>null,'delivery_guard'=>null,'recovery_authority'=>null,'recovery_factor'=>null,'strong_recovery'=>null,'mailbox_authority'=>null,'mailbox_approval'=>null,'state_connection'=>null,'state_request_guard'=>null,'policy'=>[]],'accounts'));
             foreach(['connection','scope','epoch','repository','integrity_keys','outbox_keys','notifications','request_budget'] as $field){self::text($options[$field],'accounts.'.$field);}
             Guard::label($options['scope']);if(preg_match('//u',$options['scope'])!==1||!preg_match('/\A[a-f0-9]{64}\z/D',$options['epoch'])){throw new ConfigurationException('Use a UTF-8 account scope and an external trusted epoch.','configuration.accounts');}
-            foreach(['registration_authority','request_guard','management_guard','delivery_guard','recovery_authority','recovery_factor','strong_recovery','mailbox_authority','mailbox_approval'] as $field){if($options[$field]!==null){self::text($options[$field],'accounts.'.$field);}}
+            foreach(['registration_authority','request_guard','management_guard','delivery_guard','recovery_authority','recovery_factor','strong_recovery','mailbox_authority','mailbox_approval','state_connection','state_request_guard'] as $field){if($options[$field]!==null){self::text($options[$field],'accounts.'.$field);}}
             if($options['registration_authority']===null&&$options['request_guard']===null&&$options['recovery_authority']===null&&$options['mailbox_authority']===null){throw new ConfigurationException('Enable at least one explicit account operation authority.','configuration.accounts');}
             if($options['mailbox_authority']!==null&&$options['mailbox_approval']===null){throw new ConfigurationException('Mailbox recovery requires an explicit strong approval service.','configuration.account_mailbox_recovery');}
             if($options['request_guard']!==null&&($this->authentication===null||$this->operations===null)){throw new ConfigurationException('Account address changes require authentication and operation grants.','configuration.accounts_authentication');}
@@ -289,6 +297,10 @@ final class Config
         }
         if ($this->authentication!==null && $this->authentication['managed_factors'] && $this->accountFactors===null) { throw new ConfigurationException('Managed authentication requires an explicit factor directory.','configuration.authentication_factor'); }
         if ($this->authentication!==null && $this->authentication['managed_factors'] && $this->mfa!==null) { throw new ConfigurationException('Managed authentication cannot expose the legacy raw MFA factory.','configuration.authentication_factor'); }
+        if($this->authentication!==null&&$this->authentication['state_boundary']!==null){
+            $state=$this->authentication['state_boundary'];
+            if($this->accountFactors===null||$this->accountFactors['scope']!==$state['scope']||$this->accountFactors['epoch']!==$state['epoch']||($this->accounts!==null&&($this->accounts['scope']!==$state['scope']||$this->accounts['epoch']!==$state['epoch']))){throw new ConfigurationException('Protected authentication and factor workers require one exact state context.','configuration.state_boundary');}
+        }
         $this->remember = null;
         if (array_key_exists('remember', $config)) {
             if ($this->authentication === null) { throw new ConfigurationException('Configure authentication before persistent login.', 'configuration.remember'); }
@@ -371,7 +383,7 @@ final class Config
     }
     private static function known(array $data, array $keys): void
     {
-        if (array_diff(array_keys($data), $keys)) { throw new ConfigurationException('Unknown configuration option.', 'configuration.unknown_option'); }
+        if (count($data) > count($keys) || array_diff(array_keys($data), $keys)) { throw new ConfigurationException('Unknown configuration option.', 'configuration.unknown_option'); }
     }
     private static function map($value, string $name): array
     {

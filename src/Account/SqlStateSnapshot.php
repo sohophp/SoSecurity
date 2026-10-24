@@ -66,52 +66,97 @@ final class SqlStateSnapshot implements StateSnapshot
         $tables=($this->tables)();if(!isset($tables[$table])){return false;}$spec=$tables[$table];ksort($columns);return $spec['columns']===$columns&&$spec['primary']===$primary&&($spec['where']===[]||$spec['where']===$scopeFilter);
     }
     public function connection():PDO{return ($this->dependencies)();}
+    /** Complete declared table may contain additional captured columns; required fields and keys must match. */
+    public function coversColumns(string $table,array $columns,array $primary,array $scopeFilter):bool
+    {
+        $tables=($this->tables)();if(!isset($tables[$table])){return false;}$spec=$tables[$table];
+        foreach($columns as $name=>$type){if(!isset($spec['columns'][$name])||$spec['columns'][$name]!==$type){return false;}}
+        return $spec['primary']===$primary&&($spec['where']===[]||$spec['where']===$scopeFilter);
+    }
+    /** Declared full-table row budget; no SQL is executed. */
+    public function maximumRows(string $table):int
+    {
+        $tables=($this->tables)();if(!isset($tables[$table])){self::configuration();}return $tables[$table]['maximum_rows'];
+    }
     public function fingerprint():string{return $this->fingerprint;}
     private function quote(string $value,string $driver):string{$q=chr($driver==='sqlite'?34:96);return $q.$value.$q;}
     private function table(string $name,string $driver):string{return ($driver==='sqlite'?'main.':'').$this->quote($name,$driver);}
     /** @return never */
     private static function corrupt():void{throw new StorageException('SQL state differs from its complete snapshot declaration.','account.snapshot_corrupt');}
+    /** Close outside exception unwinding so a cleanup error cannot retain private driver failures. */
+    private static function finish(\PDOStatement $query):void
+    {
+        try{$closed=$query->closeCursor();}catch(\Throwable $error){$closed=false;}
+        if(!$closed){throw new StorageException('SQL snapshot cursor cleanup failed.','sql.cleanup');}
+    }
     private function schema(SqlTransaction $u,string $table,array $spec):array
     {
         $driver=$u->driver();$schema=[];
         if($driver==='sqlite'){
-            foreach(['main','temp'] as $scope){if($u->query("SELECT 1 FROM ".$scope.".sqlite_master WHERE name COLLATE NOCASE='pragma_table_info' LIMIT 1")->fetchColumn()!==false){self::corrupt();}}
-            if($u->query("SELECT 1 FROM main.sqlite_master WHERE name=:name AND type='table' LIMIT 1",['name'=>$table])->fetchColumn()===false){self::corrupt();}
-            $q=$u->query("SELECT CASE WHEN length(CAST(name AS BLOB))<=64 THEN name ELSE NULL END AS name,CASE WHEN length(CAST(type AS BLOB))<=128 THEN type ELSE NULL END AS storage_type,cid AS ordinal,\"notnull\" AS required,pk AS primary_position FROM main.pragma_table_info(:table,'main') LIMIT 65",['table'=>$table]);
-            try{while($row=$q->fetch(PDO::FETCH_ASSOC)){
+            $q=$u->query("SELECT 1 FROM main.sqlite_master WHERE name COLLATE NOCASE='pragma_table_info' UNION ALL SELECT 1 FROM temp.sqlite_master WHERE name COLLATE NOCASE='pragma_table_info' LIMIT 1");
+            $shadow=false;$failure=null;try{$shadow=$q->fetchColumn();}catch(\Throwable $error){$failure=$error;}self::finish($q);if($failure!==null){throw $failure;}
+            if($shadow!==false){self::corrupt();}
+            $q=$u->query("SELECT CASE WHEN length(CAST(name AS BLOB))<=64 THEN name ELSE NULL END AS name,CASE WHEN length(CAST(type AS BLOB))<=128 THEN type ELSE NULL END AS storage_type,cid AS ordinal,\"notnull\" AS required,pk AS primary_position FROM main.pragma_table_info(:table,'main') WHERE EXISTS(SELECT 1 FROM main.sqlite_master WHERE name=:name AND type='table') LIMIT 65",['table'=>$table,'name'=>$table]);
+            $failure=null;try{while($row=$q->fetch(PDO::FETCH_ASSOC)){
                 if(!is_string($row['name'])||!is_string($row['storage_type'])){self::corrupt();}$name=$row['name'];if(!isset($spec['columns'][$name])||isset($schema[$name])){self::corrupt();}
                 $t=self::type($spec['columns'][$name]);$actual=strtoupper($row['storage_type']);$expectedDeclaration=isset($spec['sqlite_declarations'])?$spec['sqlite_declarations'][$name]:($t['kind']==='int'?'INTEGER':($t['kind']==='blob'?'BLOB':'TEXT'));if($actual!==$expectedDeclaration){self::corrupt();}
                 $required=SqlSchema::integer($row['required']);$pk=SqlSchema::integer($row['primary_position']);$expected=array_search($name,$spec['primary'],true);
                 if($pk!==($expected===false?0:$expected+1)||($required!==($t['nullable']?0:1)&&!(!$t['nullable']&&count($spec['primary'])===1&&$pk===1&&$actual==='INTEGER'))){self::corrupt();}
                 $schema[$name]=['type'=>$actual,'ordinal'=>SqlSchema::integer($row['ordinal']),'required'=>$required,'primary'=>$pk];
-            }}finally{$q->closeCursor();}
-        }else{
-            $row=$u->query('SELECT CASE WHEN OCTET_LENGTH(ENGINE)<=32 THEN ENGINE ELSE NULL END AS engine,TABLE_TYPE FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=:table LIMIT 1',['table'=>$table])->fetch(PDO::FETCH_ASSOC);
-            if(!is_array($row)||!is_string($row['engine'])||strtolower($row['engine'])!=='innodb'||$row['TABLE_TYPE']!=='BASE TABLE'){self::corrupt();}
-            $q=$u->query('SELECT CASE WHEN OCTET_LENGTH(COLUMN_NAME)<=64 THEN COLUMN_NAME ELSE NULL END AS name,CASE WHEN OCTET_LENGTH(DATA_TYPE)<=64 THEN DATA_TYPE ELSE NULL END AS storage_type,CASE WHEN OCTET_LENGTH(COLUMN_TYPE)<=128 THEN COLUMN_TYPE ELSE NULL END AS declaration,CASE WHEN OCTET_LENGTH(COLLATION_NAME)<=128 THEN COLLATION_NAME ELSE NULL END AS collation_name,ORDINAL_POSITION AS ordinal,IS_NULLABLE AS nullable FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=:table ORDER BY ORDINAL_POSITION LIMIT 65',['table'=>$table]);
-            try{while($row=$q->fetch(PDO::FETCH_ASSOC)){
-                if(!is_string($row['name'])||!is_string($row['storage_type'])||!is_string($row['declaration'])||!in_array($row['nullable'],['YES','NO'],true)){self::corrupt();}$name=$row['name'];if(!isset($spec['columns'][$name])||isset($schema[$name])){self::corrupt();}
-                $t=self::type($spec['columns'][$name]);$valid=$t['kind']==='int'?in_array($row['storage_type'],['tinyint','smallint','mediumint','int','bigint'],true):($t['kind']==='blob'?in_array($row['storage_type'],['tinyblob','blob','mediumblob','longblob'],true):in_array($row['storage_type'],['char','varchar','binary','varbinary','tinytext','text','mediumtext','longtext'],true));
-                if(!$valid||($row['nullable']==='YES')!==$t['nullable']){self::corrupt();}
-                $schema[$name]=['type'=>$row['storage_type'],'declaration'=>$row['declaration'],'collation'=>$row['collation_name'],'ordinal'=>SqlSchema::integer($row['ordinal']),'required'=>$row['nullable']==='NO'?1:0,'primary'=>0];
-            }}finally{$q->closeCursor();}
-            $q=$u->query("SELECT CASE WHEN OCTET_LENGTH(COLUMN_NAME)<=64 THEN COLUMN_NAME ELSE NULL END AS name,SEQ_IN_INDEX AS position,SUB_PART,NON_UNIQUE,INDEX_TYPE FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=:table AND INDEX_NAME='PRIMARY' ORDER BY SEQ_IN_INDEX LIMIT 5",['table'=>$table]);$keys=[];
-            try{while($row=$q->fetch(PDO::FETCH_ASSOC)){if(!is_string($row['name'])||$row['SUB_PART']!==null||(string)$row['NON_UNIQUE']!=='0'||$row['INDEX_TYPE']!=='BTREE'||!isset($schema[$row['name']])){self::corrupt();}$keys[]=$row['name'];$schema[$row['name']]['primary']=SqlSchema::integer($row['position']);}}finally{$q->closeCursor();}
-            if($keys!==$spec['primary']){self::corrupt();}
-        }
+            }}catch(\Throwable $error){$failure=$error;}self::finish($q);if($failure!==null){throw $failure;}
+        }else{return $this->mysqlSchemas($u,[$table=>$spec])[$table];}
         if(count($schema)!==count($spec['columns'])){self::corrupt();}ksort($schema);
-        if($driver==='sqlite'){
-            $hash=hash_init('sha256');$this->frame($hash,'SoSecurity.State.SQLiteSchema.1.');$count=0;
-            foreach(['main','temp'] as $scope){
-                $objects=$scope==='main'?"type IN('table','index','trigger')":"type='trigger'";
-                $q=$u->query("SELECT CASE WHEN length(CAST(name AS BLOB)) BETWEEN 1 AND 256 THEN name ELSE NULL END AS name,type,CASE WHEN sql IS NULL THEN 0 WHEN typeof(sql)='text' AND length(CAST(sql AS BLOB))<=16384 THEN 1 ELSE 2 END AS definition_kind,CASE WHEN typeof(sql)='text' AND length(CAST(sql AS BLOB))<=16384 THEN sql ELSE NULL END AS definition FROM ".$scope.".sqlite_master WHERE tbl_name=:table AND ".$objects." ORDER BY type COLLATE BINARY,name COLLATE BINARY LIMIT 129",['table'=>$table]);
-                try{while($row=$q->fetch(PDO::FETCH_ASSOC)){
-                    if(++$count>128||!is_string($row['name'])||!in_array($row['type'],['table','index','trigger'],true)){self::corrupt();}$kind=SqlSchema::integer($row['definition_kind']);
-                    if($kind===2||($kind===0?$row['definition']!==null:!is_string($row['definition']))){self::corrupt();}
-                    foreach([$scope,$row['type'],$row['name'],(string)$kind,$row['definition']??''] as $value){$this->frame($hash,$value);}
-                }}finally{$q->closeCursor();}
-            }$this->frame($hash,(string)$count);$schema['__objects']=hash_final($hash);
-        }return $schema;
+        $hash=hash_init('sha256');$this->frame($hash,'SoSecurity.State.SQLiteSchema.1.');$count=0;
+        $projection="CASE WHEN length(CAST(name AS BLOB)) BETWEEN 1 AND 256 THEN name ELSE NULL END AS name,type,CASE WHEN sql IS NULL THEN 0 WHEN typeof(sql)='text' AND length(CAST(sql AS BLOB))<=16384 THEN 1 ELSE 2 END AS definition_kind,CASE WHEN typeof(sql)='text' AND length(CAST(sql AS BLOB))<=16384 THEN sql ELSE NULL END AS definition";
+        $q=$u->query("SELECT 0 AS scope_order,'main' AS schema_scope,".$projection." FROM main.sqlite_master WHERE tbl_name=:main_table AND type IN('table','index','trigger') UNION ALL SELECT 1 AS scope_order,'temp' AS schema_scope,".$projection." FROM temp.sqlite_master WHERE tbl_name=:temp_table AND type='trigger' ORDER BY scope_order,type COLLATE BINARY,name COLLATE BINARY LIMIT 129",['main_table'=>$table,'temp_table'=>$table]);
+        $failure=null;try{while($row=$q->fetch(PDO::FETCH_ASSOC)){
+            if(++$count>128||!is_string($row['name'])||!in_array($row['type'],['table','index','trigger'],true)||!in_array($row['schema_scope'],['main','temp'],true)){self::corrupt();}$kind=SqlSchema::integer($row['definition_kind']);
+            if($kind===2||($kind===0?$row['definition']!==null:!is_string($row['definition']))){self::corrupt();}
+            foreach([$row['schema_scope'],$row['type'],$row['name'],(string)$kind,$row['definition']??''] as $value){$this->frame($hash,$value);}
+        }}catch(\Throwable $error){$failure=$error;}self::finish($q);if($failure!==null){throw $failure;}
+        $this->frame($hash,(string)$count);$schema['__objects']=hash_final($hash);
+        return $schema;
+    }
+    /** At most four complete table schemas per batch; no metadata survives the observation transaction. */
+    private function mysqlSchemas(SqlTransaction $u,array $tables):array
+    {
+        if(!$tables||count($tables)>4){self::configuration();}$text=false;$native=$u->canBatchLedgerReads();
+        // Establish physical table locks before catalog observation; no host callbacks cross this native path.
+        if($native){$this->mysqlAccess($u,$tables,false);}
+        if($u->canBatchLedgerReads()){try{$u->connection()->getAttribute(PDO::ATTR_STRINGIFY_FETCHES);}catch(\Throwable $error){$text=true;}}
+        $query=SqlSchema::snapshotMetadataStatement(array_keys($tables),$text);$schemas=array_fill_keys(array_keys($tables),[]);$keys=$schemas;
+        foreach($u->metadataRows($query['sql'],$query['parameters']) as $row){
+            if($row['section']==='columns'){
+                if(!is_string($row['table_name'])){self::corrupt();}$table=strtolower($row['table_name']);if(!isset($tables[$table])){self::corrupt();}$spec=$tables[$table];
+                if(!is_string($row['engine'])||strtolower($row['engine'])!=='innodb'||$row['table_type']!=='BASE TABLE'||!is_string($row['name'])||!is_string($row['storage_type'])||!is_string($row['declaration'])||!in_array($row['nullable'],['YES','NO'],true)){self::corrupt();}
+                $name=$row['name'];if(!isset($spec['columns'][$name])||isset($schemas[$table][$name])){self::corrupt();}$t=self::type($spec['columns'][$name]);
+                $valid=$t['kind']==='int'?in_array($row['storage_type'],['tinyint','smallint','mediumint','int','bigint'],true):($t['kind']==='blob'?in_array($row['storage_type'],['tinyblob','blob','mediumblob','longblob'],true):in_array($row['storage_type'],['char','varchar','binary','varbinary','tinytext','text','mediumtext','longtext'],true));
+                if(!$valid||($row['nullable']==='YES')!==$t['nullable']){self::corrupt();}
+                $schemas[$table][$name]=['type'=>$row['storage_type'],'declaration'=>$row['declaration'],'collation'=>$row['collation_name'],'ordinal'=>SqlSchema::integer($row['ordinal']),'required'=>$row['nullable']==='NO'?1:0,'primary'=>0];
+            }elseif($row['section']==='keys'){
+                if(!is_string($row['table_name'])){self::corrupt();}$table=strtolower($row['table_name']);
+                if(!isset($tables[$table])||!is_string($row['name'])||$row['SUB_PART']!==null||(string)$row['NON_UNIQUE']!=='0'||$row['INDEX_TYPE']!=='BTREE'||!isset($schemas[$table][$row['name']])){self::corrupt();}
+                $keys[$table][]=$row['name'];if(count($keys[$table])>4){self::corrupt();}$schemas[$table][$row['name']]['primary']=SqlSchema::integer($row['position']);
+            }else{self::corrupt();}
+        }
+        foreach($tables as $table=>$spec){if(count($schemas[$table])!==count($spec['columns'])||$keys[$table]!==$spec['primary']){self::corrupt();}ksort($schemas[$table]);}
+        if(!$native){
+            // Custom PDO/Statement/guard paths keep each original observation and callback opportunity.
+            foreach($tables as $table=>$spec){if($u->metadataRows(SqlSchema::tableResolution($table))!==[]){self::corrupt();}}
+        }
+        return $schemas;
+    }
+    /** Zero-row physical access: both aliases reject temporary shadowing; final access checks every declared column. */
+    private function mysqlAccess(SqlTransaction $u,array $tables,bool $columns=true):void
+    {
+        $references=[];$fields=[];$index=0;
+        foreach($tables as $table=>$spec){
+            self::name($table);$left='_sosecurity_left_'.$index;
+            $references[]='`'.$table.'` AS '.$left;$references[]='`'.$table.'` AS _sosecurity_right_'.$index;
+            if($columns){foreach(array_keys($spec['columns']) as $column){self::name($column);$fields[]=$left.'.`'.$column.'`';}}++$index;
+        }
+        $first=array_shift($references);$sql='SELECT '.($columns?implode(',',$fields):'1').' FROM '.$first.' JOIN '.implode(' ON 1=0 JOIN ',$references).' ON 1=0 LIMIT 0';
+        if($u->metadataRows($sql)!==[]){self::corrupt();}
     }
     private function projection(string $driver,array $columns):string
     {
@@ -147,7 +192,7 @@ final class SqlStateSnapshot implements StateSnapshot
             if($after!==null){$later=[];foreach($spec['primary'] as $i=>$field){$term=[];for($j=0;$j<=$i;++$j){$key=$spec['primary'][$j];$parameter='after_'.$i.'_'.$j;$term[]=$this->quote($key,$driver).($j===$i?'>':'=').':'.$parameter;$parameters[$parameter]=$after[$key];}$later[]='('.implode(' AND ',$term).')';}$where[]='('.implode(' OR ',$later).')';}
             $limit=min($spec['page'],$spec['maximum_rows']-$count+1);$order=[];foreach($spec['primary'] as $field){$order[]=$table.'.'.$this->quote($field,$driver).' ASC';}
             $q=$u->query('SELECT '.$this->projection($driver,$spec['columns']).' FROM '.$table.($where?' WHERE '.implode(' AND ',$where):'').' ORDER BY '.implode(',',$order).' LIMIT '.$limit,$parameters,$blobs);$fetched=0;
-            try{while($row=$q->fetch(PDO::FETCH_ASSOC)){++$fetched;if(++$count>$spec['maximum_rows']){throw new StorageException('SQL snapshot row capacity exceeded.','account.snapshot_capacity');}$part=hash_init('sha256');$normalized=[];$after=$this->values($row,$spec,$part,$normalized);hash_update($hash,hash_final($part,true));
+            $failure=null;try{while($row=$q->fetch(PDO::FETCH_ASSOC)){++$fetched;if(++$count>$spec['maximum_rows']){throw new StorageException('SQL snapshot row capacity exceeded.','account.snapshot_capacity');}$part=hash_init('sha256');$normalized=[];$after=$this->values($row,$spec,$part,$normalized);hash_update($hash,hash_final($part,true));
                 foreach($selectors as $alias=>$selector){if($selector['table']!==$name){continue;}$matches=true;foreach($selector['key'] as $field=>$value){if($after[$field]!==$value){$matches=false;break;}}if($matches&&isset($selector['page'])){foreach($selector['filter'] as $field=>$value){if($normalized[$field]!==$value){$matches=false;break;}}}if(!$matches){continue;}
                     if(isset($selector['page'])){
                         ++$pages[$alias]['total'];
@@ -157,18 +202,36 @@ final class SqlStateSnapshot implements StateSnapshot
                     }
                     if(isset($selector['count'])){++$captured[$alias]['count'];continue;}
                     if($captured[$alias]!==null){self::corrupt();}$selected=[];foreach($selector['columns'] as $column){$selected[$column]=$normalized[$column];}$captured[$alias]=$selected;
-                }$u->now();}}finally{$q->closeCursor();}
+                }$u->now();}}catch(\Throwable $error){$failure=$error;}self::finish($q);if($failure!==null){throw $failure;}
         }while($fetched===$limit);
         $this->frame($hash,(string)$count);$this->frame($parent,hash_final($hash,true));
     }
     private function scan(array $selectors):array
     {
-        $u=new SqlTransaction($this->connection(),new SystemClock(),$this->milliseconds);$deadline=new Deadline($this->milliseconds);
+        $u=SqlTransaction::forObservation($this->connection(),new SystemClock(),$this->milliseconds);$deadline=new Deadline($this->milliseconds);
         return $u->run(function()use($u,$selectors):array{
             $captured=array_fill_keys(array_keys($selectors),null);$pages=[];foreach($selectors as $alias=>$selector){if(isset($selector['count'])){$captured[$alias]=['count'=>0];}if(isset($selector['page'])){unset($captured[$alias]);$pages[$alias]=['rows'=>[],'total'=>0,'limit'=>$selector['maximum'],'more'=>false,'cursor'=>$selector['after'],'started'=>$selector['after']===null];}}
             SqlSchema::durable($u);$hash=hash_init('sha256');$this->frame($hash,'SoSecurity.State.SqlSnapshot.1.');$this->frame($hash,$this->fingerprint);
-            if($u->driver()==='mysql'){$isolation=$u->query('SELECT @@SESSION.transaction_isolation')->fetchColumn();if($isolation!=='REPEATABLE-READ'){throw new ConfigurationException('SQL snapshot sources require explicit repeatable-read isolation.','configuration.state_snapshot_isolation');}$database=$u->query('SELECT CASE WHEN OCTET_LENGTH(DATABASE()) BETWEEN 1 AND 64 THEN DATABASE() ELSE NULL END')->fetchColumn();if(!is_string($database)){self::corrupt();}$this->frame($hash,$database);}
-            foreach(($this->tables)() as $name=>$spec){$this->frame($hash,$name);$schema=$this->schema($u,$name,$spec);$this->frame($hash,json_encode($schema,JSON_UNESCAPED_SLASHES));$this->rows($u,$name,$spec,$hash,$selectors,$captured,$pages);if($this->schema($u,$name,$spec)!==$schema){throw new StorageException('SQL schema changed during snapshot.','account.snapshot_changed');}}
+            if($u->driver()==='mysql'){
+                // Fresh bounded context, fully consumed and closed before using it. Binary database bytes
+                // prevent lossy result character sets from merging distinct snapshot identities.
+                $context=$u->metadataRows('SELECT @@SESSION.transaction_isolation AS isolation_mode,CASE WHEN OCTET_LENGTH(DATABASE()) BETWEEN 1 AND 64 THEN CAST(DATABASE() AS BINARY) ELSE NULL END AS database_name');
+                if(count($context)!==1||!is_array($context[0])||count($context[0])!==2){self::corrupt();}$row=$context[0];
+                if(($row['isolation_mode']??null)!=='REPEATABLE-READ'){throw new ConfigurationException('SQL snapshot sources require explicit repeatable-read isolation.','configuration.state_snapshot_isolation');}
+                $database=$row['database_name']??null;if(!is_string($database)||$database===''||strlen($database)>64){self::corrupt();}$this->frame($hash,$database);
+            }
+            if($u->driver()==='mysql'){
+                foreach(array_chunk(($this->tables)(),4,true) as $group){
+                    $native=$u->canBatchLedgerReads();$before=$this->mysqlSchemas($u,$group);
+                    foreach($group as $name=>$spec){$this->frame($hash,$name);$this->frame($hash,json_encode($before[$name],JSON_UNESCAPED_SLASHES));$this->rows($u,$name,$spec,$hash,$selectors,$captured,$pages);}
+                    // Physical metadata locks preserve structure in this callback-free interval. Grants can change:
+                    // execute a fresh, uncached zero-row access to all declared columns before returning.
+                    if($native&&$u->canBatchLedgerReads()){$this->mysqlAccess($u,$group);}
+                    elseif($this->mysqlSchemas($u,$group)!==$before){throw new StorageException('SQL schema changed during snapshot.','account.snapshot_changed');}
+                }
+            }else{
+                foreach(($this->tables)() as $name=>$spec){$this->frame($hash,$name);$schema=$this->schema($u,$name,$spec);$this->frame($hash,json_encode($schema,JSON_UNESCAPED_SLASHES));$this->rows($u,$name,$spec,$hash,$selectors,$captured,$pages);if($this->schema($u,$name,$spec)!==$schema){throw new StorageException('SQL schema changed during snapshot.','account.snapshot_changed');}}
+            }
             foreach($pages as &$page){if(!$page['started']){throw new StorageException('SQL capture cursor is absent from this exact snapshot.','account.snapshot_cursor');}unset($page['started']);}unset($page);
             return [hash_final($hash),$captured,$pages];
         },null,null,null,$deadline);

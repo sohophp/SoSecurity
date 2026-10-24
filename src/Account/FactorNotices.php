@@ -19,15 +19,17 @@ use SoSecurity\Support\SqlTransaction;
 final class FactorNotices
 {
     private $dependencies;
-    public function __construct(PDO $connection,string $site,string $scope,string $epoch,HmacKeys $integrityKeys,HmacKeys $outboxKeys,Repository $accounts,Notifications $notifications,callable $managementGuard,callable $publishGuard,callable $deliveryGuard,?Policy $policy=null,?Clock $clock=null)
+    private $maintenanceState;
+    public function __construct(PDO $connection,string $site,string $scope,string $epoch,HmacKeys $integrityKeys,HmacKeys $outboxKeys,Repository $accounts,Notifications $notifications,callable $managementGuard,callable $publishGuard,callable $deliveryGuard,?Policy $policy=null,?Clock $clock=null,?StateAccountConnection $state=null)
     {
         foreach([$site,$scope] as $label){Guard::label($label);if(preg_match('//u',$label)!==1){throw new ConfigurationException('Use bounded UTF-8 factor notice labels.','configuration.factor_notices');}}
         if(!preg_match('/\A[a-f0-9]{64}\z/D',$epoch)||$accounts->connection()!==$connection){throw new ConfigurationException('Use the exact account connection and epoch.','configuration.factor_notices');}
         $policy=$policy??new Policy();$clock=$clock??new \SoSecurity\Support\SystemClock();$unit=new SqlTransaction($connection,$clock,$policy->ioMilliseconds());$notifications->validateConfiguration($clock,$policy->allowsSmtpUtf8());
+        if($state!==null){$state->validate($connection,$accounts,$site,$scope,$epoch,$clock,$policy);}$this->maintenanceState=$state;
         $ledger=new Ledger($unit,'account-factor-notices:'.hash('sha256',$site),$scope,$epoch,$integrityKeys,$policy);
         $age=$policy->lifetime('factor_management_completed');$queuePolicy=new OutboxPolicy(['message_age'=>$age,'recovery_age'=>$age,'maximum_entries'=>$policy->maximumEntries(),'maximum_payload_bytes'=>64,'io_milliseconds'=>$policy->ioMilliseconds()]);
-        $enqueue=static function(string $action,string $phase,string $s,string $producer,string $actor,array $metadata)use($scope,$publishGuard):bool{return $action==='enqueue'&&$s===$scope&&$producer==='account-factor-notice'&&$actor==='account-system'&&$publishGuard('enqueue',$phase,$scope,$metadata)===true;};
-        $manage=static function(string $action,string $phase,string $s,string $producer,string $actor,array $metadata)use($scope,$managementGuard):bool{return $action==='initialize'&&$s===$scope&&$producer==='account-factor-notice'&&$actor==='account-system'&&$managementGuard('outbox.initialize',$phase,$scope,$metadata)===true;};
+        $enqueue=static function(string $action,string $phase,string $s,string $producer,string $actor,array $metadata)use($scope,$publishGuard):bool{$entry='enqueue';$currentScope=$scope;return $action==='enqueue'&&$s===$scope&&$producer==='account-factor-notice'&&$actor==='account-system'&&$publishGuard($entry,$phase,$currentScope,$metadata)===true;};
+        $manage=static function(string $action,string $phase,string $s,string $producer,string $actor,array $metadata)use($scope,$managementGuard):bool{$entry='outbox.initialize';$currentScope=$scope;return $action==='initialize'&&$s===$scope&&$producer==='account-factor-notice'&&$actor==='account-system'&&$managementGuard($entry,$phase,$currentScope,$metadata)===true;};
         $queue=new SqlOutbox($connection,$site,$epoch,$outboxKeys,$enqueue,$queuePolicy,$clock,$manage);
         $this->dependencies=static function()use($connection,$site,$scope,$epoch,$outboxKeys,$accounts,$notifications,$managementGuard,$publishGuard,$deliveryGuard,$policy,$clock,$unit,$ledger,$queue,$queuePolicy):array{return [$connection,$site,$scope,$epoch,$outboxKeys,$accounts,$notifications,$managementGuard,$publishGuard,$deliveryGuard,$policy,$clock,$unit,$ledger,$queue,$queuePolicy];};
     }
@@ -67,13 +69,39 @@ final class FactorNotices
     /** Private current read. Neither the notice ID nor a queue claim grants notification authority. */
     public function notificationForDispatch(string $id):?DispatchNotice
     {
-        self::id($id);$d=$this->d();return $d[12]->run(function()use($d,$id):?DispatchNotice{
+        self::id($id);$d=$this->d();$currentRecord=null;return $d[12]->run(function()use($d,$id,&$currentRecord):?DispatchNotice{
             $this->authorize($d[12],$d[9],'notification','before',$d[2]);$row=$d[13]->read($id);if($row===null){return null;}
             $body=$this->data($row);
             if($body['valid_until']<=$d[12]->now()){return null;}$record=$d[12]->invoke([$d[5],'find'],[$d[2],$body['subject']],'account.repository');if(!$record instanceof AccountRecord||$record->account()->scope()!==$d[2]||$record->account()->subject()!==$body['subject']||$record->status()!=='active'||!$record->verified()){return null;}
             $this->authorize($d[12],$d[9],'notification','read',$d[2],$record);$notice=$d[6]->open($body['envelope'],$d[2],$id,$body['type']);if($notice->issuedAt()!==$body['issued_at']||$notice->expiresAt()!==$body['valid_until']||!$notice->recipient()->equals($record->address())){return null;}
-            $this->authorize($d[12],$d[9],'notification','commit',$d[2],$record);return new DispatchNotice($notice,'',$body['subject']);
+            $this->authorize($d[12],$d[9],'notification','commit',$d[2],$record);$currentRecord=$record;return new DispatchNotice($notice,'',$body['subject']);
+        },null,null,function(?DispatchNotice $delivery)use($d,&$currentRecord):void{
+            try{
+                /** @var AccountRecord|null $currentRecord Captured before commit for an actual returned notice. */
+                $this->authorize($d[12],$d[9],'notification','complete',$d[2],$currentRecord);
+                if($delivery!==null){
+                    $fresh=$d[12]->invoke([$d[5],'find'],[$d[2],$delivery->subject()],'account.repository');
+                    if(!$fresh instanceof AccountRecord||$currentRecord===null||$fresh->fingerprint()!==$currentRecord->fingerprint()||$delivery->notice()->expiresAt()<=$d[12]->now()){throw new SecurityException('Notification authority changed after commit.','account.factor_notice_denied');}
+                }
+            }catch(\Throwable $error){throw new StorageException('Notification completion authority is uncertain.','account.completion_unknown');}
         });
+    }
+    public function maintainFor(StateAccountPolicy $policy,StatePermission $permission,int $limit=20,string $after=''):?array
+    {return $this->nativeMaintenance('maintain',$policy,$permission,$limit,$after);}
+    public function rotateFor(StateAccountPolicy $policy,StatePermission $permission,int $limit=20,string $after=''):?array
+    {return $this->nativeMaintenance('rotate',$policy,$permission,$limit,$after);}
+    private function nativeMaintenance(string $action,StateAccountPolicy $policy,StatePermission $permission,int $limit,string $after):?array
+    {
+        if($this->maintenanceState===null){throw new ConfigurationException('Declare the complete native factor notice maintenance graph.','configuration.state_connection');}
+        $d=$this->d();$guard=$d[7];$scope=$d[2];
+        return $this->maintenanceState->maintenance('factor_notices',$action,$policy,$permission,$limit,$after,function()use($guard,$action,$scope):bool{
+            $phase='admission';$record=null;try{return $guard($action,$phase,$scope,$record)===true;}catch(\Throwable $error){throw new \SoSecurity\Exception\DependencyException('Factor notice maintenance admission unavailable.','account.authority');}
+        },function()use($action,$limit,$after):array{return $this->$action($limit,$after);});
+    }
+    private function completeMaintenance(string $action):void
+    {
+        $d=$this->d();try{$this->authorize($d[12],$d[7],$action,'complete',$d[2]);}
+        catch(\Throwable $error){throw new StorageException('Factor notice maintenance completion authority is uncertain; committed changes are not rolled back.','account.completion_unknown');}
     }
     /** Explicit bounded cleanup of expired notices; Outbox has its own retention/maintenance lifecycle. */
     public function maintain(int $limit=20,string $after=''):array
@@ -82,7 +110,7 @@ final class FactorNotices
             $this->authorize($d[12],$d[7],'maintain','before',$d[2]);$rows=$d[13]->page($limit,$after);$remove=[];$next=$after;$now=$d[12]->now();
             foreach($rows as $row){if($row['kind']!=='notice'){throw new StorageException('Unexpected factor notice ledger record.','account.factor_notice_corrupt');}$next=$row['record_id'];if($row['retire_at']<=$now){$remove[$next]=$row['revision'];}}
             $removed=$remove?$d[13]->remove($remove):0;$this->authorize($d[12],$d[7],'maintain','commit',$d[2]);return ['removed'=>$removed,'next'=>$next,'done'=>count($rows)<$limit];
-        });
+        },null,null,function():void{$this->completeMaintenance('maintain');});
     }
     /** Rewrap a bounded page without changing notice identity, recipient, expiry or Outbox body. */
     public function rotate(int $limit=20,string $after=''):array
@@ -95,12 +123,12 @@ final class FactorNotices
                 if($payload!==$row['payload']||$row['seal_key']!==$d[13]->currentKeyId()){$d[13]->put($next,$row['owner'],'notice',$payload,$row['retire_at'],$row['revision']);++$resealed;}
             }
             $checkpoint=$d[13]->checkpoint();return ['result'=>['resealed'=>$resealed,'reencrypted'=>$reencrypted,'root_rotated'=>$root,'next'=>$next,'done'=>count($rows)<$limit],'checkpoint'=>$checkpoint];
-        },null,function(array $state)use($d):void{$this->authorize($d[12],$d[7],'rotate','commit',$d[2]);if($d[13]->checkpoint()!==$state['checkpoint']){throw new StorageException('MFA notification rotation changed before commit.','account.factor_notice_changed');}})['result'];
+        },null,function(array $state)use($d):void{$this->authorize($d[12],$d[7],'rotate','commit',$d[2]);if($d[13]->checkpoint()!==$state['checkpoint']){throw new StorageException('MFA notification rotation changed before commit.','account.factor_notice_changed');}},function():void{$this->completeMaintenance('rotate');})['result'];
     }
     public function dispatcher(string $worker,SendBudgets $budgets,MailTemplates $templates,MailTransport $transport,callable $workerAuthority,int $budgetMilliseconds=10000,int $transportMilliseconds=3000):Dispatcher
     {
-        Guard::label($worker);$d=$this->d();$scope=$d[2];$producer='account-factor-notice';$authority=static function(string $action,string $phase,string $s,string $p,string $actor,array $metadata)use($scope,$producer,$worker,$workerAuthority):bool{return $s===$scope&&$p===$producer&&$actor===$worker&&in_array($action,['claim','current_claim','acknowledge','fail'],true)&&$workerAuthority($action,$phase,$s,$p,$actor,$metadata)===true;};
-        $queue=new SqlOutbox($d[0],$d[1],$d[3],$d[4],$authority,$d[15],$d[11]);return new Dispatcher($d[1],$scope,$worker,$queue,$this,$budgets,$templates,$transport,$d[11],$budgetMilliseconds,$transportMilliseconds);
+        Guard::label($worker);$d=$this->d();$scope=$d[2];$producer='account-factor-notice';$authority=static function(string $action,string $phase,string $s,string $p,string $actor,array $metadata)use($scope,$producer,$worker,$workerAuthority):bool{return $s===$scope&&$p===$producer&&$actor===$worker&&in_array($action,['claim','claim_initial','claim_rejected','current_claim','acknowledge','fail'],true)&&$workerAuthority($action,$phase,$s,$p,$actor,$metadata)===true;};
+        $queue=new SqlOutbox($d[0],$d[1],$d[3],$d[4],$authority,$d[15],$d[11],null,$this->maintenanceState);return new Dispatcher($d[1],$scope,$worker,$queue,$this,$budgets,$templates,$transport,$d[11],$budgetMilliseconds,$transportMilliseconds);
     }
     public function __debugInfo():array {return ['account_factor_notices'=>'[redacted]'];}
     public function __sleep():array {throw new ConfigurationException('Rebuild MFA notification configuration.','configuration.account_serialization');}

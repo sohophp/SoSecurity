@@ -17,7 +17,7 @@ use SoSecurity\Storage\StorageException;
 $mysql = ($argv[1] ?? '') === 'mysql';
 $directory = privateDirectory();
 try {
-    foreach (['success', 'retry', 'invalid', 'unknown_ack'] as $case) {
+    foreach (['success', 'retry', 'exception', 'invalid', 'unknown_ack'] as $case) {
         outboxCase($mysql, static function (OutboxEnvironment $e) use ($mysql, $directory, $case): void {
             $metrics = new MetricsSink(new FileStore($directory, 'alert-worker-' . $case, $e->clock),
                 'worker-site-' . $case, ['login.failed' => 'authentication'],
@@ -49,12 +49,18 @@ try {
                     $ids[] = $deliveryId; ++$attempts;
                     Check::same('authentication', $alert['class']);
                     Check::same(false, isset($alert['subject']));
+                    if ($case === 'exception' && $attempts === 1) { throw new RuntimeException('PRIVATE-TRANSPORT-CREDENTIAL'); }
                     if ($case === 'retry' && $attempts === 1) { return false; }
                     if ($case === 'unknown_ack' && $attempts === 1) { $e->clock->time += 2; }
                     return true;
                 });
-            if ($case === 'retry') {
-                Check::throws(DependencyException::class, static function () use ($worker): void { $worker->runOne(); });
+            if ($case === 'retry' || $case === 'exception') {
+                try { $worker->runOne(); throw new LogicException('Expected transport refusal'); }
+                catch (DependencyException $error) {
+                    Check::same('audit.alert_delivery', $error->reason());
+                    Check::same(null, $error->getPrevious());
+                    Check::same(false, strpos((string)$error, 'PRIVATE-TRANSPORT-CREDENTIAL') !== false);
+                }
                 $pending = $queue->status('tenant', AlertOutboxPublisher::producer(), $id, 'operator');
                 Check::same('pending', $pending->state());
                 $e->clock->time = $pending->availableAt();

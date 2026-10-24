@@ -9,6 +9,7 @@ use SoSecurity\Support\Guard;
 final class MailTemplates
 {
     private $render;
+    private $fingerprint;
     private $configuration;
     private $actions;
     public function __construct(string $site,Address $sender,array $actionUrls,string $brand='Account security',string $language='en')
@@ -17,6 +18,7 @@ final class MailTemplates
         $extended=array_merge($expected,['recover_address']);sort($extended);if(($keys!==$expected&&$keys!==$extended)||!in_array($language,['en','zh-CN'],true)||preg_match('//u',$site)!==1||preg_match('//u',$brand)!==1||strlen($brand)>128){throw new ConfigurationException('Configure five base actions, an optional mailbox recovery action and a supported language.','configuration.account_mail_templates');}
         $urls=[];$origin=null;
         foreach($actionUrls as $type=>$value){if(!is_string($value)||strlen($value)>2048){throw new ConfigurationException('Use fixed bounded HTTPS action URLs.','configuration.account_mail_templates');}$uri=Uri::parse($value);if($uri->scheme()!=='https'||$uri->target()!==$uri->path()||($origin!==null&&$uri->origin()!==$origin)){throw new ConfigurationException('Mail actions must share one explicit HTTPS origin without query or fragment.','configuration.account_mail_templates');}$origin=$uri->origin();$urls[$type]=$uri->url();}
+        ksort($urls);$this->fingerprint=hash('sha256',json_encode(['SoSecurity.Account.MailTemplates.1',$site,$sender->value(),$urls,$brand,$language],JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE));
         $this->configuration=static function()use($site):string{return $site;};$this->actions=static function()use($urls):array{return array_keys($urls);};
         $this->render=static function(DispatchNotice $delivery)use($site,$sender,$urls,$brand,$language):MailMessage{
             $notice=$delivery->notice();$type=$notice->type();$subjects=['verify_registration'=>'Verify your account','verify_address_old'=>'Approve address change','verify_address_new'=>'Confirm your new address','cancel_change'=>'Cancel address change','recover_account'=>'Recover your account','account_activated'=>'Account activated','password_changed'=>'Password changed','address_changed'=>'Address changed','recover_address'=>'Approve mailbox recovery','address_recovery_started'=>'Mailbox recovery requested','address_recovered'=>'Mailbox recovered'];
@@ -32,6 +34,7 @@ final class MailTemplates
             return new MailMessage($sender,$notice->recipient(),$id,$subjects[$type],$body,$notice->issuedAt());
         };
     }
+    public function fingerprint():string{return $this->fingerprint;}
     public function validateConfiguration(string $site):void {if(!hash_equals(($this->configuration)(),$site)){throw new ConfigurationException('Mail templates belong to another site.','configuration.account_mail_templates');}}
     public function supportsAction(string $type):bool {return in_array($type,($this->actions)(),true);}
     public function render(DispatchNotice $notice):MailMessage {return ($this->render)($notice);}

@@ -22,32 +22,26 @@ final class ManagedFactorStore implements AtomicStore
         if($shared instanceof \SoSecurity\Storage\MemoryStore||$shared instanceof \SoSecurity\Storage\SessionStore||$shared instanceof self){throw new ConfigurationException('Use shared persistent factor storage without nested managed envelopes.','configuration.mfa_store');}
         $this->store=$store;$this->context=$context;$this->keys=$keys;$this->authority=$authority;
     }
-    private static function tree($value,int $depth,int &$nodes,int &$bytes):void
+    public function usesKeys(HmacKeys $keys):bool{return $this->keys===$keys;}
+    public function coveredBy(\SoSecurity\Account\LocalStateWitness $witness):bool{return $witness->coversStore($this->store);}
+    public function snapshotReference(string $key,string $context):?array{return $context===$this->context&&$this->store instanceof \SoSecurity\Storage\FileStore?$this->store->snapshotReference($key):null;}
+    /** @internal The fixed plan alone computes and authorizes the permanent null envelope. */
+    public function containState(string $key,\SoSecurity\Account\StateFactorContainment $plan,\SoSecurity\Account\LocalStateWitness $witness,string $operation):void
     {
-        if(++$nodes>256||$depth>8){throw new StorageException('Managed factor state complexity exceeds its bound.','mfa.managed_corrupt');}
-        if(is_array($value)){
-            foreach($value as $key=>$item){if(is_string($key)){if(strlen($key)>64){throw new StorageException('Managed factor field exceeds its bound.','mfa.managed_corrupt');}$bytes+=strlen($key);}self::tree($item,$depth+1,$nodes,$bytes);}
-        }elseif(is_string($value)){$bytes+=strlen($value);}
-        elseif(!is_null($value)&&!is_int($value)&&!is_bool($value)){throw new StorageException('Managed factor state contains an invalid type.','mfa.managed_corrupt');}
-        if($bytes>16384){throw new StorageException('Managed factor state bytes exceed their bound.','mfa.managed_corrupt');}
+        if(!$plan->usesContext($this->context,$this->keys)||!$this->store instanceof \SoSecurity\Storage\FileStore){throw new ConfigurationException('Use the covered raw FileStore for containment.','configuration.factor_containment');}
+        $this->store->containState($key,$plan,$witness,$operation);
     }
-    private static function json(array $value):string
+    public function resolveState(string $key,\SoSecurity\Account\StateFactorResolution $plan,\SoSecurity\Account\LocalStateWitness $witness,string $operation):void
     {
-        $nodes=0;$bytes=0;self::tree($value,0,$nodes,$bytes);$encoded=json_encode($value,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE);
-        if(!is_string($encoded)||strlen($encoded)>15000){throw new StorageException('Managed factor state cannot be encoded.','mfa.managed_corrupt');}return $encoded;
+        if(!$plan->usesContext($this->context,$this->keys)||!$this->store instanceof \SoSecurity\Storage\FileStore){throw new ConfigurationException('Use the covered raw FileStore for resolution.','configuration.factor_resolution');}
+        $this->store->resolveState($key,$plan,$witness,$operation);
     }
-    /** Authenticated envelope only; pending frames are exposed solely to migration capabilities. */
-    private function frame(string $key,$value):array
+    public function installCredentialState(string $key,\SoSecurity\Account\StateCredentialInstallation $plan,\SoSecurity\Account\LocalStateWitness $witness,string $operation):void
     {
-        if($value===null){throw new StorageException('Managed factor state is missing; explicit migration is required.','mfa.managed_missing');}
-        $fields=is_array($value)&&($value['v']??null)===3?['v','context','key','payload','migration','seal']:['v','context','key','payload','seal'];
-        if(!is_array($value)||array_keys($value)!==$fields||!in_array($value['v'],[2,3],true)||$value['context']!==$this->context||!is_string($value['key'])||!preg_match('/\A[A-Za-z][A-Za-z0-9_-]{0,31}\z/D',$value['key'])||(!is_array($value['payload'])&&$value['payload']!==null)||!is_string($value['seal'])||!preg_match('/\A[a-f0-9]{64}\z/D',$value['seal'])){throw new StorageException('Managed factor envelope is invalid.','mfa.managed_corrupt');}
-        $migration=$value['v']===3?$value['migration']:null;
-        if($value['v']===3&&(!is_array($migration)||array_keys($migration)!==['operation','digest','state']||!is_string($migration['operation'])||!preg_match('/\A[a-f0-9]{64}\z/D',$migration['operation'])||!is_string($migration['digest'])||!preg_match('/\A[a-f0-9]{64}\z/D',$migration['digest'])||!in_array($migration['state'],['prepared','committed'],true))){throw new StorageException('Invalid permanent migration receipt.','mfa.managed_corrupt');}
-        $seal=$value['seal'];unset($value['seal']);
-        if(!$this->keys->verify($value['key'],'SoSecurity.Mfa.ManagedFactor.1.'.$key.':'.self::json($value),hex2bin($seal))){throw new StorageException('Managed factor envelope cannot be authenticated.','mfa.managed_corrupt');}
-        return ['payload'=>$value['payload'],'migration'=>$migration];
+        if(!$plan->usesContext($this->context,$this->keys)||!$this->store instanceof \SoSecurity\Storage\FileStore){throw new ConfigurationException('Use exact managed credential installation storage.','configuration.credential_installation');}$this->store->installCredentialState($key,$plan,$witness,$operation);
     }
+    private static function json(array $value):string{return ManagedFactorFrame::encode($value);}
+    private function frame(string $key,$value):array{return ManagedFactorFrame::read($this->context,$this->keys,$key,$value);}
     private function envelope(string $key,?array $payload,?array $migration):array
     {
         $value=['v'=>$migration===null?2:3,'context'=>$this->context,'key'=>$this->keys->currentId(),'payload'=>$payload];if($migration!==null){$value['migration']=$migration;}

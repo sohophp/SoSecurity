@@ -1,0 +1,16 @@
+<?php
+declare(strict_types=1);
+list($entry,$case)=explode('-',substr($mode,strlen('hmac-return-')),2);$allowed=true;$fault=false;$calls=0;
+$guardCalls=0;$guard=static function()use(&$allowed,&$fault,&$guardCalls,$case):bool{++$guardCalls;if(in_array($case,['budget','shared-budget'],true)&&$guardCalls===2){usleep($case==='budget'?31000000:11000000);}if($fault){throw new RuntimeException('PRIVATE-HMAC-GUARD');}return $allowed;};
+$verifier=new SoSecurity\Api\HmacVerifier($ownedSignaturePolicy,$ownedSigningRing,new SoSecurity\Api\NonceStore($store,$clock),$clock,$boundary,$policy,$sessions,$store,$ownedSignatureSource,'owned-signature',$guard,'fresh-site');
+$boundary->run('owned.hmac.seed',static function()use($pdo):void{$pdo->prepare('INSERT INTO owned_policy_business VALUES (?,?,?,?)')->execute(['tenant','owned','fresh-user',1]);});
+$url='https://api.example.test/records/owned';$body='{"amount":2}';$headers=(new SoSecurity\Api\HmacSigner($ownedSignaturePolicy,$ownedSigningKey,$clock))->sign('POST',$url,$body,'application/json',60);
+$before=$inspect();$nativeFinalHook=static function()use(&$allowed,&$fault,$clock,$case):void{if($case==='guard'){$allowed=false;}elseif($case==='fault'){$fault=true;}elseif($case==='expiry'){$clock->time+=61;}elseif($case==='clock'){$clock->fail=true;}};
+$rejected=false;
+try{
+ if($entry==='verify'){$result=$verifier->verifyFor('tenant','POST',$url,$body,$headers,'records:write');Check::same(true,$result instanceof SoSecurity\Api\Identity);}
+ else{$tables=['owned_policy_business'=>['columns'=>['scope'=>'bytes:256','id'=>'bytes:64','owner'=>'bytes:256','amount'=>'int'],'primary'=>['scope','id']]];$result=$verifier->withVerification('tenant',$pdo,$tables,static function():SoSecurity\Operation\Intent{return new SoSecurity\Operation\Intent('records.write',new SoSecurity\Authorization\Resource('tenant','record','owned','1'),['amount'=>2],['amount']);},'POST',$url,$body,$headers,static function(PDO $db)use(&$calls,$case):int{++$calls;if($case==='shared-budget'){usleep(20000000);}$db->exec('UPDATE owned_policy_business SET amount=2');return 2;},'records:write');Check::same(2,$result);}
+}catch(SoSecurity\Exception\SecurityException $error){$rejected=true;Check::same($case==='guard'?'api.request_denied':($case==='fault'?'api.request_unavailable':($case==='clock'?'api.clock':($case==='budget'?'account.witness_timeout':($case==='shared-budget'?'account.operation_timeout':'api.expired')))),$error->reason());Check::same(null,$error->getPrevious());Check::same(false,strpos($error->getMessage(),'PRIVATE')!==false);}
+Check::same($case!=='normal',$rejected);Check::same('current',$inspect()['status']);Check::same($before['revision']+1,$inspect()['revision']);Check::same($entry==='execute'?1:0,$calls);Check::same($entry==='execute'?2:1,(int)$pdo->query('SELECT amount FROM owned_policy_business')->fetchColumn());
+$signed=SoSecurity\Api\SignatureProfile::parse($headers);$raw=json_decode(file_get_contents($directory.'/files/'.$store->snapshotFile(SoSecurity\Api\NonceStore::stateKey($signed['keyid'],$signed['nonce']))),true);Check::same(true,$raw['value']['used']);
+echo 'PASS native HMAC return '.$entry.' '.$case.' '.Check::$assertions.' PHP '.PHP_VERSION.PHP_EOL;

@@ -13,7 +13,7 @@ final class Policy
     {
         $defaults = ['extensions' => ['jpg', 'jpeg', 'png'], 'maximum_bytes' => 5242880, 'maximum_width' => 4096,
             'maximum_height' => 4096, 'maximum_pixels' => 4000000, 'working_bytes' => 134217728, 'jpeg_quality' => 85, 'require_scan' => false];
-        if (array_diff(array_keys($options), array_keys($defaults))) { throw new ConfigurationException('Unknown upload policy option.'); }
+        if (count($options) > count($defaults) || array_diff(array_keys($options), array_keys($defaults))) { throw new ConfigurationException('Unknown upload policy option.'); }
         $options += $defaults;
         if (!is_array($options['extensions']) || !$options['extensions'] || count($options['extensions']) > 6) { throw new ConfigurationException('Choose a bounded extension allowlist.'); }
         $extensions = [];

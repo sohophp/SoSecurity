@@ -27,8 +27,10 @@ final class DohResolver implements Resolver
         foreach ([1,28] as $type) {
             if ($deadline->remaining() <= 0) { throw new RequestException('DNS budget expired.', 'http.timeout'); }
             $uri = Uri::parse($this->endpoint . '?name=' . rawurlencode($host) . '&type=' . $type . '&edns_client_subnet=0.0.0.0%2F0');
-            $response = $this->transport->send($uri, $this->bootstrap, 'GET', ['accept'=>'application/dns-json'], '', $deadline, 16384, 8192);
-            if ($response->status() !== 200 || @inet_pton($response->peer()) !== @inet_pton($this->bootstrap) || strlen($response->body()) > 16384) { throw new RequestException('DoH service failed.', 'http.dns'); }
+            try { $response = $this->transport->send($uri, $this->bootstrap, 'GET', ['accept'=>'application/dns-json'], '', $deadline, 16384, 8192); }
+            catch (\Throwable $error) { throw $this->failure($error, 'http.dns'); }
+            if ($deadline->remaining() <= 0) { throw new RequestException('DNS budget expired.', 'http.timeout'); }
+            if ($response->status() !== 200 || @inet_pton($response->peer()) !== @inet_pton($this->bootstrap) || strlen($response->body()) > 16384 || $response->headerBytes() > 8192) { throw new RequestException('DoH service failed.', 'http.dns'); }
             $data = json_decode($response->body(), true, 12);
             $question = is_array($data) && isset($data['Question']) && is_array($data['Question']) && isset($data['Question'][0]) && is_array($data['Question'][0]) ? $data['Question'][0] : [];
             if (!is_array($data) || ($data['Status'] ?? null) !== 0 || (array_key_exists('TC', $data) && (!is_bool($data['TC']) || $data['TC']))
@@ -61,6 +63,15 @@ final class DohResolver implements Resolver
         }
         $addresses = array_values(array_unique($addresses));
         if (!$addresses || count($addresses) > 16) { throw new RequestException('No bounded final DNS addresses.', 'http.dns'); }
+        if ($deadline->remaining() <= 0) { throw new RequestException('DNS budget expired.', 'http.timeout'); }
         return $addresses;
     }
+    /** Preserve only fixed protocol reasons, never adapter text, arbitrary reason data or exception chains. */
+    private function failure(\Throwable $error, string $fallback): RequestException
+    {
+        $reason = $error instanceof RequestException ? $error->reason() : $fallback;
+        if (!in_array($reason, ['http.dns','http.timeout','http.address','http.configuration','http.headers','http.header_limit','http.peer','http.request','http.response_limit','http.transport'], true)) { $reason = $fallback; }
+        return new RequestException('Outbound dependency unavailable.', $reason);
+    }
+
 }

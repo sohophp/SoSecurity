@@ -1,0 +1,30 @@
+{
+  "sqlite": {
+    "empty": {
+      "digest": "dc82274f1782db45e4dc37a12fb716a4d1949ac32c0a383318dad62ec7aa6e13",
+      "calls": 50
+    },
+    "first": {
+      "digest": "5b6e7743f7e8da1c72064e9f32dfa913e1504b1791bee02789ae67e457da094d",
+      "calls": 50
+    },
+    "last": {
+      "digest": "cc1db270dd2f8f9ee4aaa4f887c905722712fd6759824c6b4447a42c610b5706",
+      "calls": 50
+    }
+  },
+  "mysql": {
+    "empty": {
+      "digest": "7c0d4cb3e497cb57ad196b90f0367fe31b5f60d81bd65d1bf518f541b6b328dd",
+      "calls": 40
+    },
+    "first": {
+      "digest": "6775312544e58d4d195e0a319dca7eb5516932d42b8c3a88ef3cc22c6fe3d29c",
+      "calls": 40
+    },
+    "last": {
+      "digest": "792e0a3a5645784d4e140641c3b1c9a28a374fdb640416236b1c55e485fa239c",
+      "calls": 40
+    }
+  }
+}

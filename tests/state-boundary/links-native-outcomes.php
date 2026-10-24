@@ -1,0 +1,9 @@
+<?php
+declare(strict_types=1);
+require __DIR__.'/links-native-support.php';
+use SoSecurity\Account\Example\StateDocuments;
+foreach(['rollback','expiry','committed-unknown'] as $mode){grantCase(static function(EntryEnvironment $x,string $token)use($mode):void{
+    $l=nativeLinks($x);$one=linkIssue($x,$l,$token);$rows=businessRows($x);$before=$x->inspect();$calls=0;if($mode==='committed-unknown'){$x->finalAllowed=false;}
+    witnessReason('account.completion_unknown',static function()use($x,$l,$one,$mode,&$calls):void{$l->withVerification('tenant',$x->e->pdo,StateDocuments::definition(),linkPrepare(),$one->url(),static function(PDO $pdo,SoSecurity\Link\VerifiedLink $v)use($x,$mode,&$calls):int{++$calls;$pdo->exec("UPDATE state_example_documents SET title='Changed',version=version+1 WHERE scope='tenant' AND id='owned'");if($mode==='rollback'){throw new RuntimeException('Owned link business rollback');}if($mode==='expiry'){$x->e->clock->time=$v->expiresAt();}return 2;},'POST');});$x->finalAllowed=true;Check::same(1,$calls);Check::same('pending',$x->inspect()['status']);Check::same('links.execute',$x->inspect()['intent']['action']);Check::same($before['digest'],$x->inspect()['digest']);Check::same($mode!=='committed-unknown',$rows===businessRows($x));$files=entryFiles($x);grantNoEffect($x,static function()use($x,$l,$one,&$calls){return $l->withVerification('tenant',$x->e->pdo,StateDocuments::definition(),linkPrepare(),$one->url(),static function()use(&$calls):void{++$calls;},'POST');},'account.witness_pending');Check::same(1,$calls);Check::same($files,entryFiles($x));
+});}
+echo 'PASS native signed-link unknown outcomes: '.Check::$assertions.' assertions PHP '.PHP_VERSION."; real SQL rollback/expiry and committed unknown preserve pending, one-time consumption is not refunded, no automatic retry\n";

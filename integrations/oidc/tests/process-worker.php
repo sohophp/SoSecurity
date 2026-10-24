@@ -109,7 +109,17 @@ if ($action === 'setup') {
     if ($credential === null || !$links->link('tenant', 'alice', $credential->token(), $proof(VerifiedSubject::class, time()))) {
         throw new RuntimeException('Could not establish a local federation link.');
     }
+    if (file_put_contents($directory . '/local-token', $credential->token()) !== strlen($credential->token())) {
+        throw new RuntimeException('Cannot save the private test session.');
+    }
     echo "ready\n";
+} elseif ($action === 'relink') {
+    $token = file_get_contents($directory . '/local-token');
+    $remote = $proof(VerifiedSubject::class, time());
+    if (!$links->unlink('tenant', 'alice', $token, $remote) || !$links->link('tenant', 'alice', $token, $remote)) {
+        throw new RuntimeException('Could not replace the current link.');
+    }
+    echo "relinked\n";
 } elseif ($action === 'logout') {
     $fence->record('tenant', $proof(VerifiedLogout::class, time()));
     echo "logged_out\n";
