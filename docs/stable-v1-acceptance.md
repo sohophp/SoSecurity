@@ -9,7 +9,7 @@
 - 当前已核对 `/usr/bin/php72`、`php73`、`php74`、`php80`、`php81`、`php82`、`php83`、`php84`、`php85` 命令路径存在，**本批未执行版本或扩展探测**。不能把旧临时sodium运行时包装器当作当前依赖。缺少必要扩展须记录为未执行/失败，不能忽略平台要求、关闭测试分支或临时替换时钟求通过。
 - 每项使用新证据输出目录，保存stdout、stderr、退出码、起止时间、实际子命令和清理结果；不得覆盖旧日志。PHP断言失败退出、父运行器失败和未执行子项分别记录。命令退出0仍须匹配该文件现有完成标记且完成所列分支；`NOT RUN`不能算对应能力通过。
 - 所有正常用例也包含拒绝断言；“拒绝成功”要求返回规定的false/null、HTTP状态或受控异常，并保持无越权结果、无私有信息泄露、无错误提交。被测拒绝不等于测试失败；未捕获异常/缺少结尾标记则是测试失败。
-- 工作目录均为仓库根。下面`R`每次固定取上述九个绝对路径之一，逐版执行，不使用含糊的默认`php`。应用默认预算不改；表中的`memory_limit`只是既有测试资源约束，不是应用时限。
+- 工作目录均为仓库根。G01的`R`固定取上述九个原生绝对路径；后续F/B/H/C的`R`采用末尾登记的显式测试运行时映射，逐版执行，不使用含糊的默认`php`。应用默认预算不改；表中的`memory_limit`只是既有测试资源约束，不是应用时限。
 - 子进程环境清除继承的`SOSECURITY_TEST_*`、`SOSECURITY_REQUIRE_*`、`SOSECURITY_*_EXAMPLE_*`测试配置和HTTP(S)/ALL代理变量，只由对应运行器注入自建资源；设置`COMPOSER_DISABLE_NETWORK=1`、`COMPOSER_NO_INTERACTION=1`、`PYTHONDONTWRITEBYTECODE=1`。运行前记录必要的非秘密变量名称，不打印宿主凭据。
 - 后端只能使用运行器新建的临时目录、Unix socket、测试数据库/账号；禁止读取宿主数据库连接。HTTP仅回环地址或独立网络命名空间，无外部投递。超时只停止自己创建的进程；不按名称批量杀进程，不删除归属不明目录。
 
@@ -122,8 +122,21 @@ B02-R须同时出现子程序`Redis integration assertions passed`与父程序PA
 python3 - <<'PYCONSUMER'
 import hashlib, json, os, pathlib, shlex, shutil, subprocess, tempfile, zipfile
 root=pathlib.Path.cwd()
-runtimes=['/usr/bin/php'+v for v in ['72','73','74','80','81','82','83','84','85']]
-env=dict(os.environ,COMPOSER_DISABLE_NETWORK='1',COMPOSER_NO_INTERACTION='1',PYTHONDONTWRITEBYTECODE='1')
+runtime_map=root/'docs/stable-v1-start-evidence-2026-10-25/runtime-map.json'
+reviewed=json.loads(runtime_map.read_text())['runtimes']
+assert [row['version'] for row in reviewed]==['72','73','74','80','81','82','83','84','85']
+runtimes=[]
+for row in reviewed:
+    native=pathlib.Path(row['native']); runtime=root/row['runtime']
+    assert hashlib.sha256(native.read_bytes()).hexdigest()==row['native_binary_sha256']
+    assert hashlib.sha256(runtime.read_bytes()).hexdigest()==row['wrapper_sha256']
+    for module in row['modules']:
+        assert hashlib.sha256((root/module['file']).read_bytes()).hexdigest()==module['sha256']
+    if row['missing_required_extensions']:
+        raise RuntimeError('Reviewed runtime profile incomplete: '+row['version']+' '+str(row['missing_required_extensions']))
+    runtimes.append(str(runtime))
+env={k:v for k,v in os.environ.items() if not k.startswith(('SOSECURITY_TEST_','SOSECURITY_REQUIRE_')) and not ('SOSECURITY_' in k and '_EXAMPLE_' in k) and k not in ['PHP_INI_SCAN_DIR','PHPRC'] and k.upper() not in ['HTTP_PROXY','HTTPS_PROXY','ALL_PROXY']}
+env.update(COMPOSER_DISABLE_NETWORK='1',COMPOSER_NO_INTERACTION='1',PYTHONDONTWRITEBYTECODE='1')
 manifest={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for d in ['src','resources/sql'] for p in (root/d).rglob('*') if p.is_file()}
 def run(cmd,cwd):
     print('COMMAND',json.dumps(cmd),flush=True)
@@ -165,7 +178,7 @@ print('PASS v1 consumer owned temporary directory cleaned')
 PYCONSUMER
 ```
 
-C01完成要求：离线归档/安装退出0，无下载/插件/脚本，无symlink；安装后src及SQL逐文件相符且无额外运行时文件；每个PHP进程用原生运行时（包装器只加来源断言，不替换时钟或扩展），每版18个PHP程序、4个HTTP程序、3个MySQL选择器、2个Redis运行器全部完成，且各子程序的现有完成标记/必需分支齐全。消费者总计9×27个外层功能程序，**不是243次独立安装**；实际后端子程序另列。失败即保存原始输出及尚未执行项，不重跑未知结果。临时包/进程只清理自己创建的资源；父日志和摘要由外层新证据目录保留。
+C01完成要求：离线归档/安装退出0，无下载/插件/脚本，无symlink；安装后src及SQL逐文件相符且无额外运行时文件；每个PHP进程使用登记的原生PHP及经审查的进程级扩展映射（消费者外层包装器只追加来源断言，不替换时间函数），每版18个PHP程序、4个HTTP程序、3个MySQL选择器、2个Redis运行器全部完成，且各子程序的现有完成标记/必需分支齐全。消费者总计9×27个外层功能程序，**不是243次独立安装**；实际后端子程序另列。失败即保存原始输出及尚未执行项，不重跑未知结果。临时包/进程只清理自己创建的资源；父日志和摘要由外层新证据目录保留。
 
 ## 发布阻塞与停止条件
 
@@ -201,3 +214,43 @@ C01完成要求：离线归档/安装退出0，无下载/插件/脚本，无syml
 先验证文档内Python语法、实际路径、生成的shell换行、PHP来源断言及一个最小消费者安装；这些执行器检查通过后再展开九版消费者，避免同类运行器错误重复九次。不得在消费者中添加工作区src副本，必须由安装包加载。
 
 Q01属于已有失败的诊断：一次按当前准确候选收集具体异常原因、进程/输入摘要和时钟状态；原失败保留。新运行通过不自动关闭旧失败，同一失败不得无限重复求绿。PHP7.2时钟暂按现有倒退拒绝保护执行，不修改系统时钟或引入新的常驻服务。下一次源码修复只限已登记阻塞且先有具体复现，未取得证据不开始新的边界清扫。
+
+
+## 本批执行记录：原生G01、运行时与最小消费者（2026-10-25）
+
+本节更新本批实际状态；上文清单其余项目及九版完整C01仍为未执行。执行候选为`d9852ec`（执行时HEAD），源码及测试基线保持`fedc471`，没有产品源码/API改动。本节及C01映射修正尚待管理阶段整理，不把文档变化声称为新运行时修复。
+
+### 已执行并通过
+
+- 九版原生G01的27个程序全部退出0，并逐项匹配约定完成标记；`tests/run.php`每版13组、193或195条断言、0失败；portable每版48条；API每版278个类/接口。
+- G01的准确命令、运行时/原生扩展及INI路径、日志和结果见[本批汇总](stable-v1-start-evidence-2026-10-25/g01.json)，[输入摘要](stable-v1-start-evidence-2026-10-25/inputs-before.json)前后保持，所有G01临时资源已清理。这不是F/B/H/C或全项目验收。
+- 已逐一重新阅读旧临时包装器/INI，并核对所用本地RPM的签名、包元数据、SHA-256、模块payload摘要、PHP版本或PECL的PHP API/Zend ABI依赖；模块复制到本批自有证据目录。实际新包装器仅以`-d extension=绝对路径`按进程加载，不修改系统默认配置、业务Clock或hrtime/microtime。
+- [运行时映射](stable-v1-start-evidence-2026-10-25/runtime-map.json)登记九版原生二进制摘要、包装器完整内容/摘要、扩展来源/版本/文件摘要、实际加载元数据和缺失项。未直接复用旧包装器；原生G01与扩展激活探测分别记录。C01已改为读取同一映射并在版本/文件摘要不符或必要扩展不齐时停止，不能静默回到原生路径。
+- 最小离线消费者在PHP8.5执行7个外层检查通过：归档、全新离线安装、文档内PHP来源断言语法、shell包装器语法、安装包portable/core，以及故意预加载工作区类的负对照（预期退出255且`Wrong installed origin`）。负对照是运行器防误用测试，不是SDK失败。367份安装运行时文件逐一相符；没有复制工作区src/vendor，包与安装来源均核对，临时目录已清理。
+- 最小消费者的[完整结果](stable-v1-start-evidence-2026-10-25/consumer-validated/consumer-minimal.json)、[执行脚本](stable-v1-start-evidence-2026-10-25/consumer-validated/run.py)及同目录原始日志保留；消费者只有一次成功的独立安装，不是九版C01或后端/HTTP验收。归档与lock摘要、来源断言源码及包装器原文均在该目录。
+
+### 已执行但失败并保留
+
+首轮最小消费者运行器预期Composer提示`Successfully created:`，实际本地Composer输出`Created:`且归档进程退出0，导致运行器自身判据失败；安装和后续当轮未执行。[首轮结果](stable-v1-start-evidence-2026-10-25/consumer-minimal.json)、[原日志](stable-v1-start-evidence-2026-10-25/consumer-archive.log)和[故障定位](stable-v1-start-evidence-2026-10-25/consumer-initial-failure.json)不覆盖。只在新的consumer-validated证据子目录修正准确提示匹配并验证实际归档/安装，没有修改SDK、保护或应用预算。
+
+### 当前显式运行时映射与依赖限制
+
+所有路径相对仓库根；对应命令由下表路径的绝对值作为`R`。本批扩展探测无启动警告，PHP7.2仍无hrtime，没有替换时间函数。
+
+| PHP | F/B/H/C的R（G01仍用/usr/bin/phpXX） | 进程级新增扩展 | 当前完整测试配置 |
+| --- | --- | --- | --- |
+| 7.2.34 | `docs/stable-v1-start-evidence-2026-10-25/runtimes/php72` | sodium、posix | 已具备 |
+| 7.3.33 | `docs/stable-v1-start-evidence-2026-10-25/runtimes/php73` | sodium | 已具备 |
+| 7.4.33 | `docs/stable-v1-start-evidence-2026-10-25/runtimes/php74` | sodium、posix | 已具备 |
+| 8.0.30 | `docs/stable-v1-start-evidence-2026-10-25/runtimes/php80` | sodium | 已具备 |
+| 8.1.34 | `docs/stable-v1-start-evidence-2026-10-25/runtimes/php81` | 无 | 已具备 |
+| 8.2.32 | `docs/stable-v1-start-evidence-2026-10-25/runtimes/php82` | igbinary、msgpack、redis | 仍缺版本匹配posix |
+| 8.3.35 | `docs/stable-v1-start-evidence-2026-10-25/runtimes/php83` | sodium | 已具备 |
+| 8.4.23 | `docs/stable-v1-start-evidence-2026-10-25/runtimes/php84` | igbinary、msgpack、redis | 仍缺版本匹配posix |
+| 8.5.9 | `docs/stable-v1-start-evidence-2026-10-25/runtimes/php85` | 无 | 已具备 |
+
+sodium/7.2与7.4的posix包与原生PHP上游版本相同，但部分Remi包release号不同；这是可核验RPM payload的进程级测试激活，不声称系统RPM依赖安装已满足。Redis6.3.0及其igbinary/msgpack依赖按对应PHP API/Zend ABI核对。旧本地8.2/8.4 process包分别面向8.2.34/8.4.26，与当前8.2.32/8.4.23不同，已拒绝加载，详情记录在runtime-map.json的rejected_modules中；未用“可以加载”代替版本匹配证明。
+
+依赖缺口归入既有阻塞5，不新增第六项。管理后续可安排核验版本匹配的本地包，或审查既有POSIX系统工具备用路径能否满足具体用例；不能静默删测试或降低PHP兼容声明。必要依赖未齐前不展开九版大矩阵；最小消费者通过不关闭时钟、管理超时及旧Webhook失败。
+
+下一组仍为固定B01/B04文件存储与登录共享预算，随后按已审清单的B02/B03/F/H推进；实际执行由管理会话直接安排，不重新请求用户逐步授权。本批未执行这些后端/HTTP组合、Q01诊断或九版消费者，未提交/推送/打标签/发布。
