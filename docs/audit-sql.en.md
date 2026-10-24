@@ -1,0 +1,24 @@
+# Independent SQL audit log
+
+The optional `Audit\SqlSink` commits fixed-shape audit records through a dedicated PDO. A successful return confirms this database COMMIT, unlike a metric increment or an arbitrary logger callback. It is not an immutable archive, business-transaction participant, account-recovery authority, or idempotent alert receiver.
+
+Install the explicit [SQLite](../resources/sql/audit-sqlite.sql) or [MySQL](../resources/sql/audit-mysql.sql) schema during trusted deployment, then call `initialize()` in a private bootstrap. Normal writes never create tables or initialize missing state. Use a separate persistent audit database/connection: exception-mode PDO, native MySQL prepares, InnoDB with commit flushing set to1, or file-backed SQLite with journaling and FULL/EXTRA synchronization. The component checks rather than changes durability settings. Host transactions are refused; the caller retains ownership. Database settings do not prove physical power-loss safety.
+
+```php
+$sink = new SoSecurity\Audit\SqlSink($independentAuditPdo, 'example-site',
+    10000, 604800, null, 1000, $authorizeCurrentOperator);
+$sink->initialize(); // Trusted CLI/deployment only, never a request path.
+$audit = new SoSecurity\Audit\AuditLogger($sink, $independentPseudonymKey);
+```
+
+The [native factory](../examples/audit-sql.php) has no include-time IO. Inject its logger explicitly; it does not silently replace existing host logging. Supply all connections, limits, site labels, and pseudonym keys through trusted configuration.
+
+Capacity is1–100000 records per controlled site, default10000; retention is1–31536000 seconds, default86400. A site-root lock serializes sequence allocation and capacity. MySQL uses current locking reads for quota/pruning, avoiding a snapshot established by metadata reads before locking. Each write prunes at most128 expired rows and refuses a full log without overwriting live records. Receipt/expiry use the trusted server clock rather than the event timestamp. Cross-site growth and database/backup retention remain deployment responsibilities.
+
+`prune($limit=128)` is bounded at1000 and requires a strict host authorization callback both before reading and before commit; missing, throwing or revoked authorization rolls back maintenance. Automatic expiry during writes implements the trusted retention policy. Neither operation securely erases free pages or backups. Capacity/retention changes reject the initialized policy; reinitialization cannot reset records. Arrange a controlled migration or a new site with an explicit plan for old retention.
+
+Only the audit record fields and `allowed/retry_after/status` context are accepted. Subjects are null or64-character hexadecimal pseudonyms; encoded records are bounded at4096 bytes. Validation happens before database effects. Independent audit attempts remain committed when business work rolls back, so these rows are not proof of business success. SQL failures propagate; uncertain commits are never automatically retried. Rebuilding a connection does not prove an earlier attempt failed to commit, and manual retries may duplicate audit rows.
+
+`records($afterSequence=0, $limit=100)` returns at most100 unexpired records for this controlled site in ascending sequence order. Each item contains `sequence/recorded_at/expires_at/record`; pass the last sequence to continue. The independent final constructor callback `authorizeRead` defaults to denial and is checked before database access and before returning. Maintenance authorization does not grant read access, and vice versa. Bind authorization to a real current operator/site; a cursor does not grant access. An empty page is not a permanently certified empty archive, and separate pages are not a consistent snapshot under concurrent writes/expiry.
+
+SQL checks the actual BLOB type and byte length before projecting at most4096 bytes. Corrupt metadata/protocol or an8MiB field is refused under the PHP memory budget; records are not authenticated against a database administrator. History may outlive the recent-event index while remaining within configured retention. Reads do not delete expired rows. The implementation uses a controlled service connection and a site lock, not a read-only database account. No public HTTP endpoint is provided: host authentication, request protection, query budgets, cross-site boundaries, long-term immutable archives, external alert targets and production acceptance remain separate responsibilities. Local acceptance covers nine SQLite runtimes, both endpoint MySQL runtimes, real competing writers, transaction fault injection, affected audit regressions, and fresh ZIP consumers. The integrated local recipient demonstration is at-least-once delivery with receiver deduplication, not end-to-end exactly-once or validation of the deferred recovery chain. See the [acceptance record](sql-audit-integration-2026-10-22.md).

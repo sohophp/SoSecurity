@@ -118,3 +118,50 @@ $audit = new SoSecurity\Audit\AuditLogger($bounded, $independentAuditPseudonymKe
 适配器固定消息为`security.audit`，不拼接事件内容；可选择PSR-3规定的八种级别，构造时拒绝其他级别。直接调用适配器时，只接受审计记录的固定字段和类型；额外字段、错误类型和控制字符在调用日志后端前拒绝。日志后端抛出的异常继续向外抛出。PSR-3接口的调用成功不证明日志已落盘，使用`NullLogger`或会静默丢弃的处理器也无法提供强制审计；宿主应选择具备所需持久性和故障报告的处理器，并配置日志访问、保留及独立告警。审计适配器不是业务事务的一部分。
 
 本地独立Composer消费者检查：PSR-3 1.x在PHP7.2—8.5九版执行；PSR-3 2.x和3.x在PHP8.0—8.5六版执行。检查包含含NUL主体的完整字节假名化、结构字段、非法记录拒绝、日志故障传播和私有对象导出。远端CI、真实宿主日志后端及完整R4.6仍待验收。
+
+
+## 可选独立 SQL 持久日志
+
+`Audit\SqlSink` 已提供固定记录的独立 SQL 提交、容量、保留期和受权清理，接入见[中文指南](audit-sql.md)／[English](audit-sql.en.md)。可作为现有预算／指标链路的下游，但不把指标计数改成持久日志回执，不把独立日志提交与业务或告警接收原子绑定。本地 SQL＋告警投递和接收方持久去重的组合范围见[验收记录](sql-audit-integration-2026-10-22.md)；外部接收器、不可篡改长期档案及真实宿主 HTTP 权限仍需各自验收。
+
+## 查询期间权限变化
+
+`Diagnostics::inspect()` 和 `RecentEvents::recent()` 在访问状态之前及返回数据之前各调用一次宿主授权回调，均要求严格返回true；抛异常或非true均拒绝。宿主回调必须可重复执行，重新判断当前权限，避免消费一次性授权或产生业务副作用。开始即拒绝时不访问存储；读取期间失权时不返回已读内容。读取可能更新内部过期清理状态，这些动作不承诺因后置拒绝而回滚；两次回调也不提供与外部权限数据库的跨系统原子事务。
+
+
+## 显式保存闭合窗口
+
+可选 `WindowArchive` 为启用后的闭合指标窗口保存有界检查点，支持在 Metrics 保留期结束后按原身份补入队。它不从 SQL 日志行数重建指标，也不处理投递或未知回执。指标仍须配置 `retainedWindows > 0`，调度器必须在源窗口消失前成功保存：
+
+```php
+$archive = new SoSecurity\Audit\WindowArchive(
+    $metrics, $sharedArchiveStore,
+    static function (string $action) use ($currentOperator): bool {
+        return $currentOperator->allowed($action === 'write'
+            ? 'audit.checkpoint.write' : 'audit.checkpoint.read');
+    },
+    64, 3600, $clock
+);
+$confirmedStarts = $archive->checkpointClosedWindows();
+```
+
+`$clock` 须与 Metrics 的时钟一致；共享 `SystemClock` 也可分别实例化。档案存储必须是持久共享的 AtomicStore，不能用 MemoryStore 或 SessionStore。使用 MySqlStore 时，须显式安装原状态表，并使用不参加 Outbox 宿主事务的独立 PDO；本功能没有新增 DDL。读写权限需在每次调用时判断当前状态，不能闭包捕获一次性的批准布尔值。
+
+保存只包括原四类计数、阈值判断及窗口边界，不含主体或事件正文。最多64个窗口、单根32768字节；有效容量满时拒绝，过期窗口才可清理。检查点按原窗口结束时间加保留秒数到期，重复保存不延期。操作后撤权或超时可能发生在检查点已经提交之后，此时抛错但不自动撤销或重放。
+
+指定准确的历史窗口起点，在宿主拥有的 SQL 事务中调用：
+
+```php
+$pdo->beginTransaction();
+try {
+    $statuses = $publisher->publishArchived($archive, $windowStart);
+    $pdo->commit();
+} catch (Throwable $error) {
+    if ($pdo->inTransaction()) { $pdo->rollBack(); }
+    throw $error;
+}
+```
+
+Publisher 必须持有与 Archive 相同的 Metrics 实例。读取权限和存储内容在入队前、返回前复核；所有失败都要求宿主回滚 Outbox 事务。原消息 ID、正文、创建时间和 `message_age` 保持，重复入队沿用原状态，不会重新投递。Outbox 的期限及容量必须已覆盖希望恢复的窗口；不能用当前时间替换原消息时间。每次至多补入四条固定类别告警，默认共享调用预算1000ms；存储锁和 SQL 依赖仍须设置自身硬超时。
+
+`window($windowStart)` 可在当前读取授权下检查一份记录。缺失、过期或从未保存的目标明确拒绝，空结果不代表旧历史已处理。存储清空／回滚、未及时保存、外部长期档案和真实通知接收仍需独立处理。实现与验证状态见[本批记录](audit-window-archive-2026-10-23.md)。

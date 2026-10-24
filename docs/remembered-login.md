@@ -46,6 +46,8 @@ if ($credential !== null) {
 
 `remember.risk_guard` 可指定一个宿主服务名。未配置时保留原有恢复行为；配置后工厂要求该服务可调用。恢复请求在签名令牌和定位索引有效后调用 `risk_guard(scope, subject, selector)`，它必须返回 `Auth\DeviceRiskDecision`。返回值类型错误、回调抛错或服务缺失均拒绝恢复，不发放新会话；回调在可重试存储事务之外执行，不应修改业务状态。宿主只能使用服务端已核实的网络、设备与账号风险信号；不得把客户端自报的设备标签、请求头或 IP 文本直接当成信任证明。
 
+风险接入处还会重新校验对象的完整动作／原因组合，不能仅依赖类型或构造时检查。未知动作、矛盾组合及成员类型错误按 `auth.device_risk_denied` 拒绝；合法缓存对象保持可用。普通成功恢复会在轮换提交后、最后一次会话／身份验证前，再次调用配置的风险回调，因此回调必须只读、可重复且无业务副作用。此时若不再明确允许，或风险服务抛错，则不返回新凭据；已提交的轮换保留，不恢复旧令牌、不自动重试。来源真实性与跨来源一致性仍由宿主负责。详见[专项证据及兼容变化](remember-risk-boundary-2026-10-23.md)。
+
 `Auth\DeviceRiskPolicy::decide()` 提供固定优先级和原因码。宿主必须提供 `compromised`、`anomalous`、`changed`、`reauth_required` 四个布尔值；缺项、未知项或非布尔值直接报配置错误。`compromised` 优先返回 `deny/compromised`；其余任一风险返回 `step_up`，依次为 `anomalous`、`changed`、`reauth_required`；全部为 `false` 才返回 `allow/none`。原因码不含原始设备、IP 或账号证据。示例：
 
 ```php
@@ -111,6 +113,8 @@ $riskGuard = function (string $scope, string $subject, string $selector) use ($p
 
 原子回调可重试，不执行网络或生成随机值。存储提交后响应／身份复核失败可能消耗一次轮换，不能将异常当成成功或换用本地状态。备份恢复、Redis持久性和多节点一致性需单独部署验收。
 
+原生状态保护模式在签发、记住登录、查询、撤销和忘记设备返回前再次只读检查当前请求权限。成功记住登录还会复核当前风险策略，`deny`、`step_up`、无效结果和策略异常均不得返回新登录凭据。相关回调必须可重复且无业务副作用；宿主需允许 `remember.issue_check`、`remember.resume_check`、`remember.all_check`、`remember.revoke_check` 和 `remember.forget_check`。整次操作共享30秒时限，返回时已过期的持久凭据或会话拒绝返回；最终拒绝不撤销已提交的轮换，也不恢复旧令牌。风险回调异常使用 `auth.device_risk_unavailable`，请求回调异常使用 `auth.request_unavailable`，时间源异常使用 `auth.clock`，均不泄露原始异常详情。查询返回的是读取时的设备信息，不是后续操作的授权。
+
 恢复旧备份可能复活历史摘要和会话，组件不承诺跨状态恢复的永久重放历史。恢复流程应在开放流量前撤销受影响账号的全部共享会话／授权，并退役旧持久签名密钥；仅删除浏览器Cookie或只轮换密钥不能撤销备份中的短会话。账号枚举、备份一致性和恢复操作由宿主完成。
 
 ## 示例与验证
@@ -120,3 +124,7 @@ $riskGuard = function (string $scope, string $subject, string $selector) use ($p
 专项入口：`tests/remember.php`、`tests/device-risk.php`、`tests/remember_http.py`、`tests/device_risk_http.py`、`tests/concurrency.php`；当轮已执行证据见 [verification.md](verification.md)。独立消费者、真实 Cookie／Session、浏览器、生产和独立安全审查分别记录。设备风险决策与完整可信设备策略继续 R6.3。
 
 设计参考：[Symfony Remember Me](https://symfony.com/doc/current/security/remember_me.html) 的主动选择／重新认证边界，以及 [OWASP Session Management](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html) 的服务器期限、Cookie 和会话更新要求。本组件的协议和事务行为以上述契约为准。
+
+## 风险输入形状预算
+
+`DeviceRiskPolicy` 只接受准确四项 `anomalous`、`changed`、`compromised`、`reauth_required` 的服务端布尔信号。先检查条目数，再复制／排序字段名，异常大数组按原有配置错误拒绝。该检查不采集风险信号、不证明设备可信，也不改变当前 deny／step_up／allow 优先级。

@@ -62,6 +62,12 @@ $registration = $sdk->registration();
 3. 旧、新邮箱分别以明确 POST 调用 `confirm(selector, side, token, source)`；`side` 只能为 `old` 或 `new`。这两份证明只推进准备状态，不修改邮箱。
 4. 调用 `completionProposal(...)`，再次重新认证并明确确认新的操作授权，再调用 `complete(...)`。
 
+保护模式可改用 `proposalFor($policy, ...)`、`requestFor($policy, ...)`、`completionProposalFor($policy, ...)`、`completeFor($policy, ...)`：首参数是该实例准确的 `StateAccountPolicy`，随后沿用对应旧方法的参数。这四个入口自行管理外层边界，不能嵌套在 `StateBoundary::run()` 中。当前账号、会话、对象／字段权限及一次性授权先在只读准入阶段核验；原业务守卫还会收到只读 `admission` 阶段。一次性授权的准备、重新认证和确认步骤仍不可省略；地址服务内部使用同图的普通 `Grants` 实例。邮箱 `confirm`／`cancel` 的原生入口另需配置 `accounts.state_request_guard`。详细限制及本地验证范围见[地址原生准入专项](native-address-actions-2026-10-22.md)。
+
+原生地址入口支持显式捕获事实策略：先在同一 `Security` 实例建立准确的 `StateAccountPolicy` 和 `StateAccountConnection`，再使用 `$address = $sdk->addressChange($policy)`；一次性操作的准备与确认仍使用 `$sdk->operations($policy)`。`SnapshotPolicy` 必须绑定同一个 SQL 来源、当前身份提供器和经过审查的纯计算评估器，不能附带有副作用的审计提供器。无参 `addressChange()` 保留原有纯 `RolePolicy` 路径，不会因为边界处于活动状态就获得捕获策略权限。
+
+捕获权限在只读准入、消费凭据前后及业务事务结束后分别复核，并共用请求最初的时间预算。返回检查重读当前实际账户并保留原始 `Intent`；改址完成后旧会话按设计失效，不会为通过检查而恢复。若业务已提交但在原状态边界内撤权、依赖失败或到期，会返回 `account.completion_unknown`，保留已提交结果和 `pending`。外层边界完成后还会只读复核当前账户、最终 `complete` 守卫与原始期限；此时拒绝保留已完成的current见证。两者都不重放操作或恢复已消费凭据。宿主守卫须允许重复只读调用，重发申请仍受原流程更早的到期时间限制。快照观察要求独立事务；事务内的最终权限与条件更新仍由宿主请求守卫和账号适配契约负责，不能把返回复核理解为提交前回滚保证。接入及本地证据见[地址捕获策略专项](address-captured-policy-2026-10-23.md)。
+
 启用 MFA 的账号要求 TOTP／WebAuthn 对应强度；恢复码会话不能直接作为普通地址变更的认证方式。完成时重新读取当前账号和密码绑定身份，并使用宿主唯一约束及原版本的条件更新；保留密码、角色、MFA，推进凭据和地址版本，使旧会话失效。旧地址另有独立取消秘密，取消不产生新权限。旧地址不可用时不能略过确认；密码恢复核心只面向仍可证明当前邮箱的场景，旧地址丢失的迁移编排仍待交付。
 
 SQL 提交前拒绝会回滚本次 SQL 修改，但已消费的外部操作授权保持失效。提交后复核失败返回 `account.completion_unknown`，此时不能假设业务未提交或自动退款重做；宿主应重新查询当前业务事实。两份证明并发完成时也可能出现此结果，测试分别记录提交事实和响应结果。
@@ -77,3 +83,17 @@ SQL 提交前拒绝会回滚本次 SQL 修改，但已消费的外部操作授�
 仓库测试默认使用私有临时 SQLite；`python3 tests/mysql_check.py --accounts <PHP运行时>` 自建禁用 TCP 的临时 MySQL，仅使用合成数据。SDK 核心及正式预算／工厂的选取组合复验均已通过，以[最新验证记录](verification.md)区分通过、失败和未执行；当前没有生产或实际邮件投递验收。
 
 真实并发运行框架已纳入仓库：`python3 tests/account_change_concurrency.py <PHP运行时> sqlite` 每次执行九个场景，包含168个并发进程和提交前后SIGKILL。MySQL由上述 `--accounts` 控制器自建私有实例后运行同一框架；直接选择MySQL而未提供受控测试实例时拒绝，不能降级为其他数据库测试。默认结果日志位于新建的私有临时目录，路径在最终报告中输出。
+
+### 维护完成时的权限复核
+
+注册和地址变更的 `maintain`／`rotate` 会在 SQL 提交、连接超时设置恢复后，再调用管理权限回调的 `complete` 阶段。回调须保持只读、可重复并判断当前权限，不能只允许 `before`／`commit` 两个阶段。提交前拒绝会回滚；提交完成后拒绝或回调异常返回 `account.completion_unknown`，保留已经提交的修改，不自动重试，也不恢复旧记录。异常不包含原权限回调的消息或异常链。
+
+这项完成阶段检查不等于原生保护维护接入，也不提供跨外部权限服务的原子事务。证据及未通过项见[维护完成权限专项](maintenance-completion-authority-2026-10-22.md)。
+
+### 原生维护
+
+准确声明StateAccountConnection的注册／地址变更服务提供maintainFor与rotateFor，接收同图StateAccountPolicy及显式当前管理StatePermission。使用连接的maintenanceTarget绑定用途、动作和准确页参数；缺少权限或admission拒绝返回null且不写pending。管理回调的admission阶段必须只读且可重复，原普通方法契约保持。提交后失权保留pending并报告完成未知，禁止自动重试。配置示例、权限要求及未通过项见[原生维护专项](native-maintenance-2026-10-22.md)。
+
+原生维护的权限策略还必须与StateAccountConnection使用同一SqlStateSnapshot对象、准确账号表及认证字段映射；同一完整来源中的另一张账号表不能代替真实账号。错配在pending前返回configuration.state_connection。公开工厂应先在同一Security实例建立stateAccountPolicy／stateAccountConnection，再取得registration／addressChange；完整接线与影子表反例见[工厂专项](native-maintenance-factory-2026-10-22.md)。
+
+密码恢复与邮箱恢复的过期请求也可通过maintainFor／rotateFor执行原生管理维护，须绑定准确账号来源、当前管理会话／角色和页参数。普通维护的管理回调新增complete阶段；提交后拒绝报告完成未知，不自动重试。该能力不确认恢复、不启用账号、不执行未知回执续办，详见[过期请求维护](expired-request-maintenance-2026-10-22.md)。

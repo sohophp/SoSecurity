@@ -14,3 +14,5 @@
 /integrations export-ignore
 /resources/api export-ignore
 /docs/*-evidence-* export-ignore
+
+/docs/local-evidence-manifest-*.json export-ignore

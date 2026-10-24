@@ -109,3 +109,5 @@ Claim仅在领取提交及当前权限／期限复核后返回，提供status()�
 设计参考：[AWS事务发件箱](https://docs.aws.amazon.com/prescriptive-guidance/latest/cloud-design-patterns/transactional-outbox.html)、[Symfony稳定业务幂等键](https://symfony.com/doc/current/messenger.html#writing-idempotent-handlers)、[Debezium事件／聚合身份](https://debezium.io/documentation/reference/stable/transformations/outbox-event-router.html#basic-outbox-table)。独立实现，不引入对应框架或基础设施依赖。
 
 私有根／消息表不得声明出站外键或被业务外键引用，避免维护清理级联到业务；发现关系即拒绝，关闭外键执行也不能绕过。已有这类扩展须显式迁移，不自动删约束。完整边界与两后端专项见[SQL 依赖契约](sql-transactions.md#私有安全表的依赖边界)。
+
+认证保护模式要求 `Security::outbox($stateAccountConnection)` 使用准确同边界连接；不传连接会在工厂拒绝。普通模式保持原有 `outbox()`，详见[工厂边界专项](idempotency-factory-boundary-2026-10-22.md)。

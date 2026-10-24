@@ -1,5 +1,7 @@
 # API 凭据、请求签名与重放防护
 
+原生保护的 HMAC 现要求显式 KeyRingStateSnapshot（实际密钥及签名策略）加入完整来源，使用 `hmacVerifier($statePolicy,$keySource,$sourceName,$guard)` 与 For／同边界业务方法；旧配置恢复在 nonce 写入前拒绝。在线 KeyProvider 与轮换迁移未由本批适配，见[准确范围](state-native-hmac-integration-2026-10-22.md)。
+
 这些组件认证调用方并检查精确权限范围。宿主仍须检查资源归属、业务状态和请求预算，明确哪条路由使用哪种认证；不能在签名失败后自动尝试匿名、Cookie 或其他更弱身份。网页演示入口：[API 凭据与签名](http://72.rocky.wsl/SoSecurity/?module=api)。当前为未发布候选 API。
 
 ## 两类密钥分别使用
@@ -118,3 +120,18 @@ python3 tests/api_demo.py --url http://72.rocky.wsl/SoSecurity/
 跨语言测试独立使用 Python hashlib/hmac 实现配置档，并检查 PHP 签发的字节一致性；另校验 RFC 9421 B.2.5 公布的 HMAC 原语向量，不把原语向量当成完整配置档验证。真实 HTTP 测试只在 127.0.0.1 隔离测试服务器发送签名/二进制体/原始查询及 Bearer 生命周期请求；该无管理员校验的固定测试路由不公开部署、不进入 Composer 包。File/Redis/MySQL 的 24 进程重放及凭据轮换检查见 `tests/concurrency.php` 和 `bin/check.sh`。
 
 这些自动检查不替代真实生产客户端、HTTPS/代理、密钥管理服务、完整 OAuth 互操作或独立安全审查。当前未发布版本允许修正 API；接入宿主先限制路由，按最小权限和负面用例验收后再冻结。
+
+
+## 存储I/O后的期限与时钟
+
+ApiKeys在相关存储读取／写入后复核期限，拒绝时钟倒退和当前时间早于凭据created的记录。签发与轮换不会因存储等待而延长有效期；写入前过期会拒绝，写入后才发现异常时报告api.issuance_unknown／api.rotation_unknown，不返回成功凭据。这不是回滚确认，不能自动恢复旧秘密或重试未知结果。Clock异常脱敏为api.clock；自定义时钟必须只读。
+
+本地各PHP版本、文件／MySQL／Redis及安装消费者证据见[时间边界专项](api-key-time-2026-10-22.md)。后续已新增显式 FileStore 原生保护声明，见[原生接入专项](api-key-native-2026-10-22.md)；时间修复本身不构成完整状态回滚保护。
+
+### 旧 ApiKeys 的显式原生保护
+
+`Security::apiKeys($state)` 接受 `StateApiKeyConnection`，也可向 `ApiKeys` 构造器第三参数传入同一声明。声明绑定完整文件来源、宿主权限来源、准确边界／站点／作用域及同一时钟；工厂使用声明中的 FileStore，命名空间须为 `site:shared`，不移动已有数据或共享预算目录。
+
+权限回调接收 action、scope、subject、metadata，返回当前不透明调用者标识字符串；null／false 拒绝，true 不代表授权。回调必须只读且可重复，可变权限依赖须纳入完整来源。认证和正常拒绝不写 pending，显式撤销可以清理过期文件。写入后失权或过期会保留未知结果，不能自动重试或恢复。详细配置约束、兼容变化、并发失败及本地证据见[专项记录](api-key-native-2026-10-22.md)。
+
+原生 HMAC 的 `verifyFor`／`withVerification` 在最终返回前增加只读请求权限和签名期限复核。宿主边界需支持 `hmac.verify_check`、`hmac.execute_check`，请求守卫需支持重复只读调用；SQL事务及返回复核共用整体预算。拒绝返回不撤回已提交业务或恢复已消费nonce。普通入口及公开签名保持，见[专项修复与证据](native-hmac-return-2026-10-23.md)。

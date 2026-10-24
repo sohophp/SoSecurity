@@ -66,3 +66,11 @@ $headers = SoSecurity\Http\SecurityHeaders::build($csp, true, null, ['camera' =>
 `Validation\Validator`增加string的format=url/ip。url使用共享严格HTTP(S) URI语法，最多2048字节，不接收userinfo/非ASCII主机/原始空格与反斜杠；国际化域名先使用受审核的IDNA转换，路径字符由宿主百分号编码。ip接收正常IPv4/IPv6，不接收CIDR、旧数字缩写、zone ID。**格式有效不代表访问目标安全**；例如正常私有IP作为业务输入可通过format=ip，外部请求还须经过outbound的白名单和地址检查。
 
 [HTTP 演示](http://72.rocky.wsl/SoSecurity/?module=http)包含跳转、CORS预检和权限头。真实静态CORS端点cors.php只读固定公开演示数据，不读取Session/业务账号；默认允许http://72.rocky.wsl:3000，可由可信部署环境设置SOSECURITY_DEMO_CORS_ORIGIN。页面输入只做策略模拟，不动态改变端点的白名单。
+
+## 构造输入预算与 URI 值
+
+`Uri::host()` 在大小写转换前拒绝超过253字节的输入。`Cookie::header()` 在复制或拼接前限制 Path 最多4096字节、原始 Domain 最多254字节（允许前导点），规范化后的 Domain 最多253字节；原有 name=value 编码后4096字节限制保持，Path 预算不是总响应头大小承诺。
+
+`IpRules` 最多1024条规则，每条最多49字节；接收IPv4／IPv6及可选CIDR，不接收任意主机文本。超量配置抛 `ConfigurationException`；单个匹配地址超过45字节返回false。这些上限先于拆分、复制和匹配；仍需在HTTP解析、配置加载阶段实施宿主请求／配置预算。
+
+URI 路径、查询及片段可能包含签名或令牌，内部不通过普通调试或 `var_export` 展开；明确的 `path()`、`target()`、`url()` 仍返回原有规范化值。URI 对象禁止序列化／反序列化，抛 `ConfigurationException(configuration.uri_serialization)`；缓存时显式选择安全字段并在使用时重新解析，不把调试保护当作显式输出脱敏。

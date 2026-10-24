@@ -50,13 +50,13 @@ echo $fragment;
 | maximum_attribute | 2048 | 64–4096字节；解析后的单属性值 |
 | allow_links | true | bool；仅默认适配的基础链接选择 |
 
-输入要求有效UTF-8，不接受NUL及除TAB/CR/LF外的禁用控制字符。先检查字节数，再用DOM做资源预检：不启用DTD/实体展开或PARSEHUGE，限制树/属性/待处理节点队列。预检DOM不作为清理结果；原始输入随后进入HTML Purifier语法/允许列表处理。输出再次检查字节、UTF-8和NUL，超限拒绝，不能截断后输出。
+输入要求有效UTF-8，不接受NUL及除TAB/CR/LF外的禁用控制字符。先检查字节数，再用DOM做资源预检：不启用DTD/实体展开或PARSEHUGE，限制树/属性/待处理节点队列。预检DOM不作为清理结果；原始输入随后进入HTML Purifier语法/允许列表处理。输出再次检查字节、UTF-8及与输入相同的禁用控制字符，超限拒绝，不能截断后输出。
 
 这些预算限制输入与处理结构，不是可中断的硬CPU/内存沙箱；宿主仍须在HTTP读取/解析前限制请求大小、并发、响应和实际运行时资源。DOM本身按输入构建树，异常必须作为拒绝。组件不切换宿主的libxml错误模式、不清空其已有错误，解析和上游DOM lexer可能向已启用的错误队列追加诊断；依赖该队列的宿主应明确隔离自己的读取/清理流程。正常路径保留PHP当前错误处理器，不把解析警告当作安全通过的证据。
 
 - 编码/输入/树/属性超限抛 `ValidationException`：`html.encoding/input_limit/tree_limit/attribute_limit/parse`。宿主停止业务，可按表单需求返回422。
 - 可选包/DOM/ctype缺失、已加载旧版本或不支持的版本抛 `DependencyException`，明确拒绝；没有 `strip_tags`、正则删除或直接原文返回的降级方案。
-- 清理服务异常抛 `SecurityException('html.provider')`；输出违反契约为 `html.output`，不得把底层异常/路径回传客户端。
+- 清理服务异常抛 `SecurityException('html.provider')`，不保留原始异常链；输出违反契约为 `html.output`，不得把底层异常/路径回传客户端。
 - 错误配置抛 `ConfigurationException`；未知字段/null数值/把任意HTMLPurifier配置传入本策略均拒绝。
 
 ## 定义缓存、自定义适配与诊断

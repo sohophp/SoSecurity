@@ -8,6 +8,8 @@ R4.3实施中的可选组件。`Idempotency\SqlExecutor` 将同一 PDO 上的业
 
 ## 部署与身份边界
 
+根、执行记录、历史分页及维护查询的元数据均在 SQL 返回 PHP 前校验类型与字节上限；异常／超限值返回空值并由严格状态读取器拒绝，不截断成合法数据。正文独立核对真实 BLOB 长度、声明长度和摘要，保留空正文、NUL 及非 UTF-8 二进制重放。该保护限制 PHP 读取缓冲，不承诺数据库引擎总内存上限；不需要修改现有表结构。专项结果见[2026-10-21 修复记录](idempotency-bounds-fix-2026-10-21.md)。
+
 部署使用64位PHP，显式执行 [SQLite](../resources/sql/idempotency-sqlite.sql) 或 [MySQL](../resources/sql/idempotency-mysql.sql) 结构，使用私有持久 SQLite 文件及 FULL／EXTRA 同步，或 InnoDB 与 `innodb_flush_log_at_trx_commit=1`。MySQL 使用原生预处理、异常模式和自动提交的空闲连接；SQLite 支持旧 PDO，但同样拒绝已有的原生或 SQL 手动事务。构造只检查连接属性，不查询 SQL、调用宿主回调或初始化数据。
 
 `site`、租户、主体及固定操作名由宿主可信上下文提供，`epoch` 为数据库外保存的64个小写十六进制字符组成的部署代际，不能从请求或待恢复数据库自证。封存密钥与业务／API密钥分离，使用 `Support\HmacKeys` 注入。部署管理程序经当前管理权限显式 `initialize(scope, subject, operation)`；请求缺少根记录时拒绝执行，不能在请求中自动重新初始化。
@@ -67,3 +69,9 @@ $outcome = $executor->execute($request, function (PDO $connection, Request $requ
 最新原生接入的PHP7.2—8.5九版SQLite每版409项（核心135／安全190／工厂48／受限内存5／并发31）、真实MySQL每版356项（135／190／31）、HTTP／TLS各433项、161类API和九个全新Composer消费者通过。两后端含24进程与真实SIGKILL，原生接口另验证丢失确认后的服务器重启；两版TLS移动Chromium通过，451个源码／测试／配置文件在整轮未变。此前两版513条历史跨批次验证的各517项仍为单独补充证据。出站消息箱、完整R4.3及整库最终验收继续，阶段快照、原始失败和验证边界见[验证记录](verification.md)。本批不作生产或独立审查结论。
 
 参考 [Stripe幂等请求](https://docs.stripe.com/api/idempotent_requests) 的键与参数比较及结果重放语义；本组件永久保留键墓碑，不能套用其他产品删除到期键后重新执行的规则。外部副作用需要另行实现 [事务消息箱与接收方去重](https://docs.aws.amazon.com/prescriptive-guidance/latest/cloud-design-patterns/transactional-outbox.html)，本组件只保证同一 SQL 事务内的结果和业务一致性。
+
+> 幂等／Outbox工厂已补受保护模式默认拒绝，见[工厂边界修复](idempotency-factory-boundary-2026-10-22.md)。幂等原生准入仍未实现，不能用拒绝配置替代功能完成。
+
+> 幂等原生初始化／维护已继续接入，见[当前实现](native-idempotency-maintenance-2026-10-22.md)。此前“幂等原生全部未实现”为历史状态；首次执行与结果查询仍开放，不能据此关闭整个缺口。
+
+> 幂等原生首次执行及已知结果查询已继续接入，见[本批实现与定向证据](native-idempotency-request-2026-10-22.md)。此前“首次执行／查询待接入”为历史状态；默认PHP7.2时钟失败、暂缓功能和外部验收保持开放。

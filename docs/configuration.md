@@ -1,5 +1,7 @@
 # 简单配置与只读诊断
 
+独立见证可通过 `authentication.state_boundary` 显式选择[受管理认证工厂](state-factory-integration-2026-10-21.md)，复用准确 FileStore、边界、会话、因子与纯权限策略；普通配置不会自动启用。完整生命周期及最终安全恢复仍未完成，详见[接口指南](state-boundary.md)。
+
 可选`upload_quarantine`提供持久隔离工厂`quarantine()`，显式注入扫描器并要求共享持久状态，和原`upload`同步保存配置独立。配置／构造不扫描或写入任务，诊断不把配置有效当作实际扫描通过；字段与迁移边界见[隔离指南](upload-quarantine.md#工厂配置与诊断)。
 
 可选 `authentication` 配置连接身份提供器与请求保护服务，提供 `authentication()` 和 `sessions()`；同时配置 MFA 时默认连接 TOTP。迁移到受管理因子目录后可显式设置 `managed_factors=true`，要求 `account_factors` 配置并与 `second_factor`、顶层 `mfa` 互斥；两种工厂都使用当前受管理目录，不回退到原始 TOTP。它们保留现有 `session()` 原生辅助；字段、顺序和撤销边界见[认证指南](authentication.md)。
@@ -30,6 +32,8 @@ $hasher = $security->passwordHasher();
 ```
 
 目录由部署提前创建为应用拥有的0700私有目录，放在Web根之外。当前FileStore依赖POSIX私有权限，原生Windows目录不能通过此检查；不要跳过检查或降级为MemoryStore，平台证据见platforms.md。默认验证码/CSRF使用原生Session，跨会话请求限流和密码重置使用显式配置的共享storage。不需要存储的密码辅助可以只配置site。仅在调用需要共享存储的功能时，未配置storage才报错。
+
+FileStore状态节点须为不超过64KiB的普通文件，锁条带须为空普通文件。读取和清理会拒绝FIFO等异常节点，并核对打开描述符与实际路径；检查后替换也不能使打开FIFO无限等待。合法只读数据仍可读取，原子替换后权限仍为0600。新拒绝先后及本地证据见[节点修复](file-store-nodes-2026-10-24.md)。
 
 原生登录完整例子见 [legacy-login.php](../examples/legacy-login.php)，密码重置宿主SQL版本比较例子见 [password-reset.php](../examples/password-reset.php)。后者不自动建表、发送邮件或提交宿主事务；演示账号表结构由测试/宿主明确创建。
 
@@ -78,7 +82,7 @@ login预设保留独立的ip和login策略；调用方先消费IP总量，再按
 | rate_limits | default策略 | 命名策略，每个limit/window/bans/history_ttl；默认5/300/[60,300,900]/86400 |
 | budgets | 空，不启用 | 最多64个命名策略；algorithm=token_bucket、limit=10、window=60、burst=null、maximum_entries=512；组合最多8项，详见[预算指南](request-budgets.md) |
 | leases | 未配置，不启用 | maximum=1、ttl=30、maximum_lifetime=300；共享storage，显式资源初始化与业务隔离，详见[租约指南](leases.md) |
-| operations | 未配置，不启用 | 依赖authentication／authorization及请求保护；ttl=120、capacity=8、maximum_age=300、minimum_strength=2、methods=[totp,webauthn]；默认不接受密码／恢复码，详见[操作授权](operations.md) |
+| operations | 未配置，不启用 | 依赖authentication／authorization及请求保护；ttl=120、capacity=8、maximum_age=300、minimum_strength=2、methods=[totp,webauthn]；默认不接受密码／恢复码，保护模式可显式 operations($stateAccountPolicy) 启用原生准入，要求准确认证图及纯 RolePolicy；默认 operations() 保留手工外层授权组合，详见[操作授权](operations.md) |
 | signed_links | 未配置，不启用 | 显式origin／keys／request_guard；ttl=300、maximum_ttl=86400、capacity=32、allow_http=false；共享状态撤销／消费及严格URL，见[签名链接](signed-links.md) |
 | downloads | 未配置，不启用 | 显式directory／temporary_directory／document_root；policy默认20MiB完整核验／响应、3秒I/O、30秒传输、64KiB分块；授权／权威索引显式注入，见[下载指南](downloads.md) |
 | password | bcrypt，cost=12，minimum=15，maximum_bytes=72；blocklist=builtin、breach_checker=null | Argon2id默认上限4096字节，不会静默降级；本地表／泄露服务名和故障边界见[密码指南](passwords.md) |
@@ -186,3 +190,27 @@ api 的固定配置档、默认值与完整示例见 [api.md](api.md)。诊断 `
 可选 `account_factors` 与 `accounts` 分别配置。必须显式给出 `connection`、`scope`、`epoch`、`repository`、`integrity_keys`、`totp`、`fence`、`worker_guard`、`read_guard`、`management_guard`，另可指定完整账号 `policy`。除scope／epoch／policy外均为服务名称；没有默认放行权限。`repository` 必须实现 `Account\FactorRepository` 并使用同一个PDO，`totp` 必须为未受管理的 `Mfa\TotpFactors`，`fence` 必须匹配site／scope／epoch。
 
 `Security::accountFactors()` 建立强类型 `FactorWorkerAuthority`，保持其SQL预算，并返回 `FactorRegistry`；不自动建表、创建栅栏、登记根、迁移因子、发送通知或改变账号。诊断仅检查能力／上下文并将当前注册权威、同PDO、迁移审批及备份代际标为待人工验收，不调用权限回调证明通过。完整步骤和示例见[受管理因子接入](account-factors.md)。
+
+保护模式的三个公开生命周期服务可在建立准确 `StateAccountConnection` 后增加 `accounts.state_request_guard`，服务必须实现 `Account\StateRequestGuard`。它负责 pending 前的公开请求检查和锁内复查，与地址变更的 `accounts.request_guard` 用途不同。未选择该能力仍需显式外层边界；选择后由服务自行执行公开方法的边界，不能再嵌套包装。管理／投递／业务权限保持独立，详见[公开请求接入](state-request-integration-2026-10-21.md)。
+
+
+### 受保护的账号凭证工厂
+
+已配置 `authentication.state_boundary` 时，用同一 `Security::stateAccountPolicy()` 生成的纯策略调用 `$sdk->apiCredentials($stateAccountPolicy)`。该工厂复用准确缓存的会话／因子／身份服务和实际认证 FileStore，缺少策略或传入另一服务图的策略均拒绝。直接调用返回服务的公开方法，勿再包一层 `boundary->run()`。请求保护和范围回调必须只读；委托仅支持同一身份提供方、不含效果审计的原生 `RolePolicy`。普通未保护配置不需要追加参数。范围、失败语义和未完成项见[接线记录](state-api-entry-integration-2026-10-21.md)。
+
+
+原生保护的签名链接使用 `Security::signedLinks($stateAccountPolicy)`，沿用显式 `signed_links` 密钥／来源／请求保护配置，但使用准确认证存储和会话图。管理与验证使用 For 方法；业务 SQL 使用 `withVerification`。未传状态策略的保护工厂继续拒绝，见[原生接入与验收](state-native-links-integration-2026-10-22.md)。
+
+
+原生重置证明显式调用 `resetTokens($ttl,$stateAccountPolicy,$requestGuard,$addressColumn,$addressVersionColumn)`，默认邮箱列 address／address_version。请求授权签名为 `(entry, scope, ?AccountRecord): bool`，必须只读并严格允许；缓存拒绝更换授权函数或列映射。返回的证明仅供受信任交付，完整恢复仍使用 Account\Recovery。准确约束见[原生入口](state-native-reset-integration-2026-10-22.md)。
+
+
+保护模式的 `hmacVerifier($statePolicy,$keySource,$sourceName,$requestGuard)` 必须声明实际 `KeyRingStateSnapshot(PDO,profile,KeyRing,SignaturePolicy)`，并加入同一完整来源。缓存固定状态映射、来源对象／名称及授权回调；原生只接受具体 KeyRing，在线 KeyProvider 保持普通模式或等待适配。请求保护签名为 `(entry, Identity, ?Intent, method, url): bool`，仅在只读准入调用。新增来源及修改密钥／策略不能自动初始化或采纳旧根，见[接入说明](state-native-hmac-integration-2026-10-22.md)。
+
+受保护工作进程栅栏的实际目录必须在建立见证前通过 `FenceStateSnapshot` 加入同一完整来源；缺失时构造及原生工厂拒绝。完整声明、容量及迁移限制见[工作进程栅栏来源](state-snapshots.md#工作进程栅栏的实际来源)。
+
+## 选项预检查预算（2026-10-22）
+
+固定选项映射在复制键、合并默认值或断开PHP引用前，先按允许键数量拒绝超大输入；未知键仍逐项拒绝。此检查覆盖核心配置、验证规则、角色规则及独立密码、会话、出站请求、上传／隔离、下载、凭据／签名、Webhook、幂等、Outbox、账号和HTML策略。Webhook重试间隔在复制前执行既有20项上限。合法选项、默认值与公开签名不变；宿主仍须限制配置或请求进入PHP数组前的解析成本。
+
+Fixed option maps reject excessive key counts before copying or merging. Existing accepted keys, defaults and public signatures remain unchanged. Webhook retry arrays retain their20-entry limit, now checked before copying. Hosts must still bound parsing before PHP array construction.

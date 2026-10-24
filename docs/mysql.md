@@ -1,5 +1,7 @@
 # PDO MySQL 原子存储
 
+触发器查询为空并不能证明表没有触发器。当前账号须有该表／库的直接 TRIGGER 权限，或 partial_revokes=OFF 时的全局直接权限；仅角色授权及无法解析的账号标识默认拒绝。SDK 不自动授予权限。见[兼容变化及本地证据](mysql-store-visibility-2026-10-23.md)。
+
 `MySqlStore` 为限流、验证码、CSRF 和重置令牌提供跨进程状态。只要求可选 `ext-pdo_mysql`，不依赖 ORM 或框架。使用独立 InnoDB 表与固定 SQL，不接管业务账号表。
 
 ## 最小接入
@@ -14,7 +16,8 @@ $pdo = new PDO($privateDsn, $privateUser, $privatePassword, [
 ]);
 // 仅在部署阶段，用有建表权限的独立连接执行：
 SoSecurity\Storage\MySqlStore::install($deploymentPdo);
-// 请求阶段只需要 SELECT/INSERT/UPDATE/DELETE，禁止在请求里自动建表。
+// 请求账号需要 SELECT/INSERT/UPDATE/DELETE 及可证明的直接 TRIGGER 可见权限。
+// 禁止在请求里自动建表或授予权限。
 $store = new SoSecurity\Storage\MySqlStore($pdo, 'shop-prod', null, 1);
 $limiter = new SoSecurity\RateLimit\RateLimiter($store);
 $decision = $limiter->consume('login', $serverSideIpAccountKey);
@@ -22,6 +25,10 @@ if (!$decision->allowed) { /* 宿主拒绝业务并提供 Retry-After */ return;
 ```
 
 部署 SQL 位于 [resources/sql/mysql.sql](../resources/sql/mysql.sql)，随 Composer 包交付。`install()` 只在表不存在时创建，并验证已有结构；不改表、不清数据。缺表、MyISAM、错误列/主键/清理索引会拒绝使用。建表是 MySQL 隐式提交操作，因此宿主已有事务时直接拒绝。
+
+主键必须完整覆盖 `namespace_hash, state_key`，清理索引必须完整覆盖 `namespace_hash, expires_at` 且非唯一；两者须为BTREE，不能使用字段前缀。其他唯一索引也会拒绝，因为 `ON DUPLICATE KEY UPDATE` 可能因此把新键写入已有键的记录。构造对象时以及每次写入／清理的自有事务内都会检查，复用对象后发生的部署结构变化同样适用。事务内先取得表元数据锁，再读取最多五行相关索引元数据；不符合时在业务回调或状态修改前拒绝。规范DDL保持兼容，错误结构需要由部署流程修正，库不会自动删除或重建索引。复现与验证见[索引隔离修复](mysql-store-index-2026-10-23.md)。
+
+列结构检查同样最多读取五行，SQL侧限制类型声明长度，只读取需要验证的 `expires_at` 默认值，避免错误结构的巨大元数据先耗尽PHP内存。规范结构继续可用，额外列和错误类型明确拒绝。构造、安装和原子操作捕获的PDO错误保留既有 `StorageException` 类别及原因码，但不再通过 `getPrevious()` 附带原始PDO异常；数据库内部详情不应随应用异常链输出。相关预算与错误处理证据见[专项记录](mysql-store-metadata-errors-2026-10-23.md)。
 
 ## 工厂配置与诊断
 

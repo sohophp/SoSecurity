@@ -26,3 +26,5 @@
 实现参考 [OWASP Forgot Password](https://cheatsheetseries.owasp.org/cheatsheets/Forgot_Password_Cheat_Sheet.html) 和 [MFA Recovery](https://cheatsheetseries.owasp.org/cheatsheets/Multifactor_Authentication_Cheat_Sheet.html)。测试仅使用本地私有SQLite和自建无TCP MySQL，不能据此声称邮件送达、生产灾备或完整账号恢复验收。
 
 验证边界见[最新记录](verification.md)：当前SDK两版SQLite／一版自建MySQL各267项、219源码静态、180类API和两版实际安装消费者通过，完整SDK门禁、实际邮件和原生页面仍未执行。
+
+密码恢复与邮箱恢复的过期请求也可通过maintainFor／rotateFor执行原生管理维护，须绑定准确账号来源、当前管理会话／角色和页参数。普通维护的管理回调新增complete阶段；提交后拒绝报告完成未知，不自动重试。该能力不确认恢复、不启用账号、不执行未知回执续办，详见[过期请求维护](expired-request-maintenance-2026-10-22.md)。

@@ -76,3 +76,9 @@ Resolver返回全部最终地址并执行传入Deadline；Transport只连接pin�
 默认实现已在独立Linux网络命名空间实际验证：IPv4/IPv6公开地址字节绑定、专用TLS测试CA、真实DoH、TLS失败、DNS变更内网、重定向/凭据隔离、压缩响应/头超限、总超时。不修改宿主路由/证书库；命名空间退出即消失。真实公网固定目标及本机Apache/FPM也另有验证，不把模拟对象当公网成功。
 
 [受控演示](http://72.rocky.wsl/SoSecurity/?module=network)只真实访问固定www.php.net/robots.txt，所有访客共用8次/分钟、3秒/16KiB预算；拒绝场景使用明确标记的测试适配器。没有任意URL/Host输入代理或无限下载。生产旧站、更多cURL/CA/网络环境、Windows及独立安全复核仍待验收。
+
+## 自定义适配器故障边界
+
+Client对Resolver／Transport故障以及DohResolver对传输故障统一返回RequestException，不附带适配器的异常正文或previous。已知固定http原因码保留，任意自定义原因字符串归一为http.dns或http.transport。宿主不能依赖原始异常类型、文本或异常链取得底层详情。输入策略拒绝仍保留原有ValidationException行为，不因此尝试其他目标或重试POST。
+
+DohResolver在A／AAAA每次传输返回后以及最终返回前检查同一Deadline，并核对16384字节正文／8192字节响应头预算。即使可信自定义传输未及时拒绝，迟到结果也不能成功返回；同步系统调用仍需由传输本身落实硬超时。

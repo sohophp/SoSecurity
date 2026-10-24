@@ -1,5 +1,7 @@
 # 密码策略、弱密码、泄露筛查与成本校准
 
+旧 ResetTokens 的[恢复代际](state-proof-retirement-2026-10-22.md)明确作用于整个 FileStore 命名空间的所有账号版本绑定；同一底层 CsrfTokens 的 password-reset 用途也识别标记，普通 CSRF 用途保持。它不修改账号密码，不清空 nonce；受保护 `resetTokens($ttl,$statePolicy,$requestAuthority)` 已接入真实密码／因子／邮箱版本绑定与同边界 SQL，见[原生重置证明](state-native-reset-integration-2026-10-22.md)。原语不自动完成邮件、MFA、账号恢复或登录；完整恢复及最终启用另行验收。
+
 哈希、设置密码的策略、登录验证和账号恢复分别处理。`PasswordHasher` 不自动联网或改库；策略在注册／改密／重置时使用，不在每次登录强制新策略，以免错误锁死已有账号。登录、重置和策略请求仍需宿主预算、CSRF、身份／对象授权及生命周期撤销。
 
 ## 与算法匹配的策略
@@ -80,3 +82,8 @@ php examples/password-calibrate.php --profile=argon2id --max-memory-kib=65536
 专项、原生固定端点TLS、子进程校准、重置SQL边界及演示浏览器证据见 [verification.md](verification.md)。公开已知测试密码的真实HIBP查询与私人账号、生产配置验证分开；未配置真实业务的远程策略不声称已接入。
 
 参考：[NIST SP800-63B](https://pages.nist.gov/800-63-4/sp800-63b.html)的全串拒绝表与Unicode建议；[HIBP范围与填充](https://haveibeenpwned.com/API/v3#PwnedPasswords)的五位前缀、计数和逐键查询风险；[OWASP Authentication](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html)与[Password Storage](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html)的策略、迁移及计算成本边界。标准对照不代表认证或独立审计。
+
+
+原生新增账本现检查完整物理目录的文件余量：满额在 pending 前拒绝，逻辑过期文件仍占容量，已有账本合法更新不额外占文件。释放空间后同一服务／会话可重试；不会因此清除旧 pending。准确修前反例及范围见[容量准入记录](state-admission-capacity-2026-10-22.md)。
+
+独立 `ResetTokens` 原生入口在完成后只读捕获当前账号记录，重新调用请求守卫并检查期限和整体预算。宿主边界需支持 `password.reset.<entry>_check`（issue／consume／revoke／execute），守卫须可重复只读调用。后置拒绝不退款证明或重放已提交业务。这里仅描述证明原语，不表示最终账号恢复已实现或验收；见[范围及本地证据](native-reset-proof-return-2026-10-23.md)。

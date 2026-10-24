@@ -1,5 +1,15 @@
 # 认证、身份来源与共享会话撤销
 
+原生文档业务 Bearer 路由、格式 3、浏览器及真实中断已接入；[本组证据](state-business-host-integration-2026-10-21.md)保留一次未解释 503，不能当作完整宿主验收通过。
+
+原生 Bearer 已增加同一独立见证内的业务 PDO 组合入口 `withAuthorization`，只读对象／字段授权在 pending 前完成；详见[接入契约与有限证据](state-business-integration-2026-10-21.md)。业务 HTTP、真实中断及全部宿主验收仍未完成。
+
+本地保护宿主已补 SQLite／MySQL 两端 HTTP／TLS 与持续真实时钟的请求中到期检查，见[后端与时钟验收](state-http-mysql-integration-2026-10-21.md)。测试控制器不进入产品接入；业务事务组合、全部宿主及最终恢复仍未完成。
+
+受管示例已增加明确保护模式的 HTTP／TLS 接线：私有引导文件可返回同一 SDK 和纯状态策略，真实 CSRF／Origin 校验先于原生会话更新，Cookie 管理与 Bearer 路由分离。见[本地宿主验收及限定](state-http-integration-2026-10-21.md)；其他宿主、业务事务组合和最终安全恢复仍开放。
+
+未发布候选新增显式[独立见证与认证状态边界](state-boundary.md)（[English](state-boundary.en.md)）。普通配置不会自动启用；显式 `authentication.state_boundary` 认证工厂已接入，见[工厂记录](state-factory-integration-2026-10-21.md)；完整全入口及最终安全恢复仍未完成，F01 保持开放。
+
 新增能力按需启用，旧项目的 Session、账号模型和入口不自动改变。`session()` 仍是原生 PHP Session 配置／期限辅助；`sessions()` 为可撤销的共享认证登记；`authentication()` 组合身份提供器、请求保护和可选第二因素。
 
 ## 工厂接入
@@ -51,6 +61,8 @@ $result = $login->secondFactor($tenant, $serverBinding, $pendingChallenge,
 | authenticated | 才能读取 `credential()` 与 `account()` 并建立宿主登录 |
 
 成功后先更新原生 Session ID、登录绑定及 CSRF，再保存不透明登记凭据和主体；更新失败应拒绝登录并撤销新登记。可执行流程见 [authentication.php](../examples/authentication.php)。已有会员可在受保护的设置入口绑定因子；强制 MFA 的初始账号需经受控预配置／恢复流程完成设置。
+
+启用原生状态保护时，`password`、`secondFactor` 和 `cancel` 在见证提交后、返回前再次只读检查 `StateRequestGuard::current()`。该回调会重复调用，须只检查当前请求权限，不产生业务写入。宿主状态边界需允许相应的 `authentication.password_check`、`authentication.second_factor_check`、`authentication.cancel_check` 只读检查。整次操作共享30秒时限；返回时过期的挑战或会话凭据拒绝返回。返回检查失败不回滚已提交的会话状态，也不退还已消耗的第二因素证明。请求回调异常使用 `auth.request_unavailable`，时间源异常使用 `auth.clock`，不携带原始异常详情。此行为不包含账号恢复启用。
 
 顶层配置 `mfa` 后，认证工厂默认连接 `TotpSecondFactor`，避免遗漏已绑定因子；`authentication.second_factor` 可覆盖为明确注入的 `SecondFactor` 服务。已迁移到[受管理 MFA](account-factors.md)的宿主应显式设置 `authentication.managed_factors=true`：认证和会话工厂均从 `account_factors` 目录取得当前因子，不回退到原始 TOTP；不能同时配置 `second_factor` 或顶层 `mfa`，缺少目录配置直接拒绝。未启用该选项的现有配置保持原有行为。直接构造时显式传适配器。因子已绑定就要求第二因素；策略要求 MFA 却没有适配器属于配置错误。
 

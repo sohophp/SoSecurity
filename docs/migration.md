@@ -1,5 +1,11 @@
 # 旧 PHP 网站分步迁移
 
+当前九份运行时改动的拒绝行为、异常兼容及宿主调整见[兼容说明](current-compatibility-2026-10-23.md)（[English](current-compatibility-2026-10-23.en.md)）。这是本地候选变更，不是可发行结论。
+
+采用受管认证 HTTP 示例的保护模式时，须明确固定 Origin、实际私有源及同一工厂的 state_policy，不在请求中初始化权威。新增 API 管理使用扁平 POST／CSV scopes 和 JSON；HTML 回引策略变为 same-origin，JSON 仍 no-referrer，客户端错误统一输出而不公开内部存储原因。旧的仅返回 Security 引导方式保留；详细迁移与实际覆盖见[记录](state-http-integration-2026-10-21.md)。
+
+本轮候选增加[独立见证与认证边界接入说明](state-boundary.md)（[English](state-boundary.en.md)）。停止旧写入者、独立保存见证和未知结果处置属于迁移要求；完整工厂／全入口及安全恢复最终提交尚未完成，当前仍不能据此判断可发行。
+
 R6.3可信设备风险决策为可选增量：未配置`remember.risk_guard`时，原记住登录恢复行为保持。配置后须注入返回`Auth\DeviceRiskDecision`的服务，并处理新增`step_up`和`blocked`状态；两者均不得建立登录态，都会在同一事务中撤销设备授权及关联会话；宿主均须清除本地Cookie。`step_up`引导完整重新认证，误判后也必须由用户主动签发新授权。原因码仅用于服务端审计；完整信号来源与误判流程见[记住登录指南](remembered-login.md#可选可信设备风险决策)。
 
 ## 签名链接与请求／响应对象导出修复
@@ -126,3 +132,9 @@ Cipher／HmacKeys／AuditLogger 新代码以闭包保存私有密钥或审计回
 `Upload\Candidate` 的正文与 `Upload\StoredFile` 的私有完整路径不再出现在普通对象导出中，serialize／unserialize明确拒绝。显式 `contents()`／`path()`、字节数／摘要／元数据返回值保持；服务器端扫描及已授权文件管理接入继续使用这些方法。
 
 曾将这两类对象放入Session、缓存或队列的代码，应改为保存可信资源标识与允许的元数据，并在当前授权下重新读取及验证来源。长驻进程需加载新代码；旧序列化对象不能作为可信恢复材料。新代码不会删除历史日志或缓存中的旧正文／路径转储，历史处置按实际数据暴露范围处理。
+
+## 授权回调与配置预算修复（2026-10-22）
+
+`Authorizer::project()`在回调前冻结字段名；调用方引用变化不再改变已授权输出。已配置审计的允许路径增加一次当前身份查询，身份源应有界、可重复读取；读取失败抛`authorization.unavailable`，账号变化返回拒绝。审计允许事件描述审计前决定，不保证最终授权或业务提交。没有跨身份源与业务库的原子撤权承诺。公开268类／接口清单及签名保持，不需要数据库迁移。
+
+Authorization projections detach field references before callbacks. Audited allow decisions perform an additional current-identity read after the sink returns; identity sources must support bounded repeatable reads. An audit allow event is not a final authorization or business commit receipt. Fixed option-map preflight now rejects oversized input before allocation; accepted configuration and defaults are unchanged.

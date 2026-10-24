@@ -76,3 +76,21 @@ $manager = $security->leases();
 默认不启用leases，工厂不会初始化资源。Memory／Session不能作为工厂共享后端；直接构造允许测试。诊断提示固定账本／恢复、宿主隔离和时钟仍需验收，不执行清理或初始化。网页 `?module=leases` 使用访客Session、两位测试工作者和隔离时钟，支持初始化／获取／检查／续期／释放／旧凭据／到期／排空清理／故障；token只保存在服务器，不展示或返还浏览器。共享后端、SIGKILL崩溃恢复和真实数据库隔离证据单独记录，页面不证明跨Session全局互斥。
 
 设计参考：[Symfony Lock的持有者与期限](https://symfony.com/doc/current/lock.html#reliability)、[Redis锁的一致性与隔离序号](https://redis.io/docs/latest/develop/clients/patterns/distributed-locks/#disclaimer-about-consistency)。本组件使用现有AtomicStore单账本契约，未实现或宣称Redlock、多副本共识或任意基础设施故障容错；本批验证与剩余边界见[验证记录](verification.md)，整体规划继续。
+
+
+## 保护模式接入
+
+`Security::leases($stateLeaseConnection)` 显式接入准确的完整来源与独立见证；无参数调用在保护模式仍拒绝。连接使用 `site:shared` 命名空间的 FileStore，必须由同一 FileStateSnapshot 完整覆盖，并与实际时钟和边界一致。构造不初始化账本或推断权限。
+
+```php
+$leaseState = new SoSecurity\Account\StateLeaseConnection(
+    $boundary, $witness, $source, $fileSource, $fileSourceName,
+    $leaseFileStore, $site, $authorityScope, $epoch, $clock,
+    $currentLeaseAuthority, $ioMilliseconds
+);
+$leases = $security->leases($leaseState);
+```
+
+`currentLeaseAuthority(action, authorityScope, scope, resource, owner)` 必须从服务器实际请求／任务上下文核对当前权限，返回当前调用者标识；拒绝返回 null 或 false。持有者操作要求该标识与 owner 相同，不允许直接回显客户端 owner。初始化、检查及移除需要各自的管理授权。守卫可能在锁内、效果前后及返回前多次执行，应保持只读。默认时限 1000 毫秒，可信配置可选择 1—30000 毫秒；完整来源观察时间也计入操作，不保证任何规模的来源均能在默认时限完成。
+
+原生入口不要再嵌套外层 `StateBoundary::run()`。状态竞争及错误凭据在写入前拒绝；已写 pending 后失败保持隔离。最终返回复核失败也不返回凭据，已确定提交的账本不自动删除。宿主业务写入仍需验证实际 epoch、fence、holder、版本及期限，不能将 SDK 租约当成任意业务写权限。该接入没有提供跨安全代际交接或未知结果续办。实现及准确验证范围见[原生租约专项](native-leases-2026-10-22.md)。

@@ -32,7 +32,7 @@
 | Webhook | 固定协议验签与独立封存持久接收；显式处理工厂、独立CLI、同事务业务幂等及强认证失败重试 | 共享事务保护九版基线通过；工厂九版专项、两版最终TLS／CLI／移动浏览器通过，新接入九版专项通过；常驻未接入 | [接收](webhooks.md)、[处理与恢复](webhook-processing.md)、[原生页面](../examples/webhooks.php) |
 | 通用写接口幂等 | 同PDO业务／结果提交、当前权限重放、内容冲突拒绝、到期键墓碑及有界维护；显式工厂与诊断 | 最新九版SQLite409／MySQL356、HTTP／TLS各433、API和新消费者专项通过，含24进程／SIGKILL、丢失确认重启及两版TLS移动浏览器；出站消息与完整R4.3继续 | [SQL幂等](idempotency.md) |
 | 事务发件箱 | 同事务入队、稳定身份、领取／确认、顺序、有限重试／维护；原生CLI、独立接收账本／检查点及超期处置核心 | 九版对账SQLite274／MySQL268及两后端并发31通过；格式2需停旧进程，公开候选仅追加2方法。接收／原生历史证据、预算调整及最终复验分阶段记录；原生预算后九版适配66／恢复342／TLS318通过；签名证据、取消栅栏、封存审计与 CLI 已实现，本轮专项已通过；完整R4.3继续 | [核心](outbox.md)、[原生接入](outbox-native.md)、[接收恢复](outbox-recovery.md)、[超期对账](outbox-reconciliation.md)、[审计归档与轮换](outbox-audit-archive.md)、[独立权限源](outbox-authority.md) |
-| 审计/诊断 | 结构化事件、字段白名单、最多1024字节主体假名化、可选共享事件预算、四类固定标签计数与可轮询告警判定、可选PSR-3适配及配置诊断；日志持久化、实际告警和全站查询接宿主系统 | [审计](http://72.rocky.wsl/SoSecurity/?module=audit)、[配置](http://72.rocky.wsl/SoSecurity/?module=configuration) | [接入](audit-budget.md)、[配置诊断](configuration.md) |
+| 审计/诊断 | 结构化事件、字段白名单、最多1024字节主体假名化、可选共享事件预算、四类固定标签计数与可轮询告警判定、可选PSR-3适配及配置诊断；可选独立 SQL 持久日志、有界历史查询与独立受权清理；外部告警和全站查询接宿主系统 | [审计](http://72.rocky.wsl/SoSecurity/?module=audit)、[配置](http://72.rocky.wsl/SoSecurity/?module=configuration) | [接入](audit-budget.md)、[SQL日志](audit-sql.md)、[配置诊断](configuration.md) |
 
 封禁查询按已知scope/subject调用inspect；没有全站任意记录扫描或独立管理平台。验证码与限流按宿主业务联动；算术验证码不承诺抵抗自动化。签名无状态CSRF在有效期内可重用，逐令牌撤销/单次使用继续采用原子有状态方案。
 

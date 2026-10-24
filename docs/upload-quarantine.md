@@ -103,3 +103,16 @@ python3 tests/upload_quarantine.py /path/to/php85
 核心专项使用自己的私有FileStore、文件和可控扫描器。`images`配置另行验证含NUL的真实PNG及相同内容往返，适用图片验证器已有的内存预算。进程专项只启动自己的PHP子进程，验证管理员与暂停扫描竞争、真实SIGKILL后的接管，以及预留写入与清理互斥；仅删除自己的临时目录。执行结果及未覆盖范围见[验证记录](verification.md)。
 
 原生接入的受保护网页、宿主SQLite索引与CLI工作进程见[原生指南](upload-quarantine-native.md)。如需将该本地TLS检查纳入常规门禁，可显式设置`SOSECURITY_REQUIRE_QUARANTINE_HTTP=1`；要求本机有可启动的私有clamd，不接管系统服务。
+
+
+## 完整来源的底层保护
+
+`Account\QuarantineStateSnapshot` 可将真实私有隔离文件纳入同一 CompositeStateSnapshot；元数据仍需独立 FileStateSnapshot 完整覆盖。为匹配实际队列，传入同一上传策略、maximum_entries 和 maximum_total_bytes。构造保持只读，之后显式 `protect($boundary, $witness, $source, $sourceName)` 绑定准确物理目录，并通过既有 `bindFileStore()` 保护元数据。
+
+这一步只建立来源与底层访问保护，不提供当前业务权限或自动原生入口。`Security::quarantine()` 的保护模式工厂仍默认拒绝；手工组合必须由宿主提供准确授权的外层边界，不允许以普通回调一律放行代替授权。详细范围与证据见[文件来源专项](quarantine-state-source-2026-10-22.md)。
+
+## 原生完整来源连接
+
+受保护模式可向 `Security::quarantine($connection)` 显式传入 `Account\StateQuarantineConnection`。它组合准确元数据来源、`QuarantineStateSnapshot`、同一独立见证／边界、实际扫描器和当前宿主授权；不自动建立或恢复权威。所有操作按当前调用者检查，扫描自动选择后再次检查实际条目。授权回调必须只读且可重复；第一次为空描述，之后包含准确条目及内容摘要。
+
+查询不会推进见证，入队／扫描／读取／管理走各自准入。最终失权或到期不返回文件；未知进行中状态保持拒绝，不提供过期扫描接管、未知回执续办或恢复启用。完整构造约束、兼容性和本地证据见[原生上传隔离专项](native-quarantine-2026-10-22.md)。

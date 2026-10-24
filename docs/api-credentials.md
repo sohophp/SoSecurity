@@ -1,6 +1,6 @@
 # 账号级API凭据生命周期
 
-状态：R4.1已完成本地验收。九版完整检查／磁盘耗尽／新消费者、各3753核心断言／720独立格式检查／592原生HTTP／600真实TLS及文件／Redis／MySQL各24进程通过；PHP7.2／8.5真实密码／TOTP TLS移动Chromium、144类API／246文件归档与静态检查通过。最新策略引用与下载预算回归另以九版专项复验。现有[低层ApiKeys与HTTP签名](api.md)保持兼容；生产、常驻Apache、下游、远端CI和独立审查未执行。
+历史阶段记录：下述为当时的R4.1本地验收，不能作为当前源码的完整验收。九版完整检查／磁盘耗尽／新消费者、各3753核心断言／720独立格式检查／592原生HTTP／600真实TLS及文件／Redis／MySQL各24进程通过；PHP7.2／8.5真实密码／TOTP TLS移动Chromium、144类API／246文件归档与静态检查通过。最新策略引用与下载预算回归另以九版专项复验。现有[低层ApiKeys与HTTP签名](api.md)保持兼容；生产、常驻Apache、下游、远端CI和独立审查未执行。
 
 ## 使用方式与信任边界
 
@@ -28,7 +28,9 @@ if ($proof === null) { /* 宿主返回统一认证失败，停止业务 */ }
 
 `requestGuard(operation, Account|null, metadata): bool`由宿主提供，只接受严格true。管理动作在验证真实Session后调用，Account为实际操作者，metadata.owner为凭据所属账号；验证CSRF、来源、请求预算和必要的管理权限。`authenticate`动作在解析令牌前调用，account为null，metadata仅含服务器指定的required_scope，需校验实际Bearer路由和入口预算。不能把null当作已登录账号，也不能把该回调中的管理元数据当作业务对象授权。
 
-`scopeProvider(Account): array`从当前服务器权限返回规范范围列表，与策略全局允许列表取交集。未知／重复／非列表等无效返回值视为依赖故障，不静默当作放行。签发／替换必须完整满足请求的每项范围；认证有效范围是已签发范围与当前可用权限的交集，权限范围本身不能替代对象授权。
+原生`authenticate`／`fromAuthorization`还会在见证完成后只读复核当前凭据、账号、范围和请求权限。返回的有效范围取前后观察的交集；应使用`VerifiedCredential::scopes()`／`allows()`，而不是签发元数据中的范围来授权。边界预算守卫需支持`api.credentials.authenticate_check`；认证请求守卫可重复调用，入口层先完成一次性预算／证明消费，回调只复核请求上下文和当前权限。完成后拒绝不重放、不删除已完成状态。详见[最终返回修复及证据](native-bearer-return-2026-10-23.md)。
+
+`scopeProvider(Account): array`从当前服务器权限返回规范范围列表，与策略全局允许列表取交集。未知／重复／非列表等无效返回值视为依赖故障，不静默当作放行。签发／替换必须完整满足请求的每项范围；认证有效范围是已签发范围与当前可用权限的交集，权限范围本身不能替代对象授权。普通管理操作会在身份和对象授权读取后再次查询范围，并取两次观察的交集；随后复核会话、身份及对象授权。返回前还会以最终观察时间核对会话到期及敏感动作的近期认证期限。提供器必须只读、可重复调用；同一操作不能依赖固定调用次数，也不能在其中消耗一次性请求预算。回调故障默认拒绝，不能把顺序复核当成宿主权限数据的原子事务。
 
 手工构造时身份／因子适配器必须与SessionRegistry使用同一可信来源。API持有令牌不代表本次完成密码或MFA；管理操作始终要求实际Session。默认签发／轮换／替换需300秒内、强度至少1的password／totp／webauthn，恢复码须显式选择，记住登录恢复不能冒充近期认证。查询／撤销只需当前有效会话，允许及时止损；宿主可通过请求保护增加敏感操作限制。
 
@@ -56,6 +58,16 @@ if ($proof === null) { /* 宿主返回统一认证失败，停止业务 */ }
 | fromAuthorization(scope,header,requiredScope) | 只接受有界单Bearer头；不读取Cookie、Session、查询或JSON里的替代凭据 |
 
 代际比较阻止并发轮换互相覆盖；原先generation的请求不会覆盖后来返回的新秘密。签发在请求保护之前记录旧epoch，撤销全部发生在其间时不能由旧准备流程重新加入凭据。秘密提交后响应丢失或后续身份复核失败，旧秘密可能已失效；不能自动恢复旧摘要，用户应通过已授权查询／撤销／重新签发处理。
+
+## 受保护模式的委托审计
+
+原生凭据委托可组合准确身份提供器、具体 `RolePolicy` 和直接使用 `SqlSink` 的 `AuditLogger`。审计必须使用状态策略的同一个 PDO、站点和业务时钟；在建立初始见证前初始化，并完整声明审计根表和记录表，物理容量不得小于审计策略容量。未声明完整来源的自定义授权策略、包装的审计回调或来源不匹配仍拒绝配置；显式 SnapshotPolicy 接入见下文。
+
+此模式新增 `requestGuard` 动作 `audit_current`。其 `metadata.operation` 是原始管理动作，`metadata.phase` 为 `admission`、`before` 或 `return`，其余字段沿用原动作。该动作必须只读、可重复地检查当前请求权限；不能重复消费原始动作已验证的 CSRF 或请求预算。允许决定还会重复读取 `scopeProvider`，其返回必须反映当前权限。
+
+系统在原生准入、写入前及返回前复核准确操作者、目标身份、会话、近期认证、对象权限和范围；操作者与目标的首次完整来源捕获合并，因子发现与完整摘要校验保留，结果不跨调用缓存；准备及写入共享原始期限，较短的审计期限同时收紧外层写入前检查。允许事件表达授权决定，不代表业务已经完成。明确的角色策略拒绝可提交一条脱敏拒绝事件，然后抛出 `authorization.denied`，不执行凭据修改。无效输入、初始会话、范围、容量等更早的拒绝不保证写入审计。
+
+审计 SQL 与凭据存储没有跨存储原子提交。后续失败时保留已发生的记录及 pending 限制，不自动撤销、恢复或续办；最终返回检查失败不返回秘密。时钟异常以 `api_credentials.clock` 脱敏拒绝。当前验证及默认 MySQL 预算失败见[专项记录](native-audit-delegation-2026-10-22.md)，不能据此宣称完整稳定版通过。
 
 ## 当前身份、签名与共享账本
 
@@ -110,3 +122,22 @@ roles为JSON数组，kind只接受user／service。editor可读写自己的文�
 本地复验命令：`php tests/credentials.php`、`python3 tests/credential_vectors.py php`、`python3 tests/credential_http.py php`、加`--tls`验证私有CA真实TLS；加`--browser`驱动真实密码／TOTP移动Chromium。测试初始化使用独立测试数据和私有目录，TLS桥只存在测试代码，Python客户端验证测试CA，浏览器仅对该自签测试证书忽略信任错误。没有生产、常驻Apache、真实客户账号或独立审查结论。
 
 参考：[Laravel Sanctum的令牌范围／撤销／期限](https://laravel.com/docs/13.x/sanctum)、[OWASP REST安全](https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html)、[OWASP授权](https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html)。
+
+## 受保护的业务 SQL 写入
+
+显式保护模式下，可通过原生工厂 `apiCredentials($stateAccountPolicy)` 返回的注册表调用 `withAuthorization($scope, $header, $requiredScope, $pdo, $tables, $businessPolicy, $prepare, $work)`，将 Bearer 准入、服务端 Intent／对象／字段权限和自有 SQL 事务放在同一次独立见证中。不要先开启 PDO 事务或套外层 `run()`；普通模式不提供这一保护契约。
+
+`withAuthorization` 在业务完成后还会执行只读的当前Bearer／账号／范围／请求守卫核验，并在最终读取后检查凭据期限。宿主边界预算守卫需支持 `api.credentials.execute_check`；认证守卫和范围提供器应可重复、只读。整个请求、SQL事务与最终复核共用原预算。后置拒绝不撤回已提交的业务，不应据此盲目重放。见[修复及分阶段证据](native-business-return-2026-10-23.md)。
+
+自定义业务策略使用独立入口 `withSnapshotAuthorization`，参数顺序与 `withAuthorization` 相同，第六个参数必须为 `SnapshotPolicy`。策略须绑定账号图中同一个 SQL 来源；普通 `PolicyProvider` 不受支持。SDK 在准入、效果开始前、最终返回前三次捕获事实并重新判定原 Intent。最终判定面对提交后的数据，因此策略必须定义合法结果状态；例如转移归属导致当前操作者失权时，SQL 已提交但结果仍拒绝交付，不会自动回滚或重放。策略评估器只做有界纯计算，不执行 I/O。两种入口均使用 `api.credentials.execute`／`api.credentials.execute_check` 边界动作，未增加隐式放行。见[专项记录](native-business-policy-2026-10-23.md)。
+
+业务表须预先完整声明到准确 SQL 来源，全部写入者遵守同一见证／围栏。prepare 只读加载实际对象并验证参数；work 仅通过提供的 PDO、Intent 和版本比较更新写入声明表，不发送邮件等外部效果、不控制事务、不自动重试。业务返回值只有整个入口成功返回才可使用，未知效果保持 pending。接入细节见[业务 PDO 契约](state-boundary.md#bearer-与业务-pdo-事务组合)，完整宿主示例函数见 [StateDocuments.php](../examples/StateDocuments.php)。本轮有限证据及尚未执行的业务 HTTP／真实中断验收见[接入记录](state-business-integration-2026-10-21.md)。
+
+原生受管宿主可增加第三个引导字段 `business_connection`，通过 `POST ?api=document` 调用上述组合，字段仅为 action／id／version／title；详见[实际宿主记录](state-business-host-integration-2026-10-21.md)。该记录含格式 3、TLS／Chromium、联合业务备份和真实中断证据，也保留一次未解释 503，整组未判通过。
+
+
+原生新增账本现检查完整物理目录的文件余量：满额在 pending 前拒绝，逻辑过期文件仍占容量，已有账本合法更新不额外占文件。释放空间后同一服务／会话可重试；不会因此清除旧 pending。准确修前反例及范围见[容量准入记录](state-admission-capacity-2026-10-22.md)。
+
+## 显式自定义原生委托策略
+
+原生凭据委托可使用与完整SQL来源绑定的 `Authorization\SnapshotPolicy`，并选择无审计或准确SQL审计组合。未声明来源的普通 `PolicyProvider` 仍拒绝；必须实现专用 `SnapshotEvaluator`：声明准确行，由SDK捕获后交给纯计算决策；不得自行查库或访问外部服务。普通 `SnapshotPolicy::decide` 明确拒绝，不能将返回的决策作为可复用权限。无审计组合需要支持 `management_current` 请求守卫复核。具体绑定、配置摘要、故障及兼容边界见[接入说明](native-custom-policy-2026-10-23.md)。

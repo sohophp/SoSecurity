@@ -6,3 +6,7 @@
 /tools/vendor/
 __pycache__/
 /integrations/*/vendor/
+
+# Local execution evidence is retained in place and separately backed up.
+# See docs/local-evidence-manifest-2026-10-25.json.
+/docs/*-evidence-*/

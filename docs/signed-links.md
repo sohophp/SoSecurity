@@ -1,8 +1,16 @@
 # 签名链接
 
+[恢复证明代际](state-proof-retirement-2026-10-22.md)可以明确退役同一命名空间、站点和 scope 的全部旧链接，不依赖枚举旧资源／路径；其他 scope 保持。新读者须协调升级并覆盖永久标记和所有账本；标记本身不能代替独立见证。受保护 `signedLinks($stateAccountPolicy)` 工厂及只读目标准入／同边界业务 SQL 已接入，见[原生入口](state-native-links-integration-2026-10-22.md)；新入口 HTTP 与当前最终整轮仍未验收。
+
 `IssuedLink`包含可直接使用的完整凭据URL；当前对象导出不会展开URL或目标参数。只有显式调用`url()`才取得凭据，宿主仍须保护返回值及访问日志。旧序列化对象拒绝恢复，签发结果应从当前权威重新生成。
 
 `Link\Links`提供固定来源地址、严格URL格式、资源版本绑定、有期限且可撤销的签名链接。默认保留共享状态，既支持有效期内重复读取，也支持原子单次消费；不在状态丢失或后端不可用时改为无状态放行。R3.5本地九版本完整检查、共享后端并发、新消费者、真实HTTP及PHP7.2／8.5浏览器验收完成；仍为未发布候选，完整R1—R6及生产验证继续，见[跟踪](security-refinement.md)与[验证](verification.md)。
+
+## 原生保护入口
+
+管理权限可配置匹配身份提供器的纯 `RolePolicy`，或绑定同一 SQL 快照源的 `SnapshotPolicy`。后者从有界捕获事实决定对象／字段权限，在准入、写入前及返回前重新核验，共用整体 30000ms 预算。其他提供器、来源不匹配及带审计回调的授权器仍直接拒绝；匿名验证／业务执行继续以当前签名目标能力授权。
+
+显式调用 `$sdk->signedLinks($stateAccountPolicy)`，使用 `issueFor / allFor / revokeFor / revokeAllFor` 和 `verifyFor / withVerification`。传准确 PDO、完整业务表声明及锁内服务端只读 Target 加载器；管理方法还传当前 subject／sessionToken。原生对象拒绝旧直接入口，普通模式沿用下例。`verifyFor` 结果不能用于稍后的业务写入；业务 SQL 必须使用 `withVerification`，效果不确定保留 pending，不自动退款或重放。完整约束及示例见[集成说明](state-native-links-integration-2026-10-22.md)。
 
 ## 最小调用
 
@@ -22,7 +30,7 @@ if ($verified === null) { /* 返回403，结束请求，不读取正文。 */ }
 // 即时使用；仍要按当前资源版本读取，不能缓存VerifiedLink作为以后权限。
 ```
 
-请求保护回调签名为 `(string $operation, Target $target, string $method): bool`，必须返回严格true。操作名为issue／verify／revoke／revoke_all／all；verify传调用方给出的实际方法，其余操作传逻辑方法（签发／撤销POST、元数据查询GET），宿主仍需校验真实入口请求。每个公共状态操作调用一次，回调不在可重试事务内；异常转为固定link.request_unavailable，不串联可能含秘密的原异常。false或其他返回值拒绝。管理操作需宿主身份／对象权限和预算，写请求还需CSRF；verify需真实路由／方法和请求预算，Cookie参与业务身份时还须对应CSRF／身份验证，不能仅因链接签名有效而混用另一账号的Cookie权限。组件不会自行查询账号、注册路由、启动Session、发送响应头或建表。
+请求保护回调签名为 `(string $operation, Target $target, string $method): bool`，必须返回严格true。操作名为issue／verify／revoke／revoke_all／all；verify传调用方给出的实际方法，其余操作传逻辑方法（签发／撤销POST、元数据查询GET），宿主仍需校验真实入口请求。每个公共状态操作调用一次，回调不在可重试事务内；异常转为固定link.request_unavailable，不串联可能含秘密的原异常。false或其他返回值拒绝。管理操作需宿主身份／对象权限和预算，写请求还需CSRF；verify需真实路由／方法和请求预算，Cookie参与业务身份时还须对应CSRF／身份验证，不能仅因链接签名有效而混用另一账号的Cookie权限。普通低层模式不查询账号；原生保护模式会通过显式状态策略加载当前管理身份。两者均不注册路由、启动 PHP Session、发送响应头或建表。
 
 ## 签名与URL格式
 
@@ -94,3 +102,8 @@ $links = $security->signedLinks();
 页面使用no-store,private、no-referrer、限制CSP及HTML编码；未知额外查询、错误方法、撤销／到期及故障不能返回正文。常驻Apache未配置此示例私有库或密钥，缺配置仅503通用错误；隔离HTTP／浏览器通过不表示生产已接入。
 
 设计参考：[Laravel签名URL](https://laravel.com/framework/docs/12.x/urls#signed-urls)、[OWASP授权](https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html)。
+
+
+原生新增账本现检查完整物理目录的文件余量：满额在 pending 前拒绝，逻辑过期文件仍占容量，已有账本合法更新不额外占文件。释放空间后同一服务／会话可重试；不会因此清除旧 pending。准确修前反例及范围见[容量准入记录](state-admission-capacity-2026-10-22.md)。
+
+原生For／业务入口在返回前增加只读当前权限和期限核验，宿主边界需支持对应的 `links.<entry>_check`（issue／verify／all／revoke／revoke_all／execute）。守卫须可重复只读调用；整个请求共用预算，失败不恢复已消费链接或撤回已提交SQL。普通时间源异常清理不再泄露私有异常，见[本批修复及证据](native-link-return-2026-10-23.md)。

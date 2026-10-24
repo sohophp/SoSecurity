@@ -1,5 +1,7 @@
 # Optional read-only ZIP inspection
 
+The inspection budget starts before the first file I/O and covers hashing, directory preflight, opening the archive, content reads, and final source verification. It uses a monotonic clock when available; PHP 7.2 falls back to wall time and rejects backward movement. Expiry or clock failure remains `upload.archive` without a nested clock exception. Checkpoints cannot interrupt a running system call; the host must still enforce a process timeout.
+
 `SoSecurity\Upload\ArchiveInspector` checks a host-staged local ZIP file without extracting entries or calling application code. The host still owns upload authorization, private staging, malware scanning, process-level timeouts, and the decision to use an inspected file. The ordinary upload and quarantine flows do not invoke this optional inspector automatically.
 
 ```php

@@ -71,3 +71,7 @@ $validator = new SoSecurity\Validation\Validator([
 schema最多12层、256条字段/元素定义，每对象最多128字段。库接收PHP数组；空列表与空对象在PHP数组中不能区分，字段定义决定语义。
 
 演示：[输入验证](http://72.rocky.wsl/SoSecurity/?module=validation)，含正常、错误类型/格式、未知字段、嵌套定位和可编辑JSON，传统表单与AJAX均调用真实Validator。测试见 `tests/validation.php`；例子见 `examples/input-validation.php`。
+
+## 结果对象与隐私
+
+`Result` 可包含密码、令牌等验证通过的原始字段。`valid()`、`errors()`、`data()` 的显式读取契约保持；普通调试输出隐藏内容，`var_export` 不展开内部字段。禁止序列化／反序列化结果对象，均抛 `ConfigurationException(configuration.validation_serialization)`。需要传递结果时显式选择允许的字段；显式读取后的数组、错误路径和自行编码的输出仍需宿主保护。

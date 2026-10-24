@@ -1,6 +1,10 @@
 # 高风险操作授权
 
-`Operation\Grants`提供准备、重新认证后明确确认、原子单次消费三个步骤。它绑定服务器确定的动作、资源／版本／属性、参数、字段、当前账号和当前会话，不把普通登录或一个旧VerifiedSession对象当作本次操作授权。R3.4本地九版本完整检查、共享后端并发、新消费者及真实密码／TOTP浏览器验收已完成；仍为未发布候选，宿主业务及生产须分别验证，见[需求跟踪](security-refinement.md)和[验证记录](verification.md)。
+明确的恢复退役现在可通过 [StateProofRetirement](state-proof-retirement-2026-10-22.md)轮换整个原 FileStore 命名空间／scope 的证明代际。原生准入在读取旧账本前识别标记，旧确认及授权在 pending 前拒绝，新证明继续绑定准确会话和意图；外部 oc1／og1 格式不变。标记与全部真实账本必须同受独立见证覆盖，完成退役仍保持隔离。
+
+未发布候选可显式调用 `operations($stateAccountPolicy)`，以准确原生账号／会话来源和纯 RolePolicy 或匹配 SQL 来源的 SnapshotPolicy 在 pending 前完成准入；五个生命周期方法直接调用，业务使用下文 execute。默认 `operations()` 及构造第七参数 StateBoundary 的既有手工组合保留，仍要求外层实际授权；两种模式不能在同一调用中嵌套。无参数请求守卫须单独配置。详见[原生接入记录](state-grants-integration-2026-10-22.md)；完整 F01 仍未完成。
+
+`Operation\Grants`提供准备、重新认证后明确确认、原子单次消费三个步骤。它绑定服务器确定的动作、资源／版本／属性、参数、字段、当前账号和当前会话，不把普通登录或一个旧VerifiedSession对象当作本次操作授权。R3.4历史快照的本地九版本完整检查、共享后端并发、新消费者及真实密码／TOTP浏览器验收已完成；仍为未发布候选，宿主业务及生产须分别验证，见[需求跟踪](security-refinement.md)和[验证记录](verification.md)。
 
 ## 调用顺序
 
@@ -8,7 +12,7 @@
 2. `begin(scope, subject, sessionToken, intent)`返回Confirmation。向用户展示本次动作、目标、版本及重要参数；确认界面不能只显示“继续”。保存nonce及服务器意图，不能让客户端覆盖待确认数据。
 3. 在同一注册会话中完成一次新的重新认证，更新宿主保存的sessionToken。AuthenticationFlow会保留会话ID并轮换秘密；重新登录创建另一个ID不能确认原操作。普通登录凭据尚新也必须重新认证，确认检查秘密确实在准备后变化，并检查认证时间。
 4. 用户明确确认后调用 `confirm(..., intent, confirmationToken)`；通过当前认证方式／强度、账号和权限复核才返回Grant。准备nonce不能直接消费，重复确认不会返回新授权。
-5. 执行业务前重新加载资源和参数，调用 `consume(..., intent, grantToken)`；得到Permit才可立即开始宿主事务。消费是共享账本内的单次移除，失败或依赖异常不能继续业务，不能退款或自动补发。
+5. 执行业务前重新加载资源和参数，调用 `consume(..., intent, grantToken)`；普通模式得到Permit才可立即开始宿主事务；原生保护业务应改用下文 execute，将消费与业务放在同一次见证中。消费是共享账本内的单次移除，失败或依赖异常不能继续业务，不能退款或自动补发。
 
 每个步骤均要求请求保护回调返回严格true，并查询SessionRegistry的当前凭据；授权策略在开始和返回前复核。匿名、过期待MFA、撤销／禁用／角色或凭据版本变化、不同作用域／主体／会话均不能借用授权。自建Account／VerifiedSession／Permit对象不是登录证明，不从客户端反序列化这些对象。
 
@@ -70,3 +74,22 @@ SOSECURITY_OPERATION_EXAMPLE_MFA_KEY为外部秘密管理提供的32字节密钥
 页面先校验CSRF和入口／动作预算，读取权威资源元数据，向用户展示动作、对象／版本及拟变更标题；提案、确认nonce、grant和注册会话秘密均保存在服务器Session，页面只携带公开工作流ID。重新认证会更新原注册会话秘密及原生Session ID。每个确认／执行／取消表单、操作中的重新认证／MFA都绑定其展示的review_id，旧标签页不能确认另一标签页新提案；执行时重新加载元数据并在宿主SQL事务内消费及写入。取消、重复执行、源不可用、版本／归属／账号变化均拒绝继续写入。输出HTML编码、no-store、no-referrer及限制CSP；未配置则503通用错误，不返回内部路径或异常。
 
 公开页面不是生产管理平台；宿主仍需完整路由保护、账号／因子管理、通知、权限及备份恢复验收。常驻Apache尚未配置此示例的私有数据库或MFA密钥，不能把独立测试实例的通过描述为实际站点已接入。
+
+
+## 原生模式的业务提交
+
+`$security->operations($stateAccountPolicy)` 使用同一缓存认证图，要求授权配置为匹配身份提供器的纯 RolePolicy，或绑定同一 SQL 快照源的 SnapshotPolicy。后者通过 SnapshotEvaluator 从有界捕获事实决定对象和字段权限；准入、执行前及返回前均重新核验，回调共用整体 30000ms 预算。其他自定义 PolicyProvider、不同身份／SQL 来源及带审计回调的授权器在构造时直接拒绝；保留原手工组合方式，不自动忽略审计。`begin`／`confirm`／`consume`／`revoke`／`revokeAll` 自行管理边界，调用时不能套外层 run／authorized。
+
+业务调用 `execute($scope, $subject, $sessionToken, $grantToken, $pdo, $tables, $prepare, $work)`：prepare(PDO, VerifiedSession) 只读服务器对象并验证参数、返回 Intent，SDK 检查当前权限和证明；work(PDO, Permit) 在自有 SQL 事务内只运行一次。PDO 和完整表定义须已纳入来源，全部写入者共用见证／围栏。禁止 DDL、事务控制、其他连接及外部消息，成功结果须等整个入口返回。SQL 回滚或最终完成未知不退款／重发证明；保留 pending 供独立审阅。
+
+使用前显式加载 StateDocuments.php 与 StateDocumentGrants.php；示例类不属于 src 自动加载范围。[StateDocumentGrants.php](../examples/StateDocumentGrants.php) 提供实际文档 Intent 加载及一次性改名消费者；与 StateDocuments 使用同一 schema 声明和 editor／owner／title 策略。`intent()` 只是受信任服务器的资源／参数构造，不是权限证明；执行时会在锁内重新加载。程序化 SDK 密码／TOTP 检查不等于本入口 HTTP／浏览器／实体设备验收，见[本轮准确范围](state-grants-integration-2026-10-22.md)。
+
+原生工厂缓存固定到准确账号策略指纹：同样语义的新策略对象可以复用，不同字段映射必须在 I/O 前拒绝，不能默默继续使用旧映射。反例、修复及两端定向检查见[缓存修复记录](state-grants-integration-2026-10-22.md)。
+
+
+签名链接的原生公开工厂现为 `signedLinks($stateAccountPolicy)`，管理操作需要实际当前会话；验证使用当前服务端 Target 和签名持有者能力。只读加载和请求保护在 pending 前完成，消费及业务 SQL 通过 `withVerification` 共用见证，结果不确定不重放。新增入口准确范围见[集成说明](state-native-links-integration-2026-10-22.md)。低层组件与手工接线契约保留；新的 HTTP 入口和完整恢复仍需各自验收。
+
+
+原生新增账本现检查完整物理目录的文件余量：满额在 pending 前拒绝，逻辑过期文件仍占容量，已有账本合法更新不额外占文件。释放空间后同一服务／会话可重试；不会因此清除旧 pending。准确修前反例及范围见[容量准入记录](state-admission-capacity-2026-10-22.md)。
+
+原生 `begin`／`confirm`／`consume`／`execute` 现会在交付权限结果前，以只读捕获核对当前请求守卫、会话、对象／字段权限及期限。宿主边界应显式允许对应的 `operations.begin_check`、`operations.confirm_check`、`operations.consume_check`、`operations.execute_check`；守卫需支持重复只读调用。SQL及最终复核共用整体预算。最终拒绝不撤回已提交业务或恢复已消费证明；见[返回边界修复及证据](native-operation-return-2026-10-23.md)。

@@ -9,6 +9,21 @@ This process covers the SoSecurity core package, optional adapters, examples, an
 3. Record required attacker privileges, reachable entry points, default-configuration impact, confidentiality/integrity/availability impact, known exploit conditions, and unknown prerequisites. Mark unverified claims as pending. The maintainer determines severity and disclosure timing from evidence and may give affected users private mitigations first.
 4. Check related entry points, older versions, and backends. Record the affected and unaffected range with supporting evidence. Exposed keys, tokens, or persistent state need separate rotation, revocation, and migration guidance; a patch cannot recover data already disclosed.
 
+## Risk tiers, handling targets, and exceptions
+
+These are internal maintainer targets for project code and actually used third-party dependencies, not an external response SLA or evidence of deployed compliance. Assign a named owner to each valid finding; missing owners, patches, or test environments do not close it. Time starts when the first locatable report or advisory becomes known; assessment does not restart the clock. Preserve uncertainties and prioritize triage when information is incomplete.
+
+| Tier | Triage target | Mitigation target | Fix or replacement target |
+| --- | --- | --- | --- |
+| Emergency: exploitation evidence, or default reachability with potentially widespread account/secret compromise | 1 calendar day | 1 calendar day; disable the affected feature if necessary | 7 calendar days |
+| High: confirmed serious impact with specific prerequisites and no exploitation evidence | 3 calendar days | 7 calendar days | 14 calendar days |
+| Medium: limited impact or substantial privilege/complexity prerequisites | 7 calendar days | 14 calendar days | 30 calendar days |
+| Low: limited hardening or low-impact issue | 14 calendar days | Decide mitigation within 30 calendar days | 90 calendar days |
+
+Advisory scores inform assessment; record actual installation, reachability, configuration, host impact, and compensating controls. An optional dependency is not automatically unaffected. Closure records exact versions, verification, and affected consumer migration; a local patch does not establish deployment.
+
+Each record includes first-known time, tier and rationale, named owner, deadlines, verified mitigation, exact locked dependency/commit, and patch/deployment status. Register overdue work as blocked. A maintainer-approved extension records approver, reason, residual risk, compensating controls, and a definite new expiry; it cannot erase the original overdue interval or accept risk indefinitely. Review open records every 7 calendar days and list open, overdue, and excepted items at each candidate delivery. Actual staffing, automatic reminders, and a ledger covering all consumers are not established here. Only the missing documented targets are resolved; ASVS 15.1.1/15.2.1 execution acceptance remains open.
+
 ## Fix and review record
 
 Maintain a private record for each finding:
