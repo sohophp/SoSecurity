@@ -4,7 +4,11 @@
 
 首版稳定承诺**仅覆盖[范围表](docs/stable-v1-api-scope.md)的S方法、普通配置与已签收部署条件**。E入口仍为实验功能，历史管理超时、未知结果和SqlInbox失败保留未修复；不配置/暴露E入口，不混用受保护目录、连接或进程，不降低已有认证/MFA保护。PHP7.2回拨时拒绝的可用性条件保留。未推送、打标签或登记公开包。
 
+先读[中文速读：S稳定组件、E实验功能、最小接入与限制](docs/stable-v1-php-adoption.zh-CN.md)。限定S的1.0.0本地交付已完成最终管理签收；已验收ZIP仍绑定`7ad825c`，后续仅文档提交不改变该包身份。
+
 从[最小PHP接入、依赖及迁移回滚指南](docs/stable-v1-integration.md)开始；[固定验收与证据](docs/stable-v1-acceptance.md)覆盖当前源码fedc471的九版G/B/F/H/C及限定Q检查。最终ZIP、准确提交及固定SHA-256见包外`delivery-manifest.json`和`SHA256SUMS`，不得把历史开发记录当作所有能力稳定的声明。
+
+以下保留已有能力的历史导航；其中隔离上传、扫描、归档检查和状态快照等E功能不进入本版稳定承诺，不能据导航直接启用。
 
 可选[原生隔离接入](docs/upload-quarantine-native.md)现提供受保护网页和CLI扫描工作进程，使用宿主SQLite示例索引；SDK不依赖该表结构，也不创建默认账号。
 
@@ -20,7 +24,7 @@
 
 SoSecurity 是 **框架无关、按需使用的 PHP Web 安全加固组件库**。通过 Composer 安装，可在原生 PHP、自研框架或已有框架项目中逐项替换验证码、CSRF、登录防护等旧代码。包名 `sohophp/sosecurity`，命名空间 `SoSecurity\`，支持 PHP **7.2–8.5**。
 
-当前是**1.0.0本地交付候选（未公开发布，仅S范围稳定）**，已有功能和验证范围见[功能清单](docs/features.md)与[当前状态](docs/execution-status.md)。自动封禁属于统一的请求限流体系，不接系统 Fail2ban，也不单独创建 AutoBan。
+当前是**1.0.0本地稳定交付（未公开发布，仅S范围稳定）**，已有功能和验证范围见[功能清单](docs/features.md)与[当前状态](docs/execution-status.md)。自动封禁属于统一的请求限流体系，不接系统 Fail2ban，也不单独创建 AutoBan。
 
 ## 安装与最小配置
 
