@@ -1,0 +1,5 @@
+/vendor/
+/var/
+/composer.lock
+/public/legacy-login.php
+__pycache__/

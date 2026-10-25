@@ -1,0 +1,26 @@
+{
+  "name": "sosecurity/php72-local-demo",
+  "type": "project",
+  "require": {
+    "php": ">=7.2 <7.3",
+    "sohophp/sosecurity": "1.0.0"
+  },
+  "repositories": [
+    {
+      "type": "path",
+      "url": "var/package",
+      "options": {
+        "symlink": false,
+        "versions": {
+          "sohophp/sosecurity": "1.0.0"
+        }
+      }
+    },
+    {
+      "packagist.org": false
+    }
+  ],
+  "config": {
+    "allow-plugins": false
+  }
+}
