@@ -4,7 +4,7 @@
 
 首版稳定承诺**仅覆盖[范围表](docs/stable-v1-api-scope.md)的S方法、普通配置与已签收部署条件**。E入口仍为实验功能，历史管理超时、未知结果和SqlInbox失败保留未修复；不配置/暴露E入口，不混用受保护目录、连接或进程，不降低已有认证/MFA保护。PHP7.2回拨时拒绝的可用性条件保留。未推送、打标签或登记公开包。
 
-先读[中文速读：S稳定组件、E实验功能、最小接入与限制](docs/stable-v1-php-adoption.zh-CN.md)。限定S的1.0.0本地交付已完成最终管理签收；已验收ZIP仍绑定`7ad825c`，后续仅文档提交不改变该包身份。
+先读[中文速读：S稳定组件、E实验功能、最小接入与限制](docs/stable-v1-php-adoption.zh-CN.md)。限定S的1.0.0本地交付已完成最终管理签收；最新交付ZIP包含这份中文说明，准确提交、摘要及本次最小安装验证见包外交付清单；历史7ad825c包和烟测保留追溯，不能作为新包身份。
 
 从[最小PHP接入、依赖及迁移回滚指南](docs/stable-v1-integration.md)开始；[固定验收与证据](docs/stable-v1-acceptance.md)覆盖当前源码fedc471的九版G/B/F/H/C及限定Q检查。最终ZIP、准确提交及固定SHA-256见包外`delivery-manifest.json`和`SHA256SUMS`，不得把历史开发记录当作所有能力稳定的声明。
 
